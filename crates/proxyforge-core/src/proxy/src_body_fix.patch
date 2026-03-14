@@ -1,0 +1,114 @@
+--- a/crates/proxyforge-core/src/traffic/types.rs
++++ b/crates/proxyforge-core/src/traffic/types.rs
+@@ -65,13 +65,21 @@ use serde::{Deserialize, Serialize};
+ use std::collections::HashMap;
+ use std::str::FromStr;
+ use uuid::Uuid;
++use serde::ser::{Serialize as SerSerialize, Serializer as SerSerializer};
++use serde::de::Deserialize as SerDeserialize, Deserializer as SerDeserializer;
++
++// Custom serializer for Vec<u8> -> String (for JSON output)
++pub fn serialize_u8_to_string<S>(bytes: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
++where
++    S: serde::Serializer,
++{
++    match bytes {
++        Some(b) => {
++            // Try to convert to UTF-8 string, fallback to base64 for binary data
++            match String::from_utf8(std::str::from_utf8_lossy(b)) {
++                Ok(s) => serializer.serialize_str(&s),
++                Err(_) => {
++                    use base64::{engine::general_purpose::STANDARD, Engine};
++                    let encoded = base64::encode(b);
++                    serializer.serialize_str(&encoded)
++                }
++            }
++        }
++        None => serializer.serialize_none(),
++    }
++}
++
++// Custom deserializer for String -> Vec<u8>
++pub fn deserialize_string_to_u8<'de, D>(s: Option<String>, deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
++where
++    D: serde::Deserializer<'de>,
++{
++    match s {
++        Some(str) => {
++            // Try base64 decode first, if it fails assume UTF-8
++            match base64_decode(&str) {
++                Some(bytes) => Ok(Some(bytes)),
++                None => Ok(Some(str.as_bytes().to_vec())),
++            }
++        }
++        None => Ok(None),
++    }
++}
++
++fn base64_decode(s: &str) -> Option<Vec<u8>> {
++    use base64::{engine::general_purpose::STANDARD, Engine};
++    base64::decode(s).ok()
++}
++
+ /// HTTP method enum
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(rename_all = "UPPERCASE")]
+ pub enum HttpMethod {
+@@ -80,10 +92,18 @@ pub struct RequestData {
+     /// Request body
++    #[serde(serialize_with = "serialize_u8_to_string", deserialize_with = "deserialize_string_to_u8")]
+     pub body: Option<Vec<u8>>,
+     /// Content type
+     pub content_type: Option<String>,
+ }
+ 
+ /// Response data structure
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct ResponseData {
+@@ -93,10 +95,18 @@ pub struct ResponseData {
+     /// Response body
++    #[serde(serialize_with = "serialize_u8_to_string", deserialize_with = "deserialize_string_to_u8")]
+     pub body: Option<Vec<u8>>,
+     /// Content type
+     pub content_type: Option<String>,
+@@ -112,17 +130,35 @@ pub struct TrafficEntry {
+     pub session_id: String,
+     /// Request data
+     pub request: RequestData,
+     /// Response data
+     pub response: Option<ResponseData>,
+-    /// Timestamp
+-    pub timestamp: String,
++    /// Timestamp (ISO 8601)
++    #[serde(with = "serialize_datetime")]
++    pub timestamp: DateTime<Utc>,
+     /// Whether the entry was modified
+     pub modified: bool,
+     /// User notes
+     pub notes: Option<String>,
+ }
+ 
++pub fn serialize_datetime<S>(dt: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
++where
++    S: serde::Serializer,
++{
++    serializer.serialize_str(&dt.to_rfc3339())
++}
++
+ impl TrafficEntry {
+     /// Create a new traffic entry
+-    pub fn new(session_id: &str, request: RequestData) -> Self {
++    pub fn new(session_id: &str, request: RequestData) -> Self {
+         let now = chrono::Utc::now();
+         Self {
+             id: Uuid::new_v4().to_string(),
+             session_id: session_id.to_string(),
+             request,
+             response: None,
+-            timestamp: now.to_rfc3339(),
++            timestamp: now,
+             modified: false,
+             notes: None,
+         }
+     }
+ }

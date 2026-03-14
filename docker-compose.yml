@@ -1,0 +1,72 @@
+version: "3.8"
+
+services:
+  proxyforge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: proxyforge:latest
+    container_name: proxyforge
+    ports:
+      - "3001:3001" # Web UI / API
+      - "8888:8888" # HTTP Proxy
+      - "8443:8443" # HTTPS Proxy
+    volumes:
+      - proxyforge_data:/data
+      - ./certs:/data/certs:ro # Mount pre-generated certs if available
+    environment:
+      - PROXYFORGE_LOG_LEVEL=info
+      - PROXYFORGE_API_PORT=3001
+      - PROXYFORGE_PROXY_PORT=8888
+      - PROXYFORGE_PROXY_TLS_PORT=8443
+      - PROXYFORGE_DATA_DIR=/data
+    command: ["--host", "0.0.0.0"]
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:3001/api/health",
+        ]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - proxyforge_net
+
+  # Development service with hot reload
+  proxyforge-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: proxyforge:dev
+    container_name: proxyforge-dev
+    ports:
+      - "3001:3001"
+      - "8888:8888"
+      - "8443:8443"
+      - "5173:5173" # Vite dev server
+    volumes:
+      - proxyforge_data:/data
+      - ./crates:/app/crates:ro
+      - ./web:/app/web:ro
+    environment:
+      - RUST_LOG=debug
+      - PROXYFORGE_LOG_LEVEL=debug
+    profiles:
+      - dev
+    networks:
+      - proxyforge_net
+
+volumes:
+  proxyforge_data:
+    driver: local
+
+networks:
+  proxyforge_net:
+    driver: bridge

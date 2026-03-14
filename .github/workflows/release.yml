@@ -1,0 +1,197 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package binary (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          mkdir -p proxyforge-dist
+          cp proxyforge proxyforge-dist/
+          cp -r ../../../web/dist proxyforge-dist/web
+          tar -czvf ../../../proxyforge-${{ matrix.target }}.tar.gz proxyforge-dist
+
+      - name: Package binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          mkdir proxyforge-dist
+          copy proxyforge.exe proxyforge-dist/
+          xcopy ..\..\..\web\dist proxyforge-dist\web\ /E /I
+          cd ..\..\..
+          7z a proxyforge-${{ matrix.target }}.zip proxyforge-dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxyforge-${{ matrix.target }}
+          path: proxyforge-${{ matrix.target }}.*
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ProxyForge ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## ProxyForge ${{ steps.get_version.outputs.VERSION }}
+
+            ### Changes
+            See [CHANGELOG.md](CHANGELOG.md) for details.
+
+            ### Downloads
+            - **Linux (x64)**: `proxyforge-x86_64-unknown-linux-gnu.tar.gz`
+            - **macOS (Intel)**: `proxyforge-x86_64-apple-darwin.tar.gz`
+            - **macOS (Apple Silicon)**: `proxyforge-aarch64-apple-darwin.tar.gz`
+            - **Windows (x64)**: `proxyforge-x86_64-pc-windows-msvc.zip`
+
+            ### Quick Start
+            ```bash
+            # Linux/macOS
+            tar -xzf proxyforge-*.tar.gz
+            cd proxyforge-dist
+            ./proxyforge
+
+            # Windows
+            # Extract the zip file and run proxyforge.exe
+            ```
+          files: |
+            artifacts/**/*
+          draft: false
+          prerelease: ${{ contains(steps.get_version.outputs.VERSION, '-') }}
+
+  publish-docker:
+    name: Publish Docker Image
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "MAJOR_MINOR=$(echo $VERSION | cut -d. -f1,2)" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ steps.get_version.outputs.VERSION }}
+            ghcr.io/${{ github.repository }}:${{ steps.get_version.outputs.MAJOR_MINOR }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish-crate:
+    name: Publish to crates.io
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CRATES_TOKEN }}
+        continue-on-error: true

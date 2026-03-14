@@ -1,0 +1,79 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/proxyforge-core",
+    "crates/proxyforge-api",
+    "crates/proxyforge-cli",
+    "crates/proxyforge-mcp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+authors = ["ProxyForge Team"]
+repository = "https://github.com/proxyforge/proxyforge"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.36", features = ["full"] }
+
+# HTTP
+axum = { version = "0.7", features = ["ws", "macros"] }
+axum-extra = { version = "0.9", features = ["typed-header"] }
+hyper = { version = "1.2", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
+
+# TLS
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
+tokio-rustls = "0.26"
+rcgen = "0.13"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Storage
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Configuration
+config = "0.14"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Utilities
+uuid = { version = "1.7", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+bytes = "1.5"
+futures = "0.3"
+pin-project-lite = "0.2"
+async-trait = "0.1"
+once_cell = "1.19"
+parking_lot = "0.12"
+base64 = "0.22"
+regex = "1.10"
+rand = "0.8"
+sha1 = "0.10"
+url = "2.5"
+toml = "0.8"
+urlencoding = "2.1"
+dirs = "5.0"
+reqwest = { version = "0.12", features = ["json"] }
+
+# Internal crates
+proxyforge-core = { path = "crates/proxyforge-core" }
+proxyforge-api = { path = "crates/proxyforge-api" }

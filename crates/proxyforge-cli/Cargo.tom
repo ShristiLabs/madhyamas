@@ -1,0 +1,12 @@
+[package]
+name = "proxyforge-cli"
+version = "0.1.0"
+edition = "2024"
+description = "HTTP/HTTPS debugging proxy with web UI"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/example/proxyforge"
+readme = "README.md"
+keywords = ["proxy", "debug", "http", "https", "web", "ui", "traffic", "intercept"]
+categories = ["networking", "web-programming", "development-tools"]
+
+build = "cargo build --release"

@@ -1,0 +1,24 @@
+[package]
+name = "proxyforge-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "proxyforge"
+path = "src/main.rs"
+
+[dependencies]
+proxyforge-core.workspace = true
+proxyforge-api.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+config.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true

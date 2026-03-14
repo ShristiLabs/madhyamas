@@ -1,0 +1,68 @@
+name: proxyforge
+version: '0.1.0'
+summary: Open-source HTTP/HTTPS debugging proxy with web-based UI
+description: |
+  ProxyForge is a fast, cross-platform debugging proxy for developers.
+  It captures all HTTP/HTTPS traffic and displays it in a modern web-based UI.
+  Features include traffic inspection, request modification, response mocking,
+  bandwidth throttling, WebSocket support, and much more.
+
+base: core22
+confinement: strict
+grade: stable
+
+architectures:
+  - build-on: amd64
+  - build-on: arm64
+
+apps:
+  proxyforge:
+    command: bin/proxyforge
+    daemon: simple
+    plugs:
+      - network
+      - network-bind
+      - home
+    slots:
+      - proxyforge-ui
+
+parts:
+  proxyforge:
+    plugin: rust
+    source: .
+    rust-channel: stable
+    build-packages:
+      - pkg-config
+      - libssl-dev
+      - nodejs
+      - npm
+    override-build: |
+      # Build backend
+      cargo build --release -p proxyforge-cli
+
+      # Build frontend
+      cd web
+      npm install
+      npm run build
+
+      # Install binary
+      mkdir -p $SNAPCRAFT_PART_INSTALL/bin
+      cp ../target/release/proxyforge-cli $SNAPCRAFT_PART_INSTALL/bin/proxyforge
+
+      # Install web assets
+      mkdir -p $SNAPCRAFT_PART_INSTALL/share/proxyforge/web
+      cp -r dist/* $SNAPCRAFT_PART_INSTALL/share/proxyforge/web/
+
+slots:
+  proxyforge-ui:
+    interface: content
+    content: ui
+    source:
+      write:
+        - $SNAP_DATA/sessions
+
+plugs:
+  proxyforge-certs:
+    interface: content
+    content: certs
+    target: $SNAP_DATA/certs
