@@ -644,7 +644,7 @@ jobs:
           echo "MAJOR=$(echo $VERSION | cut -d. -f1)" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
