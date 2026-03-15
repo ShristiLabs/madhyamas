@@ -606,7 +606,7 @@ function generateHAR(entry: TrafficEntry): string {
   const har = {
     log: {
       version: "1.2",
-      creator: { name: "ProxyForge", version: "0.1.0" },
+      creator: { name: "Madhyamas", version: "0.1.0" },
       entries: [
         {
           startedDateTime: new Date(entry.timestamp).toISOString(),

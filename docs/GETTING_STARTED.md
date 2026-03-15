@@ -1,43 +1,43 @@
-# Getting Started with ProxyForge
+# Getting Started with Madhyamas
 
 ## Installation
 
 ### macOS (Homebrew)
 ```bash
-brew tap proxyforge/tap
-brew install proxyforge
+brew tap madhyamas/tap
+brew install madhyamas
 ```
 
 ### Linux (AUR)
 ```bash
-yay -S proxyforge
+yay -S madhyamas
 ```
 
 ### Ubuntu/Debian (Snap)
 ```bash
-sudo snap install proxyforge
+sudo snap install madhyamas
 ```
 
 ### Docker
 ```bash
-docker run -d -p 3001:3001 -p 8888:8888 proxyforge/proxyforge
+docker run -d -p 3001:3001 -p 8888:8888 madhyamas/madhyamas
 ```
 
 ### From Source
 ```bash
-git clone https://github.com/proxyforge/proxyforge.git
-cd proxyforge
+git clone https://github.com/madhyamas/madhyamas.git
+cd madhyamas
 cargo build --release
 ```
 
 ## Quick Start
-1. Start ProxyForge: `proxyforge`
+1. Start Madhyamas: `madhyamas`
 2. Configure your browser to use `localhost:8888` as proxy
 3. Open `http://localhost:3001` in your browser
 4. Install the root CA certificate when prompted
 
 ## Configuration
-Configuration is stored in `~/.proxyforge/config.toml`:
+Configuration is stored in `~/.madhyamas/config.toml`:
 ```tom
 [general]
 api_port = 3001
@@ -45,11 +45,11 @@ proxy_port = 8888
 log_level = "info"
 
 [tls]
-cert_dir = "~/.proxyforge/certs"
+cert_dir = "~/.madhyamas/certs"
 auto_install_cert = true
 
 [storage]
-data_dir = "~/.proxyforge/data"
+data_dir = "~/.madhyamas/data"
 max_entries = 100000
 ```
 
@@ -89,14 +89,14 @@ max_entries = 100000
 ## Troubleshooting
 ### Certificate Errors
 If you see certificate warnings in your browser:
-1. Open ProxyForge web UI
+1. Open Madhyamas web UI
 2. Click "Install Certificate" in the header
 3. Follow the instructions for your OS
 
 ### Connection Issues
 If traffic isn't appearing
 1. Check proxy settings in your browser/app
-2. Verify ProxyForge is running: `curl http://localhost:3001/api/health`
+2. Verify Madhyamas is running: `curl http://localhost:3001/api/health`
 3. Check firewall rules
 
 ### Performance Issues

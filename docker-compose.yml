@@ -1,29 +1,29 @@
 version: "3.8"
 
 services:
-  proxyforge:
+  madhyamas:
     build:
       context: .
       dockerfile: Dockerfile
-    image: proxyforge:latest
-    container_name: proxyforge
+    image: madhyamas:latest
+    container_name: madhyamas
     ports:
       - "3001:3001" # Web UI / API
       - "8888:8888" # HTTP Proxy
       - "8443:8443" # HTTPS Proxy
     volumes:
-      - proxyforge_data:/data
+      - madhyamas_data:/data
       - ./certs:/data/certs:ro # Mount pre-generated certs if available
     environment:
-      - PROXYFORGE_LOG_LEVEL=info
-      - PROXYFORGE_API_PORT=3001
-      - PROXYFORGE_PROXY_PORT=8888
-      - PROXYFORGE_PROXY_TLS_PORT=8443
-      - PROXYFORGE_DATA_DIR=/data
+      - MADHYAMAS_LOG_LEVEL=info
+      - MADHYAMAS_API_PORT=3001
+      - MADHYAMAS_PROXY_PORT=8888
+      - MADHYAMAS_PROXY_TLS_PORT=8443
+      - MADHYAMAS_DATA_DIR=/data
       # IMPORTANT: Set this to your machine's LAN IP for mobile device access
       # The container cannot auto-detect the host's network IP
       # Run: ./docker/get-host-ip.sh to find your IP
-      - PROXYFORGE_PUBLIC_IP=${PROXYFORGE_PUBLIC_IP:-}
+      - MADHYAMAS_PUBLIC_IP=${MADHYAMAS_PUBLIC_IP:-}
     command: ["--host", "0.0.0.0"]
     restart: unless-stopped
     healthcheck:
@@ -41,26 +41,26 @@ services:
       retries: 3
       start_period: 10s
     networks:
-      - proxyforge_net
+      - madhyamas_net
 
   # Host network mode variant - uses host's network stack directly
   # Use this if you need automatic IP detection to work
-  proxyforge-host:
+  madhyamas-host:
     build:
       context: .
       dockerfile: Dockerfile
-    image: proxyforge:latest
-    container_name: proxyforge-host
+    image: madhyamas:latest
+    container_name: madhyamas-host
     network_mode: host
     volumes:
-      - proxyforge_data:/data
+      - madhyamas_data:/data
       - ./certs:/data/certs:ro
     environment:
-      - PROXYFORGE_LOG_LEVEL=info
-      - PROXYFORGE_API_PORT=3001
-      - PROXYFORGE_PROXY_PORT=8888
-      - PROXYFORGE_PROXY_TLS_PORT=8443
-      - PROXYFORGE_DATA_DIR=/data
+      - MADHYAMAS_LOG_LEVEL=info
+      - MADHYAMAS_API_PORT=3001
+      - MADHYAMAS_PROXY_PORT=8888
+      - MADHYAMAS_PROXY_TLS_PORT=8443
+      - MADHYAMAS_DATA_DIR=/data
     command: ["--host", "0.0.0.0"]
     restart: unless-stopped
     profiles:
@@ -68,55 +68,55 @@ services:
 
   # MCP Server for AI assistant integration (Windsurf, Claude, etc.)
   # Note: MCP uses stdio transport, so this service is mainly for building the binary
-  # For Windsurf integration, run proxyforge-mcp locally or use docker exec
-  proxyforge-mcp:
+  # For Windsurf integration, run madhyamas-mcp locally or use docker exec
+  madhyamas-mcp:
     build:
       context: .
       dockerfile: Dockerfile
-    image: proxyforge:latest
-    container_name: proxyforge-mcp
+    image: madhyamas:latest
+    container_name: madhyamas-mcp
     environment:
-      - PROXYFORGE_API_URL=http://proxyforge:3001
-      - PROXYFORGE_TIMEOUT=30
-    entrypoint: ["proxyforge-mcp"]
+      - MADHYAMAS_API_URL=http://madhyamas:3001
+      - MADHYAMAS_TIMEOUT=30
+    entrypoint: ["madhyamas-mcp"]
     stdin_open: true
     tty: true
     restart: "no"
     depends_on:
-      - proxyforge
+      - madhyamas
     networks:
-      - proxyforge_net
+      - madhyamas_net
     profiles:
       - mcp
 
   # Development service with hot reload
-  proxyforge-dev:
+  madhyamas-dev:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    image: proxyforge:dev
-    container_name: proxyforge-dev
+    image: madhyamas:dev
+    container_name: madhyamas-dev
     ports:
       - "3001:3001"
       - "8888:8888"
       - "8443:8443"
       - "5173:5173" # Vite dev server
     volumes:
-      - proxyforge_data:/data
+      - madhyamas_data:/data
       - ./crates:/app/crates:ro
       - ./web:/app/web:ro
     environment:
       - RUST_LOG=debug
-      - PROXYFORGE_LOG_LEVEL=debug
+      - MADHYAMAS_LOG_LEVEL=debug
     profiles:
       - dev
     networks:
-      - proxyforge_net
+      - madhyamas_net
 
 volumes:
-  proxyforge_data:
+  madhyamas_data:
     driver: local
 
 networks:
-  proxyforge_net:
+  madhyamas_net:
     driver: bridge

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>madhyamas</id>
+    <version>0.1.0</version>
+    <title>Madhyamas</title>
+    <authors>Madhyamas Team</authors>
+    <owners>madhyamas</owners>
+    <projectUrl>https://github.com/madhyamas/madhyamas</projectUrl>
+    <licenseUrl>https://github.com/madhyamas/madhyamas/blob/main/LICENSE-MIT</licenseUrl>
+    <iconUrl>https://raw.githubusercontent.com/madhyamas/madhyamas/main/assets/icon.png</iconUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Open-source HTTP/HTTPS debugging proxy with web-based UI. Madhyamas is a high-performance, cross-platform debugging proxy built in Rust - the free alternative to Charles Proxy and Fiddler.</description>
+    <summary>HTTP/HTTPS debugging proxy with modern web UI</summary>
+    <releaseNotes>https://github.com/madhyamas/madhyamas/releases</releaseNotes>
+    <tags>proxy http https debugging developer-tools network traffic-analysis</tags>
+    <packageSourceUrl>https://github.com/madhyamas/madhyamas/tree/main/packaging/windows/chocolatey/madhyamas</packageSourceUrl>
+    <docsUrl>https://github.com/madhyamas/madhyamas#readme</docsUrl>
+    <bugTrackerUrl>https://github.com/madhyamas/madhyamas/issues</bugTrackerUrl>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

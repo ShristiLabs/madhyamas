@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "proxyforge": {
-      "command": "/Users/harikiranbavineni/product-design-skill/proxyforge/bin/proxyforge-mcp",
+    "madhyamas": {
+      "command": "/Users/harikiranbavineni/product-design-skill/madhyamas/bin/madhyamas-mcp",
       "args": [],
       "env": {}
     }

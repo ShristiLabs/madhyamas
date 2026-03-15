@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# ProxyForge Local Startup Script
-# This script builds and starts ProxyForge directly on the host machine (without Docker)
+# Madhyamas Local Startup Script
+# This script builds and starts Madhyamas directly on the host machine (without Docker)
 
 set -e
 
@@ -18,7 +18,7 @@ if [[ "$1" == "--clean" ]] || [[ "$1" == "-c" ]]; then
     CLEAN_BUILD=true
 fi
 
-echo -e "${GREEN}ProxyForge Local Startup Script${NC}"
+echo -e "${GREEN}Madhyamas Local Startup Script${NC}"
 echo "================================"
 
 if [ "$CLEAN_BUILD" = true ]; then
@@ -92,62 +92,62 @@ fi
 # Build Rust binary
 echo -e "${YELLOW}Building Rust binary...${NC}"
 if [ "$CLEAN_BUILD" = true ]; then
-    cargo build --release --bin proxyforge
+    cargo build --release --bin madhyamas
 else
     # Check if binary exists
-    if [ ! -f "target/release/proxyforge" ]; then
-        cargo build --release --bin proxyforge
+    if [ ! -f "target/release/madhyamas" ]; then
+        cargo build --release --bin madhyamas
     else
         # Incremental build
-        cargo build --release --bin proxyforge
+        cargo build --release --bin madhyamas
     fi
 fi
 echo -e "${GREEN}✓ Rust binary built${NC}"
 
 # Create data directories
 echo -e "${YELLOW}Creating data directories...${NC}"
-mkdir -p ~/.proxyforge/certs
-mkdir -p ~/.proxyforge/logs
+mkdir -p ~/.madhyamas/certs
+mkdir -p ~/.madhyamas/logs
 echo -e "${GREEN}✓ Data directories ready${NC}"
 
 # Check if process is already running
-if pgrep -f "target/release/proxyforge" > /dev/null; then
-    echo -e "${YELLOW}ProxyForge is already running. Stopping it...${NC}"
-    pkill -f "target/release/proxyforge" || true
+if pgrep -f "target/release/madhyamas" > /dev/null; then
+    echo -e "${YELLOW}Madhyamas is already running. Stopping it...${NC}"
+    pkill -f "target/release/madhyamas" || true
     sleep 2
 fi
 
-# Start ProxyForge
-echo -e "${GREEN}Starting ProxyForge...${NC}"
+# Start Madhyamas
+echo -e "${GREEN}Starting Madhyamas...${NC}"
 echo ""
 
 # Determine host and port from environment or use defaults
-HOST="${PROXYFORGE_HOST:-0.0.0.0}"
-API_PORT="${PROXYFORGE_API_PORT:-3001}"
-PROXY_PORT="${PROXYFORGE_PROXY_PORT:-8888}"
+HOST="${MADHYAMAS_HOST:-0.0.0.0}"
+API_PORT="${MADHYAMAS_API_PORT:-3001}"
+PROXY_PORT="${MADHYAMAS_PROXY_PORT:-8888}"
 
 # Build command with arguments
-CMD="./target/release/proxyforge --host $HOST --api-port $API_PORT --proxy-port $PROXY_PORT"
+CMD="./target/release/madhyamas --host $HOST --api-port $API_PORT --proxy-port $PROXY_PORT"
 
 # Add public IP if set
-if [ -n "$PROXYFORGE_PUBLIC_IP" ]; then
-    CMD="$CMD --public-ip $PROXYFORGE_PUBLIC_IP"
+if [ -n "$MADHYAMAS_PUBLIC_IP" ]; then
+    CMD="$CMD --public-ip $MADHYAMAS_PUBLIC_IP"
 fi
 
 echo -e "${BLUE}Command: $CMD${NC}"
 echo ""
 
 # Run in background and save PID
-nohup $CMD > ~/.proxyforge/logs/proxyforge.log 2>&1 &
+nohup $CMD > ~/.madhyamas/logs/madhyamas.log 2>&1 &
 PID=$!
-echo $PID > ~/.proxyforge/proxyforge.pid
+echo $PID > ~/.madhyamas/madhyamas.pid
 
 # Wait a moment for startup
 sleep 3
 
 # Check if process is still running
 if ps -p $PID > /dev/null; then
-    echo -e "${GREEN}✓ ProxyForge is running!${NC}"
+    echo -e "${GREEN}✓ Madhyamas is running!${NC}"
     echo ""
     echo "Services:"
     echo "  • Web UI/API:    http://localhost:$API_PORT"
@@ -156,23 +156,23 @@ if ps -p $PID > /dev/null; then
     echo ""
     echo "Process:"
     echo "  • PID:           $PID"
-    echo "  • Log file:      ~/.proxyforge/logs/proxyforge.log"
+    echo "  • Log file:      ~/.madhyamas/logs/madhyamas.log"
     echo ""
     echo "Commands:"
     echo "  • Stop:          ./stop-local.sh"
-    echo "  • View logs:     tail -f ~/.proxyforge/logs/proxyforge.log"
+    echo "  • View logs:     tail -f ~/.madhyamas/logs/madhyamas.log"
     echo "  • Clean rebuild: ./startup-local.sh --clean"
     echo ""
     echo "Environment variables:"
-    echo "  • PROXYFORGE_HOST=$HOST"
-    echo "  • PROXYFORGE_API_PORT=$API_PORT"
-    echo "  • PROXYFORGE_PROXY_PORT=$PROXY_PORT"
-    if [ -n "$PROXYFORGE_PUBLIC_IP" ]; then
-        echo "  • PROXYFORGE_PUBLIC_IP=$PROXYFORGE_PUBLIC_IP"
+    echo "  • MADHYAMAS_HOST=$HOST"
+    echo "  • MADHYAMAS_API_PORT=$API_PORT"
+    echo "  • MADHYAMAS_PROXY_PORT=$PROXY_PORT"
+    if [ -n "$MADHYAMAS_PUBLIC_IP" ]; then
+        echo "  • MADHYAMAS_PUBLIC_IP=$MADHYAMAS_PUBLIC_IP"
     fi
 else
-    echo -e "${RED}Error: ProxyForge failed to start${NC}"
-    echo "Check logs at: ~/.proxyforge/logs/proxyforge.log"
-    cat ~/.proxyforge/logs/proxyforge.log
+    echo -e "${RED}Error: Madhyamas failed to start${NC}"
+    echo "Check logs at: ~/.madhyamas/logs/madhyamas.log"
+    cat ~/.madhyamas/logs/madhyamas.log
     exit 1
 fi

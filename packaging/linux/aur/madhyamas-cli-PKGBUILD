@@ -1,0 +1,42 @@
+# AUR Package for Madhyamas CLI
+# Maintainer: Madhyamas Team <team@madhyamas.io>
+
+pkgname=madhyamas-cli
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Command-line interface for Madhyamas debugging proxy"
+arch=('x86_64' 'aarch64')
+url="https://github.com/madhyamas/madhyamas"
+license=('MIT' 'Apache-2.0')
+depends=('openssl' 'gcc-libs' 'glibc')
+makedepends=('rust' 'cargo')
+source=("https://github.com/madhyamas/madhyamas/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "${srcdir}/madhyamas-${pkgver}"
+    cargo build --release -p madhyamas-cli
+}
+
+package() {
+    cd "${srcdir}/madhyamas-${pkgver}"
+
+    # Install binary
+    install -Dm755 "target/release/madhyamas-cli" "${pkgdir}/usr/bin/madhyamas-cli"
+
+    # Create symlink alias
+    ln -s madhyamas-cli "${pkgdir}/usr/bin/pf"
+
+    # Install licenses
+    install -Dm644 "LICENSE-MIT" "${pkgdir}/usr/share/licenses/${pkgname}/MIT"
+    install -Dm644 "LICENSE-APACHE" "${pkgdir}/usr/share/licenses/${pkgname}/Apache-2.0"
+
+    # Install shell completions
+    install -dm755 "${pkgdir}/usr/share/bash-completion/completions"
+    install -dm755 "${pkgdir}/usr/share/zsh/site-functions"
+    install -dm755 "${pkgdir}/usr/share/fish/vendor_completions.d"
+
+    "${pkgdir}/usr/bin/madhyamas-cli" completion --shell bash > "${pkgdir}/usr/share/bash-completion/completions/madhyamas-cli" || true
+    "${pkgdir}/usr/bin/madhyamas-cli" completion --shell zsh > "${pkgdir}/usr/share/zsh/site-functions/_madhyamas-cli" || true
+    "${pkgdir}/usr/bin/madhyamas-cli" completion --shell fish > "${pkgdir}/usr/share/fish/vendor_completions.d/madhyamas-cli.fish" || true
+}

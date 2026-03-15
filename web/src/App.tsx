@@ -51,8 +51,8 @@ function App() {
         setIsDark(window.matchMedia("(prefers-color-scheme: dark)").matches);
       }
     };
-    window.addEventListener("proxyforge-theme-change", handler);
-    return () => window.removeEventListener("proxyforge-theme-change", handler);
+    window.addEventListener("madhyamas-theme-change", handler);
+    return () => window.removeEventListener("madhyamas-theme-change", handler);
   }, []);
 
   useEffect(() => {
@@ -102,7 +102,7 @@ function App() {
                 PF
               </span>
             </div>
-            <h1 className="text-xl font-semibold">ProxyForge</h1>
+            <h1 className="text-xl font-semibold">Madhyamas</h1>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm font-mono px-2.5 py-1 rounded-md bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">

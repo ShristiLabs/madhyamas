@@ -1,0 +1,30 @@
+# AUR Package for Madhyamas MCP Server
+# Maintainer: Madhyamas Team <team@madhyamas.io>
+
+pkgname=madhyamas-mcp
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="MCP server for Madhyamas - AI agent integration"
+arch=('x86_64' 'aarch64')
+url="https://github.com/madhyamas/madhyamas"
+license=('MIT' 'Apache-2.0')
+depends=('openssl' 'gcc-libs' 'glibc')
+makedepends=('rust' 'cargo')
+source=("https://github.com/madhyamas/madhyamas/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "${srcdir}/madhyamas-${pkgver}"
+    cargo build --release -p madhyamas-mcp
+}
+
+package() {
+    cd "${srcdir}/madhyamas-${pkgver}"
+
+    # Install binary
+    install -Dm755 "target/release/madhyamas-mcp" "${pkgdir}/usr/bin/madhyamas-mcp"
+
+    # Install licenses
+    install -Dm644 "LICENSE-MIT" "${pkgdir}/usr/share/licenses/${pkgname}/MIT"
+    install -Dm644 "LICENSE-APACHE" "${pkgdir}/usr/share/licenses/${pkgname}/Apache-2.0"
+}

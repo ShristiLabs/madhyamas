@@ -227,7 +227,7 @@ export function MocksPanel({ onEditMock }: MocksPanelProps) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'proxyforge-mocks.json';
+    a.download = 'madhyamas-mocks.json';
     a.click();
     URL.revokeObjectURL(url);
     toast({ description: 'Mocks exported' });

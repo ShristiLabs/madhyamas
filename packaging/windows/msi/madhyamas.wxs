@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Madhyamas MSI Installer
+  Build with: wix build madhyamas.wxs -o madhyamas.msi
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Madhyamas"
+           Manufacturer="Madhyamas Team"
+           Version="0.1.0"
+           UpgradeCode="E8F5C3A2-1B4D-4E6F-8A9C-0D2E3F4A5B6C"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Madhyamas is already installed." />
+
+    <Media Id="1" Cabinet="madhyamas.cab" EmbedCab="yes" />
+
+    <Feature Id="MainFeature" Title="Madhyamas" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentGroupRef Id="WebAssets" />
+    </Feature>
+
+    <Feature Id="CLIFeature" Title="Madhyamas CLI" Level="1">
+      <ComponentGroupRef Id="CLIComponents" />
+    </Feature>
+
+    <Feature Id="MCPFeature" Title="Madhyamas MCP Server" Level="1">
+      <ComponentGroupRef Id="MCPComponents" />
+    </Feature>
+
+    <!-- Add to PATH -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <UI>
+      <UIRef Id="WixUI_InstallDir" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" />
+    </UI>
+
+    <WixVariable Id="WixUILicenseRtf" Value="LICENSE.rtf" />
+    <WixVariable Id="WixUIBannerBmp" Value="banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="dialog.bmp" />
+
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Madhyamas">
+        <Directory Id="BinFolder" Name="bin" />
+        <Directory Id="WebFolder" Name="web" />
+        <Directory Id="DataFolder" Name="data" />
+      </Directory>
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="BinFolder">
+      <Component Id="MadhyamasExe" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+        <File Id="madhyamas.exe" Source="$(var.SourceDir)\madhyamas.exe" KeyPath="yes" />
+        <Environment Id="PATH" Name="PATH" Value="[BinFolder]" Permanent="no" Part="last" Action="set" System="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="CLIComponents" Directory="BinFolder">
+      <Component Id="ProxyforgeCLIExe" Guid="B2C3D4E5-F6A7-8901-BCDE-F23456789012">
+        <File Id="madhyamas_cli.exe" Source="$(var.SourceDir)\madhyamas-cli.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="MCPComponents" Directory="BinFolder">
+      <Component Id="ProxyforgeMCPExe" Guid="C3D4E5F6-A7B8-9012-CDEF-345678901234">
+        <File Id="madhyamas_mcp.exe" Source="$(var.SourceDir)\madhyamas-mcp.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="WebAssets" Directory="WebFolder">
+      <Component Id="WebAssetsComponent" Guid="D4E5F6A7-B8C9-0123-DEF0-456789012345">
+        <File Id="index.html" Source="$(var.SourceDir)\web\index.html" KeyPath="yes" />
+        <CopyFile Id="CopyWebAssets" SourceDirectory="$(var.SourceDir)\web" DestinationDirectory="WebFolder" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+</Wix>

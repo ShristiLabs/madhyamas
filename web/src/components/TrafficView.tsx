@@ -28,8 +28,8 @@ import type { ActiveFilter } from "@/types/filters";
 import { applyFilters } from "@/types/filters";
 import { cn } from "@/lib/utils";
 
-const STORAGE_KEY_LIST_WIDTH = "proxyforge-traffic-list-width";
-const STORAGE_KEY_TOOLS_WIDTH = "proxyforge-tools-width";
+const STORAGE_KEY_LIST_WIDTH = "madhyamas-traffic-list-width";
+const STORAGE_KEY_TOOLS_WIDTH = "madhyamas-tools-width";
 const DEFAULT_LIST_WIDTH = 40;
 const DEFAULT_TOOLS_WIDTH = 400;
 const MIN_LIST_WIDTH = 20;
@@ -158,7 +158,7 @@ export function TrafficView() {
         const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = blobUrl;
-        a.download = `proxyforge-${new Date().toISOString().slice(0, 10)}.har`;
+        a.download = `madhyamas-${new Date().toISOString().slice(0, 10)}.har`;
         a.click();
         URL.revokeObjectURL(blobUrl);
       } catch (error) {

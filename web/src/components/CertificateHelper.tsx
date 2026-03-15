@@ -238,7 +238,7 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "proxyforge-ca.crt";
+      a.download = "madhyamas-ca.crt";
       a.click();
       URL.revokeObjectURL(url);
 
@@ -290,13 +290,13 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
         {
           title: "2. Download CA Certificate",
           description:
-            "Download the ProxyForge CA certificate using the button above or visit the certificate URL in Safari",
+            "Download the Madhyamas CA certificate using the button above or visit the certificate URL in Safari",
         },
         {
           title: "3. Install Certificate",
           description: "Add the certificate to your keychain",
           subSteps: [
-            'Double-click the downloaded "proxyforge-ca.crt" file',
+            'Double-click the downloaded "madhyamas-ca.crt" file',
             'In the "Add Certificates" dialog, select "System" from the Keychain dropdown',
             'Click "Add" to install the certificate',
             "Enter your macOS password when prompted",
@@ -308,7 +308,7 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
           subSteps: [
             'Open "Keychain Access" app (use Spotlight or find in Applications > Utilities)',
             'Select "System" keychain in the left sidebar',
-            'Find "ProxyForge CA" certificate in the list',
+            'Find "Madhyamas CA" certificate in the list',
             "Double-click the certificate to open details",
             'Expand the "Trust" section',
             'Set "When using this certificate" to "Always Trust"',
@@ -322,7 +322,7 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
             "Open Safari or any browser",
             "Visit any HTTPS website (e.g., https://example.com)",
             "You should NOT see any certificate warnings",
-            "Check ProxyForge UI to see captured traffic",
+            "Check Madhyamas UI to see captured traffic",
           ],
         },
       ],
@@ -348,13 +348,13 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
         {
           title: "2. Download CA Certificate",
           description:
-            "Download the ProxyForge CA certificate using the button above",
+            "Download the Madhyamas CA certificate using the button above",
         },
         {
           title: "3. Install Certificate",
           description: "Import the certificate into Windows Certificate Store",
           subSteps: [
-            'Double-click the downloaded "proxyforge-ca.crt" file',
+            'Double-click the downloaded "madhyamas-ca.crt" file',
             'Click "Install Certificate..." button',
             'Select "Local Machine" (requires administrator privileges)',
             'Click "Next"',
@@ -372,7 +372,7 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
             'Press Win + R, type "certmgr.msc" and press Enter',
             'Expand "Trusted Root Certification Authorities"',
             'Click on "Certificates" folder',
-            'Look for "ProxyForge CA" in the list',
+            'Look for "Madhyamas CA" in the list',
             "Double-click to view certificate details",
           ],
         },
@@ -383,7 +383,7 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
             "Open any browser (Chrome, Edge, Firefox)",
             "Visit an HTTPS website (e.g., https://example.com)",
             "You should NOT see certificate warnings",
-            "Check ProxyForge UI for captured HTTPS traffic",
+            "Check Madhyamas UI for captured HTTPS traffic",
           ],
         },
       ],
@@ -422,34 +422,34 @@ source ~/.bashrc  # or source ~/.zshrc`,
           title: "2. Download CA Certificate",
           description: "Download the certificate file",
           code: `# Using wget
-wget http://${proxyConfig.ip}:3001/api/cert/ca -O proxyforge-ca.crt
+wget http://${proxyConfig.ip}:3001/api/cert/ca -O madhyamas-ca.crt
 
 # Or using curl
-curl http://${proxyConfig.ip}:3001/api/cert/ca -o proxyforge-ca.crt`,
+curl http://${proxyConfig.ip}:3001/api/cert/ca -o madhyamas-ca.crt`,
         },
         {
           title: "3. Install Certificate (Ubuntu/Debian)",
           description: "Add certificate to system trust store",
           code: `# Copy certificate to system CA directory
-sudo cp proxyforge-ca.crt /usr/local/share/ca-certificates/proxyforge-ca.crt
+sudo cp madhyamas-ca.crt /usr/local/share/ca-certificates/madhyamas-ca.crt
 
 # Update CA certificates
 sudo update-ca-certificates
 
 # Verify installation
-ls -la /etc/ssl/certs/ | grep proxyforge`,
+ls -la /etc/ssl/certs/ | grep madhyamas`,
         },
         {
           title: "3. Install Certificate (Fedora/RHEL/CentOS)",
           description: "Add certificate to system trust store",
           code: `# Copy certificate to system CA directory
-sudo cp proxyforge-ca.crt /etc/pki/ca-trust/source/anchors/proxyforge-ca.crt
+sudo cp madhyamas-ca.crt /etc/pki/ca-trust/source/anchors/madhyamas-ca.crt
 
 # Update CA trust
 sudo update-ca-trust
 
 # Verify installation
-trust list | grep -i proxyforge`,
+trust list | grep -i madhyamas`,
         },
         {
           title: "4. Install Certificate for Browsers",
@@ -457,7 +457,7 @@ trust list | grep -i proxyforge`,
           subSteps: [
             "For Firefox: Settings > Privacy & Security > Certificates > View Certificates > Authorities > Import",
             "For Chrome: Settings > Privacy and security > Security > Manage certificates > Authorities > Import",
-            "Select the proxyforge-ca.crt file",
+            "Select the madhyamas-ca.crt file",
             'Check "Trust this CA to identify websites"',
             "Click OK",
           ],
@@ -468,7 +468,7 @@ trust list | grep -i proxyforge`,
           code: `# Test with curl
 curl -v https://example.com
 
-# Should show ProxyForge CA in certificate chain
+# Should show Madhyamas CA in certificate chain
 # No SSL certificate errors should appear`,
         },
       ],
@@ -525,7 +525,7 @@ curl -v https://example.com
             'Scroll down and tap "About"',
             'Scroll to bottom and tap "Certificate Trust Settings"',
             'Under "Enable Full Trust for Root Certificates"',
-            'Toggle ON the switch for "ProxyForge CA"',
+            'Toggle ON the switch for "Madhyamas CA"',
             'Tap "Continue" in the warning dialog',
           ],
         },
@@ -536,7 +536,7 @@ curl -v https://example.com
             "Open Safari browser",
             "Visit any HTTPS website (e.g., https://example.com)",
             "You should NOT see any certificate warnings",
-            "Check ProxyForge UI on your computer to see captured traffic",
+            "Check Madhyamas UI on your computer to see captured traffic",
             "If you see warnings, repeat step 4 to enable certificate trust",
           ],
         },
@@ -581,8 +581,8 @@ curl -v https://example.com
             'Select "CA certificate"',
             'Tap "Install anyway" if warned',
             "Navigate to Downloads folder",
-            'Select "proxyforge-ca.crt" file',
-            'Enter a name like "ProxyForge CA" if prompted',
+            'Select "madhyamas-ca.crt" file',
+            'Enter a name like "Madhyamas CA" if prompted',
             'Tap "OK"',
           ],
         },
@@ -592,7 +592,7 @@ curl -v https://example.com
           subSteps: [
             "Go to Settings > Security > Trusted credentials",
             'Tap on "User" tab',
-            'Look for "ProxyForge CA" in the list',
+            'Look for "Madhyamas CA" in the list',
             "Tap on it to view details",
           ],
         },
@@ -613,7 +613,7 @@ curl -v https://example.com
             "Open Chrome browser",
             "Visit an HTTPS website (e.g., https://example.com)",
             "You should NOT see certificate warnings",
-            "Check ProxyForge UI on your computer for captured traffic",
+            "Check Madhyamas UI on your computer for captured traffic",
           ],
         },
       ],
@@ -642,7 +642,7 @@ curl -v https://example.com
         {
           title: "2. Download CA Certificate",
           description:
-            "Download the ProxyForge CA certificate using the button above",
+            "Download the Madhyamas CA certificate using the button above",
         },
         {
           title: "3. Install Certificate in Firefox",
@@ -653,7 +653,7 @@ curl -v https://example.com
             'Click "View Certificates..." button',
             'Go to "Authorities" tab',
             'Click "Import..." button',
-            'Select the downloaded "proxyforge-ca.crt" file',
+            'Select the downloaded "madhyamas-ca.crt" file',
             'Check "Trust this CA to identify websites"',
             'Check "Trust this CA to identify email users" (optional)',
             'Click "OK"',
@@ -664,7 +664,7 @@ curl -v https://example.com
           description: "Confirm the certificate is properly installed",
           subSteps: [
             'In the Certificates window, stay on "Authorities" tab',
-            'Look for "ProxyForge CA" in the list',
+            'Look for "Madhyamas CA" in the list',
             "It should be under organization name",
             "Double-click to view certificate details",
           ],
@@ -677,8 +677,8 @@ curl -v https://example.com
             "You should NOT see any certificate warnings",
             "Click the padlock icon in the address bar",
             'Click "Connection secure" > "More information"',
-            "Verify the certificate chain includes ProxyForge CA",
-            "Check ProxyForge UI for captured HTTPS traffic",
+            "Verify the certificate chain includes Madhyamas CA",
+            "Check Madhyamas UI for captured HTTPS traffic",
           ],
         },
       ],
@@ -704,7 +704,7 @@ open -a "Google Chrome" --args --proxy-server="${proxyConfig.ip}:${proxyConfig.p
         {
           title: "2. Download CA Certificate",
           description:
-            "Download the ProxyForge CA certificate using the button above",
+            "Download the Madhyamas CA certificate using the button above",
         },
         {
           title: "3. Install Certificate in Chrome",
@@ -719,7 +719,7 @@ open -a "Google Chrome" --args --proxy-server="${proxyConfig.ip}:${proxyConfig.p
             "macOS: This opens Keychain Access (follow macOS instructions)",
             'Linux: Go to "Authorities" tab',
             'Click "Import" button',
-            'Select the downloaded "proxyforge-ca.crt" file',
+            'Select the downloaded "madhyamas-ca.crt" file',
             'Check "Trust this certificate for identifying websites"',
             'Click "OK" or "Import"',
           ],
@@ -742,8 +742,8 @@ open -a "Google Chrome" --args --proxy-server="${proxyConfig.ip}:${proxyConfig.p
             "Click the padlock icon in the address bar",
             'Click "Connection is secure"',
             'Click "Certificate is valid"',
-            "Verify the certificate chain includes ProxyForge CA",
-            "Check ProxyForge UI for captured HTTPS traffic",
+            "Verify the certificate chain includes Madhyamas CA",
+            "Check Madhyamas UI for captured HTTPS traffic",
           ],
         },
       ],
@@ -767,7 +767,7 @@ open -a "Google Chrome" --args --proxy-server="${proxyConfig.ip}:${proxyConfig.p
             HTTPS Proxy Setup
           </DialogTitle>
           <DialogDescription>
-            Configure your devices to use ProxyForge for HTTP/HTTPS traffic
+            Configure your devices to use Madhyamas for HTTP/HTTPS traffic
             interception
           </DialogDescription>
         </DialogHeader>
@@ -953,7 +953,7 @@ open -a "Google Chrome" --args --proxy-server="${proxyConfig.ip}:${proxyConfig.p
                 </p>
                 <p className="text-yellow-700 dark:text-yellow-300 mt-1">
                   Only install this certificate on devices you control. Remove
-                  it when done debugging. This certificate allows ProxyForge to
+                  it when done debugging. This certificate allows Madhyamas to
                   decrypt HTTPS traffic.
                 </p>
               </div>

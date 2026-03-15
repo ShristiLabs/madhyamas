@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# ProxyForge Local Stop Script
-# This script stops the locally running ProxyForge instance
+# Madhyamas Local Stop Script
+# This script stops the locally running Madhyamas instance
 
 set -e
 
@@ -11,16 +11,16 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}ProxyForge Local Stop Script${NC}"
+echo -e "${GREEN}Madhyamas Local Stop Script${NC}"
 echo "================================"
 
 # Check if PID file exists
-if [ -f ~/.proxyforge/proxyforge.pid ]; then
-    PID=$(cat ~/.proxyforge/proxyforge.pid)
+if [ -f ~/.madhyamas/madhyamas.pid ]; then
+    PID=$(cat ~/.madhyamas/madhyamas.pid)
     
     # Check if process is running
     if ps -p $PID > /dev/null 2>&1; then
-        echo -e "${YELLOW}Stopping ProxyForge (PID: $PID)...${NC}"
+        echo -e "${YELLOW}Stopping Madhyamas (PID: $PID)...${NC}"
         kill $PID
         
         # Wait for process to stop
@@ -33,25 +33,25 @@ if [ -f ~/.proxyforge/proxyforge.pid ]; then
         
         # Force kill if still running
         if ps -p $PID > /dev/null 2>&1; then
-            echo -e "${YELLOW}Force stopping ProxyForge...${NC}"
+            echo -e "${YELLOW}Force stopping Madhyamas...${NC}"
             kill -9 $PID
         fi
         
-        echo -e "${GREEN}✓ ProxyForge stopped${NC}"
+        echo -e "${GREEN}✓ Madhyamas stopped${NC}"
     else
-        echo -e "${YELLOW}ProxyForge is not running (stale PID file)${NC}"
+        echo -e "${YELLOW}Madhyamas is not running (stale PID file)${NC}"
     fi
     
     # Remove PID file
-    rm ~/.proxyforge/proxyforge.pid
+    rm ~/.madhyamas/madhyamas.pid
 else
-    # Try to find and kill any running proxyforge processes
-    if pgrep -f "target/release/proxyforge" > /dev/null; then
-        echo -e "${YELLOW}Found running ProxyForge process, stopping...${NC}"
-        pkill -f "target/release/proxyforge"
+    # Try to find and kill any running madhyamas processes
+    if pgrep -f "target/release/madhyamas" > /dev/null; then
+        echo -e "${YELLOW}Found running Madhyamas process, stopping...${NC}"
+        pkill -f "target/release/madhyamas"
         sleep 2
-        echo -e "${GREEN}✓ ProxyForge stopped${NC}"
+        echo -e "${GREEN}✓ Madhyamas stopped${NC}"
     else
-        echo -e "${YELLOW}ProxyForge is not running${NC}"
+        echo -e "${YELLOW}Madhyamas is not running${NC}"
     fi
 fi

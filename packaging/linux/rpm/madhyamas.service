@@ -1,0 +1,27 @@
+[Unit]
+Description=Madhyamas HTTP/HTTPS Debugging Proxy
+Documentation=https://github.com/madhyamas/madhyamas
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=madhyamas
+Group=madhyamas
+ExecStart=/usr/bin/madhyamas start
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=/var/lib/madhyamas
+
+# Environment
+Environment=MADHYAMAS_WEB_DIR=/usr/share/madhyamas/web
+Environment=MADHYAMAS_DATA_DIR=/var/lib/madhyamas
+
+[Install]
+WantedBy=multi-user.target

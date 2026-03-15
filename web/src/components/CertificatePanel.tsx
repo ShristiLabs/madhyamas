@@ -30,7 +30,7 @@ interface InstructionStep {
 const IOS_INSTRUCTIONS: InstructionStep[] = [
   {
     title: 'Download Certificate',
-    description: 'Click the download button above to get the ProxyForge CA certificate.',
+    description: 'Click the download button above to get the Madhyamas CA certificate.',
   },
   {
     title: 'Open Settings',
@@ -38,13 +38,13 @@ const IOS_INSTRUCTIONS: InstructionStep[] = [
   },
   {
     title: 'Install Profile',
-    description: 'Find the ProxyForge CA profile and tap Install. Enter your passcode if prompted.',
+    description: 'Find the Madhyamas CA profile and tap Install. Enter your passcode if prompted.',
   },
   {
     title: 'Trust Certificate',
     description: 'Go to Settings > General > About > Certificate Trust Settings.',
     subSteps: [
-      'Find ProxyForge CA in the list',
+      'Find Madhyamas CA in the list',
       'Toggle the switch to enable full trust',
       'You should see "Enabled" status',
     ],
@@ -64,7 +64,7 @@ const IOS_INSTRUCTIONS: InstructionStep[] = [
 const ANDROID_INSTRUCTIONS: InstructionStep[] = [
   {
     title: 'Download Certificate',
-    description: 'Click the download button above to get the ProxyForge CA certificate.',
+    description: 'Click the download button above to get the Madhyamas CA certificate.',
   },
   {
     title: 'Open Settings',
@@ -76,8 +76,8 @@ const ANDROID_INSTRUCTIONS: InstructionStep[] = [
     subSteps: [
       'You may need to confirm your PIN/password',
       'Navigate to your Downloads folder',
-      'Select the proxyforge-ca.crt file',
-      'Name it "ProxyForge CA" and tap OK',
+      'Select the madhyamas-ca.crt file',
+      'Name it "Madhyamas CA" and tap OK',
     ],
   },
   {
@@ -108,7 +108,7 @@ export function CertificatePanel() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'proxyforge-ca.crt'
+      a.download = 'madhyamas-ca.crt'
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -137,7 +137,7 @@ export function CertificatePanel() {
       <div className="p-4 border-b">
         <h2 className="text-lg font-semibold">SSL Certificate</h2>
         <p className="text-sm text-muted-foreground">
-          Install the ProxyForge CA certificate to intercept HTTPS traffic
+          Install the Madhyamas CA certificate to intercept HTTPS traffic
         </p>
       </div>
 
@@ -152,7 +152,7 @@ export function CertificatePanel() {
               <div className="flex-1">
                 <h3 className="font-medium">Certificate Ready</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  The ProxyForge CA certificate is available for download. Install it on your
+                  The Madhyamas CA certificate is available for download. Install it on your
                   devices to enable HTTPS traffic interception.
                 </p>
               </div>
@@ -166,7 +166,7 @@ export function CertificatePanel() {
               <Download className="h-4 w-4 mr-2" />
               Download Certificate
             </Button>
-            <p className="text-sm text-muted-foreground">proxyforge-ca.crt</p>
+            <p className="text-sm text-muted-foreground">madhyamas-ca.crt</p>
           </div>
 
           {/* Platform Instructions */}
@@ -256,7 +256,7 @@ export function CertificatePanel() {
                 <ul className="mt-1 space-y-1 list-disc list-inside">
                   <li>Only install this certificate on devices you control</li>
                   <li>Remove the certificate when done debugging</li>
-                  <li>The certificate allows ProxyForge to decrypt HTTPS traffic</li>
+                  <li>The certificate allows Madhyamas to decrypt HTTPS traffic</li>
                 </ul>
               </div>
             </div>
@@ -273,7 +273,7 @@ export function CertificatePanel() {
               iOS Installation Instructions
             </DialogTitle>
             <DialogDescription>
-              Follow these steps to install the ProxyForge CA certificate on your iOS device
+              Follow these steps to install the Madhyamas CA certificate on your iOS device
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -314,7 +314,7 @@ export function CertificatePanel() {
               Android Installation Instructions
             </DialogTitle>
             <DialogDescription>
-              Follow these steps to install the ProxyForge CA certificate on your Android device
+              Follow these steps to install the Madhyamas CA certificate on your Android device
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">

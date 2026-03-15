@@ -2,7 +2,7 @@
 
 ## Overview
 
-ProxyForge automatically detects and displays the appropriate IP address for configuring client devices. The system prioritizes **private network IPs** over public IPs to ensure devices on the same local network can connect.
+Madhyamas automatically detects and displays the appropriate IP address for configuring client devices. The system prioritizes **private network IPs** over public IPs to ensure devices on the same local network can connect.
 
 ## How IP Detection Works
 
@@ -27,7 +27,7 @@ The backend returns configuration via `/api/config` endpoint:
 The frontend follows this priority order:
 
 1. **Manual Override** (`public_ip` from backend)
-   - If `PROXYFORGE_PUBLIC_IP` environment variable is set
+   - If `MADHYAMAS_PUBLIC_IP` environment variable is set
    - Highest priority - always used if configured
 
 2. **Backend Host** (if it's a usable private IP)
@@ -52,7 +52,7 @@ The frontend follows this priority order:
 
 ### Running Locally (startup-local.sh)
 
-**Scenario**: ProxyForge running directly on host machine
+**Scenario**: Madhyamas running directly on host machine
 
 ```bash
 ./startup-local.sh
@@ -69,7 +69,7 @@ The frontend follows this priority order:
 
 ### Running in Docker (startup.sh)
 
-**Scenario**: ProxyForge running in Docker container
+**Scenario**: Madhyamas running in Docker container
 
 ```bash
 ./startup.sh
@@ -84,14 +84,14 @@ The frontend follows this priority order:
 
 **Result**: ✅ Shows private network IP for local network access
 
-**Why it works**: Even though ProxyForge runs in a container, the WebRTC detection happens in the browser on the host machine, so it detects the host's network interfaces.
+**Why it works**: Even though Madhyamas runs in a container, the WebRTC detection happens in the browser on the host machine, so it detects the host's network interfaces.
 
 ### Remote Server Deployment
 
-**Scenario**: ProxyForge running on a cloud server or VPS
+**Scenario**: Madhyamas running on a cloud server or VPS
 
 ```bash
-export PROXYFORGE_PUBLIC_IP=203.0.113.45
+export MADHYAMAS_PUBLIC_IP=203.0.113.45
 ./startup.sh
 ```
 
@@ -131,7 +131,7 @@ export PROXYFORGE_PUBLIC_IP=203.0.113.45
 - First private IP found is used (order depends on network interface priority)
 - To force specific IP, use manual override:
   ```bash
-  export PROXYFORGE_PUBLIC_IP=10.0.0.50
+  export MADHYAMAS_PUBLIC_IP=10.0.0.50
   ./startup-local.sh
   ```
 
@@ -140,7 +140,7 @@ export PROXYFORGE_PUBLIC_IP=203.0.113.45
 **Setup**:
 ```bash
 # Server has public IP: 203.0.113.45
-export PROXYFORGE_PUBLIC_IP=203.0.113.45
+export MADHYAMAS_PUBLIC_IP=203.0.113.45
 docker compose up -d
 ```
 
@@ -153,7 +153,7 @@ docker compose up -d
 **Setup**:
 ```bash
 # VPN IP: 10.8.0.5, Local IP: 192.168.1.100
-export PROXYFORGE_PUBLIC_IP=10.8.0.5
+export MADHYAMAS_PUBLIC_IP=10.8.0.5
 ./startup-local.sh
 ```
 
@@ -172,7 +172,7 @@ export PROXYFORGE_PUBLIC_IP=10.8.0.5
 2. Clear browser cache
 3. Manually set the IP:
    ```bash
-   export PROXYFORGE_PUBLIC_IP=192.168.1.100
+   export MADHYAMAS_PUBLIC_IP=192.168.1.100
    ./startup-local.sh
    ```
 
@@ -182,7 +182,7 @@ export PROXYFORGE_PUBLIC_IP=10.8.0.5
 
 **Solution**: Manually specify the correct IP:
 ```bash
-export PROXYFORGE_PUBLIC_IP=192.168.1.100
+export MADHYAMAS_PUBLIC_IP=192.168.1.100
 ./startup-local.sh
 ```
 
@@ -195,7 +195,7 @@ export PROXYFORGE_PUBLIC_IP=192.168.1.100
 2. Disable VPN temporarily during detection
 3. Manually set IP:
    ```bash
-   export PROXYFORGE_PUBLIC_IP=192.168.1.100
+   export MADHYAMAS_PUBLIC_IP=192.168.1.100
    ./startup-local.sh
    ```
 
@@ -207,7 +207,7 @@ export PROXYFORGE_PUBLIC_IP=192.168.1.100
 - WebRTC runs in browser on host, not in container
 - If you see container IP (like `172.17.0.x`), manually set host IP:
   ```bash
-  export PROXYFORGE_PUBLIC_IP=192.168.1.100
+  export MADHYAMAS_PUBLIC_IP=192.168.1.100
   ./startup.sh
   ```
 
@@ -253,7 +253,7 @@ Even though we prioritize private IPs, the STUN server helps discover all availa
 |------------|----------|-----|
 | **Local (startup-local.sh)** | Private IP (e.g., 192.168.1.100) | WebRTC detects host IPs, prioritizes private |
 | **Docker (startup.sh)** | Private IP (e.g., 192.168.1.100) | WebRTC runs in browser on host, detects host IPs |
-| **Remote Server** | Public IP (manually set) | `PROXYFORGE_PUBLIC_IP` environment variable |
-| **Manual Override** | Configured IP | `PROXYFORGE_PUBLIC_IP` takes precedence |
+| **Remote Server** | Public IP (manually set) | `MADHYAMAS_PUBLIC_IP` environment variable |
+| **Manual Override** | Configured IP | `MADHYAMAS_PUBLIC_IP` takes precedence |
 
 The system is designed to **automatically show the correct private IP** for local network access in both local and Docker deployments, while allowing manual override for special cases like remote servers or VPN scenarios.

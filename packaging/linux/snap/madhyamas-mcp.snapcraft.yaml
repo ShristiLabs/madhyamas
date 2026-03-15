@@ -1,0 +1,35 @@
+name: madhyamas-mcp
+version: '0.1.0'
+summary: MCP server for Madhyamas - AI agent integration
+description: |
+  Madhyamas MCP Server implements the Model Context Protocol (MCP) 
+  to enable AI agents like Claude, Cursor, and Windsurf to interact 
+  with Madhyamas for automated debugging and traffic analysis.
+
+base: core22
+confinement: strict
+grade: stable
+license: MIT
+
+architectures:
+  - build-on: amd64
+  - build-on: arm64
+
+apps:
+  madhyamas-mcp:
+    command: bin/madhyamas-mcp
+    plugs:
+      - network
+
+parts:
+  madhyamas-mcp:
+    plugin: rust
+    source: .
+    rust-channel: stable
+    build-packages:
+      - pkg-config
+      - libssl-dev
+    override-build: |
+      cargo build --release -p madhyamas-mcp
+      mkdir -p $SNAPCRAFT_PART_INSTALL/bin
+      cp target/release/madhyamas-mcp $SNAPCRAFT_PART_INSTALL/bin/madhyamas-mcp

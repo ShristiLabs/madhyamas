@@ -27,7 +27,7 @@ export function useDownloadCertificate() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'proxyforge-ca.crt'
+    a.download = 'madhyamas-ca.crt'
     a.click()
     URL.revokeObjectURL(url)
   }

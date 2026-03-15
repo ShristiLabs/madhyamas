@@ -70,7 +70,7 @@ export function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
         return (
           <div className="space-y-4">
             <p className="text-muted-foreground">
-              Welcome to ProxyForge! This wizard will help you get started with intercepting and debugging HTTP/HTTPS traffic.
+              Welcome to Madhyamas! This wizard will help you get started with intercepting and debugging HTTP/HTTPS traffic.
             </p>
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div className="p-4 bg-muted rounded-lg">
@@ -99,7 +99,7 @@ export function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
         return (
           <div className="space-y-4">
             <p className="text-muted-foreground">
-              To intercept HTTPS traffic, you need to install ProxyForge's root CA certificate.
+              To intercept HTTPS traffic, you need to install Madhyamas's root CA certificate.
             </p>
             <div className="p-4 bg-yellow-50 dark:bg-yellow-950 rounded-lg border border-yellow-200 dark:border-yellow-800">
               <h4 className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">Security Note</h4>
@@ -121,7 +121,7 @@ export function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
         return (
           <div className="space-y-4">
             <p className="text-muted-foreground">
-              Configure your browser or application to use ProxyForge as a proxy.
+              Configure your browser or application to use Madhyamas as a proxy.
             </p>
             <div className="p-4 bg-muted rounded-lg font-mono text-sm">
               <p><strong>Proxy Host:</strong> localhost</p>
@@ -144,7 +144,7 @@ export function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
         return (
           <div className="space-y-4">
             <p className="text-muted-foreground">
-              Explore ProxyForge's powerful features for debugging and testing.
+              Explore Madhyamas's powerful features for debugging and testing.
             </p>
             <div className="grid grid-cols-1 gap-3">
               {[

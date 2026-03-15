@@ -51,9 +51,9 @@ interface AppearanceConfig {
   auto_refresh_interval: string;
 }
 
-const LS_UPSTREAM = "proxyforge-upstream-config";
-const LS_CAPTURE = "proxyforge-capture-config";
-const LS_APPEARANCE = "proxyforge-appearance-config";
+const LS_UPSTREAM = "madhyamas-upstream-config";
+const LS_CAPTURE = "madhyamas-capture-config";
+const LS_APPEARANCE = "madhyamas-appearance-config";
 
 // ─── Default values ────────────────────────────────────────────────────────────
 
@@ -504,7 +504,7 @@ function AppearanceTab() {
     }
 
     // Emit custom event so App.tsx can sync its isDark state
-    window.dispatchEvent(new CustomEvent("proxyforge-theme-change", { detail: cfg.theme }));
+    window.dispatchEvent(new CustomEvent("madhyamas-theme-change", { detail: cfg.theme }));
 
     toast({ description: "Appearance settings saved." });
   }, [cfg, toast]);
@@ -518,7 +518,7 @@ function AppearanceTab() {
   return (
     <div className="space-y-6">
       <Section title="Theme">
-        <Row label="Color Theme" description="Choose how ProxyForge looks.">
+        <Row label="Color Theme" description="Choose how Madhyamas looks.">
           <Select
             value={cfg.theme}
             onValueChange={(v: "light" | "dark" | "system") =>

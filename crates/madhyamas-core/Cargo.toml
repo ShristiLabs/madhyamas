@@ -1,0 +1,40 @@
+[package]
+name = "madhyamas-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+tokio-rustls.workspace = true
+rcgen.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+bytes.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+once_cell.workspace = true
+parking_lot.workspace = true
+base64.workspace = true
+regex.workspace = true
+rand.workspace = true
+sha1.workspace = true
+url.workspace = true
+toml.workspace = true
+urlencoding.workspace = true
+dirs.workspace = true
+local-ip-address = "0.6"
+
+[dev-dependencies]
+tokio-test = "0.4"

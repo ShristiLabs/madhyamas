@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Build ProxyForge MCP binary for local use with Windsurf
+# Build Madhyamas MCP binary for local use with Windsurf
 # This script builds native binaries for your platform
 
 set -e
@@ -9,38 +9,38 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 OUTPUT_DIR="${PROJECT_DIR}/bin"
 
-echo "Building ProxyForge binaries..."
+echo "Building Madhyamas binaries..."
 
 cd "$PROJECT_DIR"
 
 # Build the binaries
-cargo build --release -p proxyforge-cli -p proxyforge-mcp
+cargo build --release -p madhyamas-cli -p madhyamas-mcp
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
 # Copy binaries
-cp target/release/proxyforge-mcp "$OUTPUT_DIR/proxyforge-mcp"
-cp target/release/proxyforge "$OUTPUT_DIR/proxyforge"
+cp target/release/madhyamas-mcp "$OUTPUT_DIR/madhyamas-mcp"
+cp target/release/madhyamas "$OUTPUT_DIR/madhyamas"
 
 # Make executable
-chmod +x "$OUTPUT_DIR/proxyforge-mcp"
-chmod +x "$OUTPUT_DIR/proxyforge"
+chmod +x "$OUTPUT_DIR/madhyamas-mcp"
+chmod +x "$OUTPUT_DIR/madhyamas"
 
 echo ""
 echo "✓ Binaries extracted to: $OUTPUT_DIR"
-echo "  - proxyforge-mcp (MCP server)"
-echo "  - proxyforge (CLI)"
+echo "  - madhyamas-mcp (MCP server)"
+echo "  - madhyamas (CLI)"
 echo ""
 echo "To configure Windsurf, add the following to your mcp_config.json:"
 echo ""
 cat << EOF
 {
   "mcpServers": {
-    "proxyforge": {
-      "command": "${OUTPUT_DIR}/proxyforge-mcp",
+    "madhyamas": {
+      "command": "${OUTPUT_DIR}/madhyamas-mcp",
       "env": {
-        "PROXYFORGE_API_URL": "http://localhost:3001"
+        "MADHYAMAS_API_URL": "http://localhost:3001"
       }
     }
   }

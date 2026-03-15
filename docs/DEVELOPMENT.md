@@ -17,8 +17,8 @@
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/proxyforge/proxyforge.git
-cd proxyforge
+git clone https://github.com/madhyamas/madhyamas.git
+cd madhyamas
 ```
 
 ### 2. Install Rust Dependencies
@@ -41,7 +41,7 @@ cargo build
 cargo build --release
 
 # Build specific crate
-cargo build -p proxyforge-core
+cargo build -p madhyamas-core
 ```
 
 ### 4. Set Up Frontend
@@ -54,9 +54,9 @@ npm run dev
 ## Project Structure
 
 ```
-proxyforge/
+madhyamas/
 ├── crates/
-│   ├── proxyforge-core/       # Core library
+│   ├── madhyamas-core/       # Core library
 │   │   ├── src/
 │   │   │   ├── lib.rs         # Public API
 │   │   │   ├── config.rs      # Configuration
@@ -72,13 +72,13 @@ proxyforge/
 │   │   │   └── plugin/        # Plugin system
 │   │   ├── Cargo.toml
 │   │   └── tests/
-│   ├── proxyforge-api/        # API server
+│   ├── madhyamas-api/        # API server
 │   │   ├── src/
 │   │   │   ├── lib.rs
 │   │   │   ├── routes.rs      # Route definitions
 │   │   │   └── handlers/      # Request handlers
 │   │   └── Cargo.toml
-│   └── proxyforge-cli/        # CLI
+│   └── madhyamas-cli/        # CLI
 │       ├── src/
 │       │   └── main.rs
 │       └── Cargo.toml
@@ -107,7 +107,7 @@ cargo run
 RUST_LOG=debug cargo run
 
 # With specific log levels
-RUST_LOG=proxyforge_core=debug,proxyforge_api=info cargo run
+RUST_LOG=madhyamas_core=debug,madhyamas_api=info cargo run
 ```
 
 #### Terminal 2: Frontend
@@ -128,7 +128,7 @@ The application will be available at:
 cargo test
 
 # Run tests for specific crate
-cargo test -p proxyforge-core
+cargo test -p madhyamas-core
 
 # Run specific test
 cargo test test_name
@@ -278,15 +278,15 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 ## Adding New Features
 
-### 1. Core Feature in `proxyforge-core`
+### 1. Core Feature in `madhyamas-core`
 
 ```bash
 # Create new module
-touch crates/proxyforge-core/src/my_feature.rs
+touch crates/madhyamas-core/src/my_feature.rs
 ```
 
 ```rust
-// crates/proxyforge-core/src/my_feature.rs
+// crates/madhyamas-core/src/my_feature.rs
 use crate::{Error, Result};
 
 /// My feature implementation
@@ -318,17 +318,17 @@ mod tests {
 ```
 
 ```rust
-// crates/proxyforge-core/src/lib.rs
+// crates/madhyamas-core/src/lib.rs
 pub mod my_feature;
 pub use my_feature::MyFeature;
 ```
 
-### 2. API Endpoint in `proxyforge-api`
+### 2. API Endpoint in `madhyamas-api`
 
 ```rust
-// crates/proxyforge-api/src/handlers/my_feature_handlers.rs
+// crates/madhyamas-api/src/handlers/my_feature_handlers.rs
 use axum::{extract::State, Json};
-use proxyforge_core::MyFeature;
+use madhyamas_core::MyFeature;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -354,7 +354,7 @@ pub async fn handle_my_feature(
 ```
 
 ```rust
-// crates/proxyforge-api/src/routes.rs
+// crates/madhyamas-api/src/routes.rs
 use axum::routing::post;
 
 pub fn create_router() -> Router {
@@ -391,7 +391,7 @@ export async function processMyFeature(input: string): Promise<MyResponse> {
 ### Modifying Schema
 
 ```rust
-// crates/proxyforge-core/src/traffic/store.rs
+// crates/madhyamas-core/src/traffic/store.rs
 fn create_tables(&self) -> Result<()> {
     let conn = self.conn.lock();
     conn.execute_batch(
@@ -426,10 +426,10 @@ fn create_tables(&self) -> Result<()> {
 RUST_LOG=debug cargo run
 
 # Specific module logging
-RUST_LOG=proxyforge_core::proxy=trace cargo run
+RUST_LOG=madhyamas_core::proxy=trace cargo run
 
 # Use rust-lldb or rust-gdb
-rust-lldb target/debug/proxyforge
+rust-lldb target/debug/madhyamas
 ```
 
 ### Frontend Debugging
@@ -442,7 +442,7 @@ rust-lldb target/debug/proxyforge
 
 ```bash
 # Open SQLite database
-sqlite3 ~/.proxyforge/traffic.db
+sqlite3 ~/.madhyamas/traffic.db
 
 # List tables
 .tables
@@ -462,7 +462,7 @@ SELECT * FROM requests LIMIT 10;
 cargo install flamegraph
 
 # Generate flamegraph
-cargo flamegraph --bin proxyforge
+cargo flamegraph --bin madhyamas
 
 # Open flamegraph.svg in browser
 ```
@@ -470,10 +470,10 @@ cargo flamegraph --bin proxyforge
 ### Memory Profiling
 ```bash
 # Use valgrind
-valgrind --tool=massif target/release/proxyforge
+valgrind --tool=massif target/release/madhyamas
 
 # Or heaptrack
-heaptrack target/release/proxyforge
+heaptrack target/release/madhyamas
 ```
 
 ### Benchmarking
@@ -524,7 +524,7 @@ kill -9 <PID>
 ```bash
 # Only one instance can access SQLite
 # Stop other instances or use different database path
-cargo run -- --db-path /tmp/proxyforge.db
+cargo run -- --db-path /tmp/madhyamas.db
 ```
 
 ## CI/CD
@@ -562,7 +562,7 @@ git push origin main --tags
 cargo build --release
 
 # Strip symbols for smaller binary
-strip target/release/proxyforge
+strip target/release/madhyamas
 
 # Cross-compile for other platforms
 cargo install cross

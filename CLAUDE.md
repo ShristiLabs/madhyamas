@@ -1,4 +1,4 @@
-# ProxyForge - Claude AI Context
+# Madhyamas - Claude AI Context
 
 ## Project Overview
 
@@ -11,12 +11,12 @@ HTTP/HTTPS debugging proxy in Rust with React web UI. Alternative to Charles Pro
 ## Project Structure
 
 ```
-proxyforge/
+madhyamas/
 ├── crates/
-│   ├── proxyforge-core/      # Core proxy engine, TLS, traffic storage
-│   ├── proxyforge-api/       # REST/WebSocket API server (axum)
-│   ├── proxyforge-cli/       # CLI entry point
-│   └── proxyforge-mcp/       # MCP server for AI agent integration
+│   ├── madhyamas-core/      # Core proxy engine, TLS, traffic storage
+│   ├── madhyamas-api/       # REST/WebSocket API server (axum)
+│   ├── madhyamas-cli/       # CLI entry point
+│   └── madhyamas-mcp/       # MCP server for AI agent integration
 ├── web/                      # React + TypeScript frontend (Vite)
 ├── docs/                     # Documentation
 ├── docker/                   # Docker setup
@@ -30,24 +30,24 @@ proxyforge/
 
 ## Important Files & Modules
 
-### Core Crate (`proxyforge-core`)
+### Core Crate (`madhyamas-core`)
 - `lib.rs` - Public API exports, error types
 - `proxy/engine.rs` - Main proxy engine logic
 - `tls/certificate.rs` - TLS certificate management
 - `traffic/store.rs` - SQLite-based traffic storage
 - `intercept/` - Breakpoints, mocks, rewrites, throttling
 
-### API Crate (`proxyforge-api`)
+### API Crate (`madhyamas-api`)
 - `lib.rs` - API server setup
 - `routes.rs` - Route definitions
 - `handlers/` - Request handlers
 
-### CLI Crate (`proxyforge-cli`)
+### CLI Crate (`madhyamas-cli`)
 - `main.rs` - Entry point, CLI argument parsing
 
-### MCP Crate (`proxyforge-mcp`)
+### MCP Crate (`madhyamas-mcp`)
 - `main.rs` - MCP server entry point (stdio transport)
-- `lib.rs` - MCP tools for AI agent integration with ProxyForge API
+- `lib.rs` - MCP tools for AI agent integration with Madhyamas API
 
 ## Development Workflow
 
@@ -77,12 +77,12 @@ cd web && npm run build
 
 **Environment Variables**:
 - `RUST_LOG` - Logging level (trace/debug/info/warn/error)
-- `PROXYFORGE_HOST` - Bind host (default: 0.0.0.0)
-- `PROXYFORGE_API_PORT` - API port (default: 3001)
-- `PROXYFORGE_PROXY_PORT` - Proxy port (default: 8888)
-- `PROXYFORGE_PUBLIC_IP` - Public IP shown to users for remote access
+- `MADHYAMAS_HOST` - Bind host (default: 0.0.0.0)
+- `MADHYAMAS_API_PORT` - API port (default: 3001)
+- `MADHYAMAS_PROXY_PORT` - Proxy port (default: 8888)
+- `MADHYAMAS_PUBLIC_IP` - Public IP shown to users for remote access
 
-**Data Directory**: `~/.proxyforge/` (certs, logs, traffic.db)
+**Data Directory**: `~/.madhyamas/` (certs, logs, traffic.db)
 
 **API Endpoints**:
 - `GET /api/config` - Returns config with detected/host IP for display
@@ -97,11 +97,11 @@ cd web && npm run build
 5. Add tests for new functionality
 
 ### Adding Features
-1. Add module in `proxyforge-core/src/`
+1. Add module in `madhyamas-core/src/`
 2. Implement with proper error handling
 3. Add tests in the module
 4. Expose public API in `lib.rs`
-5. Add API endpoints in `proxyforge-api`
+5. Add API endpoints in `madhyamas-api`
 6. Update documentation
 
 ### Adding Dependencies

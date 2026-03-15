@@ -1,6 +1,6 @@
 # Local Development Guide
 
-This guide explains how to run ProxyForge directly on your machine without Docker.
+This guide explains how to run Madhyamas directly on your machine without Docker.
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ This guide explains how to run ProxyForge directly on your machine without Docke
 
 ## Quick Start
 
-### 1. Start ProxyForge Locally
+### 1. Start Madhyamas Locally
 
 ```bash
 ./startup-local.sh
@@ -43,7 +43,7 @@ This will:
 - Build the web frontend (if not already built)
 - Compile the Rust binary
 - Create necessary data directories
-- Start ProxyForge in the background
+- Start Madhyamas in the background
 
 ### 2. Access the Web UI
 
@@ -52,7 +52,7 @@ Open your browser and navigate to:
 - **HTTP Proxy**: Configure devices to use `localhost:8888`
 - **HTTPS Proxy**: Configure devices to use `localhost:8443`
 
-### 3. Stop ProxyForge
+### 3. Stop Madhyamas
 
 ```bash
 ./stop-local.sh
@@ -70,7 +70,7 @@ To rebuild everything from scratch:
 
 This removes all build artifacts and rebuilds:
 - Web frontend (`web/dist`)
-- Rust binary (`target/release/proxyforge`)
+- Rust binary (`target/release/madhyamas`)
 - Node modules (`web/node_modules`)
 
 ### Custom Configuration
@@ -79,14 +79,14 @@ Use environment variables to customize the setup:
 
 ```bash
 # Bind to all network interfaces (for network access)
-export PROXYFORGE_HOST=0.0.0.0
+export MADHYAMAS_HOST=0.0.0.0
 
 # Custom ports
-export PROXYFORGE_API_PORT=3001
-export PROXYFORGE_PROXY_PORT=8888
+export MADHYAMAS_API_PORT=3001
+export MADHYAMAS_PROXY_PORT=8888
 
 # Set public IP for remote access
-export PROXYFORGE_PUBLIC_IP=192.168.1.100
+export MADHYAMAS_PUBLIC_IP=192.168.1.100
 
 # Start with custom config
 ./startup-local.sh
@@ -104,10 +104,10 @@ npm run build
 cd ..
 
 # Build Rust binary
-cargo build --release --bin proxyforge
+cargo build --release --bin madhyamas
 
-# Run ProxyForge
-./target/release/proxyforge --host 0.0.0.0 --api-port 3001 --proxy-port 8888
+# Run Madhyamas
+./target/release/madhyamas --host 0.0.0.0 --api-port 3001 --proxy-port 8888
 ```
 
 ## Development Workflow
@@ -132,14 +132,14 @@ For backend development with auto-reload:
 cargo install cargo-watch
 
 # Run with auto-reload
-cargo watch -x 'run --bin proxyforge -- --host 0.0.0.0'
+cargo watch -x 'run --bin madhyamas -- --host 0.0.0.0'
 ```
 
 ### Running Both in Development
 
 Terminal 1 (Backend):
 ```bash
-cargo watch -x 'run --bin proxyforge -- --host 0.0.0.0'
+cargo watch -x 'run --bin madhyamas -- --host 0.0.0.0'
 ```
 
 Terminal 2 (Frontend):
@@ -154,33 +154,33 @@ Access the dev frontend at http://localhost:5173, which will proxy API requests 
 
 ### Log Files
 
-ProxyForge logs are stored at:
+Madhyamas logs are stored at:
 ```
-~/.proxyforge/logs/proxyforge.log
+~/.madhyamas/logs/madhyamas.log
 ```
 
 View logs in real-time:
 ```bash
-tail -f ~/.proxyforge/logs/proxyforge.log
+tail -f ~/.madhyamas/logs/madhyamas.log
 ```
 
 ### Data Directory
 
-All ProxyForge data is stored in:
+All Madhyamas data is stored in:
 ```
-~/.proxyforge/
+~/.madhyamas/
 ├── certs/           # SSL certificates
 ├── logs/            # Log files
 ├── traffic.db       # Traffic database
-└── proxyforge.pid   # Process ID file
+└── madhyamas.pid   # Process ID file
 ```
 
 ### Clearing Data
 
-To reset ProxyForge and clear all data:
+To reset Madhyamas and clear all data:
 
 ```bash
-rm -rf ~/.proxyforge/
+rm -rf ~/.madhyamas/
 ```
 
 ## Troubleshooting
@@ -197,8 +197,8 @@ lsof -i :3001
 kill -9 <PID>
 
 # Or use different ports
-export PROXYFORGE_API_PORT=3002
-export PROXYFORGE_PROXY_PORT=8889
+export MADHYAMAS_API_PORT=3002
+export MADHYAMAS_PROXY_PORT=8889
 ./startup-local.sh
 ```
 
@@ -224,7 +224,7 @@ If you get permission errors:
 chmod +x startup-local.sh stop-local.sh
 
 # Check data directory permissions
-ls -la ~/.proxyforge/
+ls -la ~/.madhyamas/
 ```
 
 ### Process Won't Stop
@@ -232,11 +232,11 @@ ls -la ~/.proxyforge/
 If `stop-local.sh` doesn't work:
 
 ```bash
-# Force kill all proxyforge processes
-pkill -9 -f proxyforge
+# Force kill all madhyamas processes
+pkill -9 -f madhyamas
 
 # Remove stale PID file
-rm ~/.proxyforge/proxyforge.pid
+rm ~/.madhyamas/madhyamas.pid
 ```
 
 ## Comparison: Local vs Docker
@@ -254,6 +254,6 @@ rm ~/.proxyforge/proxyforge.pid
 
 1. **Use Docker for production**: The Docker setup is more isolated and reproducible
 2. **Use local for development**: Faster iteration with hot reload
-3. **Set `PROXYFORGE_HOST=0.0.0.0`**: To allow network access from other devices
-4. **Check logs**: Always check `~/.proxyforge/logs/proxyforge.log` for errors
+3. **Set `MADHYAMAS_HOST=0.0.0.0`**: To allow network access from other devices
+4. **Check logs**: Always check `~/.madhyamas/logs/madhyamas.log` for errors
 5. **Clean builds**: Use `--clean` flag if you encounter weird build issues

@@ -238,7 +238,7 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'proxyforge-rewrites.json';
+    a.download = 'madhyamas-rewrites.json';
     a.click();
     URL.revokeObjectURL(url);
     toast({ description: 'Rewrites exported' });

@@ -1,15 +1,15 @@
-# ProxyForge Architecture
+# Madhyamas Architecture
 
 ## Overview
 
-ProxyForge is a Rust-based HTTP/HTTPS debugging proxy with a modern web-based UI.
+Madhyamas is a Rust-based HTTP/HTTPS debugging proxy with a modern web-based UI.
 
 ## Core Components
 
 ### Backend (Rust)
-- **proxyforge-core**: Core proxy logic, traffic storage, TLS handling
-- **proxyforge-api**: REST API and WebSocket server
-- **proxyforge-cli**: Command-line interface
+- **madhyamas-core**: Core proxy logic, traffic storage, TLS handling
+- **madhyamas-api**: REST API and WebSocket server
+- **madhyamas-cli**: Command-line interface
 
 ### Frontend (React + TypeScript)
 - Built with Vite, React 18, TypeScript, Tailwind CSS
@@ -20,7 +20,7 @@ ProxyForge is a Rust-based HTTP/HTTPS debugging proxy with a modern web-based UI
 
 ```
 ┌────────────────┐      ┌────────────────┐      ┌────────────────┐
-│   Browser/     │      │   ProxyForge   │      │   Target       │
+│   Browser/     │      │   Madhyamas   │      │   Target       │
 │   Mobile App  │─────▶│     Proxy     │─────▶│    Server     │
 └────────────────┘      │   :8888      │      └────────────────┘
                               │
@@ -44,11 +44,11 @@ ProxyForge is a Rust-based HTTP/HTTPS debugging proxy with a modern web-based UI
 ## Directory Structure
 
 ```
-proxyforge/
+madhyamas/
 ├── crates/
-│   ├── proxyforge-core/      # Core library
-│   ├── proxyforge-api/       # API handlers
-│   └── proxyforge-cli/       # CLI entry point
+│   ├── madhyamas-core/      # Core library
+│   ├── madhyamas-api/       # API handlers
+│   └── madhyamas-cli/       # CLI entry point
 ├── web/                     # React frontend
 ├── docs/                    # Documentation
 └── tests/                   # Test suites

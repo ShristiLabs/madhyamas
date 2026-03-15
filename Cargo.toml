@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/proxyforge-core",
-    "crates/proxyforge-api",
-    "crates/proxyforge-cli",
-    "crates/proxyforge-mcp",
+    "crates/madhyamas-core",
+    "crates/madhyamas-api",
+    "crates/madhyamas-cli",
+    "crates/madhyamas-mcp",
 ]
 
 [workspace.package]
@@ -12,8 +12,8 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT OR Apache-2.0"
-authors = ["ProxyForge Team"]
-repository = "https://github.com/proxyforge/proxyforge"
+authors = ["Madhyamas Team"]
+repository = "https://github.com/madhyamas/madhyamas"
 
 [workspace.dependencies]
 # Async runtime
@@ -29,7 +29,10 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
 
 # TLS
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+] }
 rustls-pemfile = "2"
 tokio-rustls = "0.26"
 rcgen = "0.13"
@@ -75,5 +78,5 @@ dirs = "5.0"
 reqwest = { version = "0.12", features = ["json"] }
 
 # Internal crates
-proxyforge-core = { path = "crates/proxyforge-core" }
-proxyforge-api = { path = "crates/proxyforge-api" }
+madhyamas-core = { path = "crates/madhyamas-core" }
+madhyamas-api = { path = "crates/madhyamas-api" }

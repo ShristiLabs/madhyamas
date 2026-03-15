@@ -1,6 +1,6 @@
 #!/bin/bash
 # Detect the host machine's LAN IP address for Docker configuration
-# This script helps find the correct IP to set as PROXYFORGE_PUBLIC_IP
+# This script helps find the correct IP to set as MADHYAMAS_PUBLIC_IP
 
 set -e
 
@@ -90,21 +90,21 @@ if [ -n "$RECOMMENDED_IP" ]; then
     echo ""
     echo "To use this IP with Docker, run:"
     echo ""
-    echo -e "  ${YELLOW}export PROXYFORGE_PUBLIC_IP=$RECOMMENDED_IP${NC}"
+    echo -e "  ${YELLOW}export MADHYAMAS_PUBLIC_IP=$RECOMMENDED_IP${NC}"
     echo -e "  ${YELLOW}docker compose up -d${NC}"
     echo ""
     echo "Or run in one command:"
     echo ""
-    echo -e "  ${YELLOW}PROXYFORGE_PUBLIC_IP=$RECOMMENDED_IP docker compose up -d${NC}"
+    echo -e "  ${YELLOW}MADHYAMAS_PUBLIC_IP=$RECOMMENDED_IP docker compose up -d${NC}"
     echo ""
     echo "Alternatively, use host network mode (Linux only):"
     echo ""
-    echo -e "  ${YELLOW}docker compose --profile host up -d proxyforge-host${NC}"
+    echo -e "  ${YELLOW}docker compose --profile host up -d madhyamas-host${NC}"
 else
     echo -e "${RED}❌ Could not detect a suitable LAN IP address${NC}"
     echo ""
     echo "Please manually find your IP and set it:"
     echo ""
-    echo "  export PROXYFORGE_PUBLIC_IP=<your-ip>"
+    echo "  export MADHYAMAS_PUBLIC_IP=<your-ip>"
     echo "  docker compose up -d"
 fi

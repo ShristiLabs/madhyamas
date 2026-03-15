@@ -1,6 +1,6 @@
-# Contributing to ProxyForge
+# Contributing to Madhyamas
 
-Thank you for your interest in contributing to ProxyForge! This document provides guidelines and instructions for contributing to the project.
+Thank you for your interest in contributing to Madhyamas! This document provides guidelines and instructions for contributing to the project.
 
 ## Table of Contents
 
@@ -50,13 +50,13 @@ We are committed to providing a welcoming and inclusive environment for all cont
 1. **Fork the Repository**
    ```bash
    # Click "Fork" on GitHub, then clone your fork
-   git clone https://github.com/YOUR_USERNAME/proxyforge.git
-   cd proxyforge
+   git clone https://github.com/YOUR_USERNAME/madhyamas.git
+   cd madhyamas
    ```
 
 2. **Add Upstream Remote**
    ```bash
-   git remote add upstream https://github.com/proxyforge/proxyforge.git
+   git remote add upstream https://github.com/madhyamas/madhyamas.git
    git fetch upstream
    ```
 
@@ -321,7 +321,7 @@ Place integration tests in `tests/` directory:
 
 ```rust
 // tests/integration_test.rs
-use proxyforge_core::ProxyEngine;
+use madhyamas_core::ProxyEngine;
 
 #[tokio::test]
 async fn test_proxy_flow() {
@@ -350,7 +350,7 @@ cargo test test_name
 cargo test -- --nocapture
 
 # Run tests in specific crate
-cargo test -p proxyforge-core
+cargo test -p madhyamas-core
 ```
 
 ## Documentation
@@ -448,7 +448,7 @@ Describe testing performed
 - **GitHub Issues**: Bug reports and feature requests
 - **GitHub Discussions**: General questions and discussions
 - **Discord**: Real-time chat (link in README)
-- **Twitter**: [@ProxyForge](https://twitter.com/proxyforge)
+- **Twitter**: [@Madhyamas](https://twitter.com/madhyamas)
 
 ### Getting Help
 
@@ -492,7 +492,7 @@ cargo update
 RUST_LOG=debug cargo run
 
 # Use rust-lldb for debugging
-rust-lldb target/debug/proxyforge
+rust-lldb target/debug/madhyamas
 ```
 
 ### Performance Profiling
@@ -507,7 +507,7 @@ cargo flamegraph
 
 ## License
 
-By contributing to ProxyForge, you agree that your contributions will be licensed under the same license as the project (MIT OR Apache-2.0).
+By contributing to Madhyamas, you agree that your contributions will be licensed under the same license as the project (MIT OR Apache-2.0).
 
 ## Questions?
 
@@ -516,4 +516,4 @@ If you have questions about contributing, feel free to:
 - Ask in our Discord
 - Email the maintainers
 
-Thank you for contributing to ProxyForge! 🎉
+Thank you for contributing to Madhyamas! 🎉

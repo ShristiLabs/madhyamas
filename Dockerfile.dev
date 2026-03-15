@@ -16,17 +16,17 @@ WORKDIR /app
 
 # Copy workspace files
 COPY Cargo.toml Cargo.lock ./
-COPY crates/proxyforge-core/Cargo.toml ./crates/proxyforge-core/
-COPY crates/proxyforge-api/Cargo.toml ./crates/proxyforge-api/
-COPY crates/proxyforge-cli/Cargo.toml ./crates/proxyforge-cli/
-COPY crates/proxyforge-mcp/Cargo.toml ./crates/proxyforge-mcp/
+COPY crates/madhyamas-core/Cargo.toml ./crates/madhyamas-core/
+COPY crates/madhyamas-api/Cargo.toml ./crates/madhyamas-api/
+COPY crates/madhyamas-cli/Cargo.toml ./crates/madhyamas-cli/
+COPY crates/madhyamas-mcp/Cargo.toml ./crates/madhyamas-mcp/
 
 # Pre-build dependencies
-RUN mkdir -p crates/proxyforge-core/src crates/proxyforge-api/src crates/proxyforge-cli/src crates/proxyforge-mcp/src
-RUN echo "fn main() {}" > crates/proxyforge-core/src/lib.rs
-RUN echo "fn main() {}" > crates/proxyforge-api/src/lib.rs
-RUN echo "fn main() {}" > crates/proxyforge-cli/src/main.rs
-RUN echo "fn main() {}" > crates/proxyforge-mcp/src/lib.rs
+RUN mkdir -p crates/madhyamas-core/src crates/madhyamas-api/src crates/madhyamas-cli/src crates/madhyamas-mcp/src
+RUN echo "fn main() {}" > crates/madhyamas-core/src/lib.rs
+RUN echo "fn main() {}" > crates/madhyamas-api/src/lib.rs
+RUN echo "fn main() {}" > crates/madhyamas-cli/src/main.rs
+RUN echo "fn main() {}" > crates/madhyamas-mcp/src/lib.rs
 RUN cargo build && rm -rf target/debug/deps
 
 # Copy source files

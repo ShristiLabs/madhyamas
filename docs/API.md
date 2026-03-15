@@ -1,4 +1,4 @@
-# ProxyForge API Documentation
+# Madhyamas API Documentation
 
 ## Base URL
 

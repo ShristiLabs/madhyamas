@@ -2,7 +2,7 @@
 
 ## Overview
 
-ProxyForge can be configured to work in different network scenarios:
+Madhyamas can be configured to work in different network scenarios:
 - **Local development**: Proxy accessible only on the same machine
 - **Local network**: Proxy accessible by other devices on the same network (phones, tablets, etc.)
 - **Remote hosting**: Proxy hosted on a remote server or cloud instance
@@ -11,10 +11,10 @@ ProxyForge can be configured to work in different network scenarios:
 
 ### 1. Local Development (Default)
 
-By default, ProxyForge binds to `127.0.0.1` (localhost), making it accessible only from the same machine.
+By default, Madhyamas binds to `127.0.0.1` (localhost), making it accessible only from the same machine.
 
 ```bash
-./proxyforge
+./madhyamas
 ```
 
 ### 2. Local Network Access
@@ -29,7 +29,7 @@ docker compose up -d
 
 **Using CLI directly:**
 ```bash
-./proxyforge --host 0.0.0.0
+./madhyamas --host 0.0.0.0
 ```
 
 The web UI will automatically detect your machine's local IP address (e.g., `192.168.1.100`) and display it in the certificate helper.
@@ -40,20 +40,20 @@ If you need to specify a custom IP address (useful for remote hosting or complex
 
 **Using Environment Variable:**
 ```bash
-export PROXYFORGE_PUBLIC_IP=192.168.1.100
-./proxyforge --host 0.0.0.0
+export MADHYAMAS_PUBLIC_IP=192.168.1.100
+./madhyamas --host 0.0.0.0
 ```
 
 **Using Docker Compose:**
-Edit `docker-compose.yml` and uncomment the `PROXYFORGE_PUBLIC_IP` line:
+Edit `docker-compose.yml` and uncomment the `MADHYAMAS_PUBLIC_IP` line:
 ```yaml
 environment:
-  - PROXYFORGE_PUBLIC_IP=192.168.1.100
+  - MADHYAMAS_PUBLIC_IP=192.168.1.100
 ```
 
 **Using CLI Argument:**
 ```bash
-./proxyforge --host 0.0.0.0 --public-ip 192.168.1.100
+./madhyamas --host 0.0.0.0 --public-ip 192.168.1.100
 ```
 
 ## How It Works
@@ -71,7 +71,7 @@ environment:
 
 ### Home Network
 ```bash
-# Let ProxyForge auto-detect your local IP
+# Let Madhyamas auto-detect your local IP
 docker compose up -d
 # Access web UI at http://localhost:3001
 # Mobile devices can connect using the displayed IP
@@ -80,21 +80,21 @@ docker compose up -d
 ### Remote Server
 ```bash
 # Set your server's public IP
-export PROXYFORGE_PUBLIC_IP=203.0.113.45
-./proxyforge --host 0.0.0.0
+export MADHYAMAS_PUBLIC_IP=203.0.113.45
+./madhyamas --host 0.0.0.0
 ```
 
 ### Complex Network Setup
 ```bash
 # Specify the exact IP to display
-./proxyforge --host 0.0.0.0 --public-ip 10.0.1.50
+./madhyamas --host 0.0.0.0 --public-ip 10.0.1.50
 ```
 
 ## Troubleshooting
 
 ### Web UI shows "Your computer's IP"
 - The frontend couldn't detect your IP automatically
-- Manually set `PROXYFORGE_PUBLIC_IP` environment variable
+- Manually set `MADHYAMAS_PUBLIC_IP` environment variable
 - Check that your browser allows WebRTC (required for auto-detection)
 
 ### Mobile devices can't connect
@@ -104,5 +104,5 @@ export PROXYFORGE_PUBLIC_IP=203.0.113.45
 - Try manually setting the IP with `--public-ip`
 
 ### Wrong IP displayed
-- Set the correct IP using `PROXYFORGE_PUBLIC_IP` environment variable
+- Set the correct IP using `MADHYAMAS_PUBLIC_IP` environment variable
 - Or use `--public-ip` CLI argument

@@ -1,6 +1,6 @@
-# ProxyForge Documentation
+# Madhyamas Documentation
 
-Welcome to the ProxyForge documentation! This guide will help you find the information you need.
+Welcome to the Madhyamas documentation! This guide will help you find the information you need.
 
 ## 📚 Documentation Overview
 
@@ -63,12 +63,12 @@ Welcome to the ProxyForge documentation! This guide will help you find the infor
 ### Getting Started
 ```bash
 # Install from source
-git clone https://github.com/proxyforge/proxyforge.git
-cd proxyforge
+git clone https://github.com/madhyamas/madhyamas.git
+cd madhyamas
 cargo build --release
 
 # Run the proxy
-./target/release/proxyforge
+./target/release/madhyamas
 
 # Access web UI
 open http://localhost:3001
@@ -78,13 +78,13 @@ open http://localhost:3001
 
 | Task | Documentation |
 |------|---------------|
-| Install ProxyForge | [Getting Started](GETTING_STARTED.md#installation) |
+| Install Madhyamas | [Getting Started](GETTING_STARTED.md#installation) |
 | Configure proxy settings | [Getting Started](GETTING_STARTED.md#configuration) |
 | Set up breakpoints | [Getting Started](GETTING_STARTED.md#set-breakpoints) |
 | Export traffic as HAR | [API Reference](API.md#export) |
 | Deploy to production | [Deployment Guide](DEPLOYMENT.md) |
 | Contribute code | [Contributing](../CONTRIBUTING.md) |
-| Report a bug | [GitHub Issues](https://github.com/proxyforge/proxyforge/issues) |
+| Report a bug | [GitHub Issues](https://github.com/madhyamas/madhyamas/issues) |
 
 ## 📖 Documentation Structure
 
@@ -101,7 +101,7 @@ Root directory:
 ├── CLAUDE.md              # AI assistant context
 ├── CONTRIBUTING.md        # Contribution guidelines
 ├── README.md              # Project overview
-└── PRD-ProxyForge.md      # Product requirements
+└── PRD-Madhyamas.md      # Product requirements
 ```
 
 ## 🎯 Documentation by Role
@@ -174,25 +174,25 @@ Root directory:
 - **TLS**: rustls, rcgen
 
 ### Key Modules
-- `proxyforge-core` - Core proxy engine
-- `proxyforge-api` - REST/WebSocket API
-- `proxyforge-cli` - Command-line interface
+- `madhyamas-core` - Core proxy engine
+- `madhyamas-api` - REST/WebSocket API
+- `madhyamas-cli` - Command-line interface
 
 ### API Endpoints
 See [API Reference](API.md) for complete list
 
 ### Configuration Files
-- `~/.proxyforge/config.toml` - User configuration
+- `~/.madhyamas/config.toml` - User configuration
 - `Cargo.toml` - Rust workspace configuration
 - `web/package.json` - Frontend dependencies
 
 ## 📝 Additional Resources
 
 ### External Links
-- [GitHub Repository](https://github.com/proxyforge/proxyforge)
-- [Issue Tracker](https://github.com/proxyforge/proxyforge/issues)
-- [Discussions](https://github.com/proxyforge/proxyforge/discussions)
-- [Releases](https://github.com/proxyforge/proxyforge/releases)
+- [GitHub Repository](https://github.com/madhyamas/madhyamas)
+- [Issue Tracker](https://github.com/madhyamas/madhyamas/issues)
+- [Discussions](https://github.com/madhyamas/madhyamas/discussions)
+- [Releases](https://github.com/madhyamas/madhyamas/releases)
 
 ### Learning Resources
 - [Rust Book](https://doc.rust-lang.org/book/)
@@ -209,14 +209,14 @@ See [API Reference](API.md) for complete list
 
 ### Getting Help
 1. Check this documentation
-2. Search [GitHub Issues](https://github.com/proxyforge/proxyforge/issues)
-3. Ask in [GitHub Discussions](https://github.com/proxyforge/proxyforge/discussions)
+2. Search [GitHub Issues](https://github.com/madhyamas/madhyamas/issues)
+3. Ask in [GitHub Discussions](https://github.com/madhyamas/madhyamas/discussions)
 4. Join our Discord community
 
 ### Reporting Issues
-- **Bugs**: [GitHub Issues](https://github.com/proxyforge/proxyforge/issues/new?template=bug_report.md)
-- **Features**: [GitHub Issues](https://github.com/proxyforge/proxyforge/issues/new?template=feature_request.md)
-- **Security**: Email security@proxyforge.dev
+- **Bugs**: [GitHub Issues](https://github.com/madhyamas/madhyamas/issues/new?template=bug_report.md)
+- **Features**: [GitHub Issues](https://github.com/madhyamas/madhyamas/issues/new?template=feature_request.md)
+- **Security**: Email security@madhyamas.dev
 
 ### Contributing
 See [Contributing Guidelines](../CONTRIBUTING.md) for:
@@ -240,7 +240,7 @@ See [Contributing Guidelines](../CONTRIBUTING.md) for:
 
 ## 🔄 Keeping Documentation Updated
 
-When making changes to ProxyForge:
+When making changes to Madhyamas:
 
 1. **Code Changes**: Update relevant technical documentation
 2. **API Changes**: Update [API.md](API.md)

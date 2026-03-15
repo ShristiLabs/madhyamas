@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers deploying ProxyForge in various environments, from local development to production infrastructure.
+This guide covers deploying Madhyamas in various environments, from local development to production infrastructure.
 
 ## Deployment Options
 
@@ -20,54 +20,54 @@ This guide covers deploying ProxyForge in various environments, from local devel
 
 ```bash
 # Clone repository
-git clone https://github.com/proxyforge/proxyforge.git
-cd proxyforge
+git clone https://github.com/madhyamas/madhyamas.git
+cd madhyamas
 
 # Build optimized release binary
 cargo build --release
 
 # Binary location
-ls -lh target/release/proxyforge
+ls -lh target/release/madhyamas
 
 # Optional: Strip symbols for smaller size
-strip target/release/proxyforge
+strip target/release/madhyamas
 ```
 
 ### Installation
 
 ```bash
 # Copy binary to system path
-sudo cp target/release/proxyforge /usr/local/bin/
+sudo cp target/release/madhyamas /usr/local/bin/
 
 # Verify installation
-proxyforge --version
+madhyamas --version
 
 # Create data directory
-mkdir -p ~/.proxyforge/{certs,logs}
+mkdir -p ~/.madhyamas/{certs,logs}
 ```
 
 ### Running as Service
 
 #### systemd (Linux)
 
-Create `/etc/systemd/system/proxyforge.service`:
+Create `/etc/systemd/system/madhyamas.service`:
 
 ```ini
 [Unit]
-Description=ProxyForge HTTP/HTTPS Debugging Proxy
+Description=Madhyamas HTTP/HTTPS Debugging Proxy
 After=network.target
 
 [Service]
 Type=simple
-User=proxyforge
-Group=proxyforge
-WorkingDirectory=/opt/proxyforge
-ExecStart=/usr/local/bin/proxyforge \
+User=madhyamas
+Group=madhyamas
+WorkingDirectory=/opt/madhyamas
+ExecStart=/usr/local/bin/madhyamas \
     --proxy-port 8888 \
     --api-port 3001 \
     --host 0.0.0.0 \
-    --db-path /var/lib/proxyforge/traffic.db \
-    --cert-path /var/lib/proxyforge/certs
+    --db-path /var/lib/madhyamas/traffic.db \
+    --cert-path /var/lib/madhyamas/certs
 Restart=on-failure
 RestartSec=5s
 
@@ -76,7 +76,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/proxyforge
+ReadWritePaths=/var/lib/madhyamas
 
 [Install]
 WantedBy=multi-user.target
@@ -86,25 +86,25 @@ Enable and start:
 
 ```bash
 # Create user and directories
-sudo useradd -r -s /bin/false proxyforge
-sudo mkdir -p /var/lib/proxyforge/{certs,logs}
-sudo chown -R proxyforge:proxyforge /var/lib/proxyforge
+sudo useradd -r -s /bin/false madhyamas
+sudo mkdir -p /var/lib/madhyamas/{certs,logs}
+sudo chown -R madhyamas:madhyamas /var/lib/madhyamas
 
 # Enable service
 sudo systemctl daemon-reload
-sudo systemctl enable proxyforge
-sudo systemctl start proxyforge
+sudo systemctl enable madhyamas
+sudo systemctl start madhyamas
 
 # Check status
-sudo systemctl status proxyforge
+sudo systemctl status madhyamas
 
 # View logs
-sudo journalctl -u proxyforge -f
+sudo journalctl -u madhyamas -f
 ```
 
 #### launchd (macOS)
 
-Create `~/Library/LaunchAgents/com.proxyforge.plist`:
+Create `~/Library/LaunchAgents/com.madhyamas.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -112,10 +112,10 @@ Create `~/Library/LaunchAgents/com.proxyforge.plist`:
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.proxyforge</string>
+    <string>com.madhyamas</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/proxyforge</string>
+        <string>/usr/local/bin/madhyamas</string>
         <string>--proxy-port</string>
         <string>8888</string>
         <string>--api-port</string>
@@ -126,9 +126,9 @@ Create `~/Library/LaunchAgents/com.proxyforge.plist`:
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/proxyforge.log</string>
+    <string>/tmp/madhyamas.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/proxyforge.err</string>
+    <string>/tmp/madhyamas.err</string>
 </dict>
 </plist>
 ```
@@ -136,8 +136,8 @@ Create `~/Library/LaunchAgents/com.proxyforge.plist`:
 Load service:
 
 ```bash
-launchctl load ~/Library/LaunchAgents/com.proxyforge.plist
-launchctl start com.proxyforge
+launchctl load ~/Library/LaunchAgents/com.madhyamas.plist
+launchctl start com.madhyamas
 ```
 
 ---
@@ -148,21 +148,21 @@ launchctl start com.proxyforge
 
 ```bash
 # Pull latest image
-docker pull proxyforge/proxyforge:latest
+docker pull madhyamas/madhyamas:latest
 
 # Run container
 docker run -d \
-  --name proxyforge \
+  --name madhyamas \
   -p 8888:8888 \
   -p 3001:3001 \
-  -v proxyforge-data:/data \
-  proxyforge/proxyforge:latest
+  -v madhyamas-data:/data \
+  madhyamas/madhyamas:latest
 
 # View logs
-docker logs -f proxyforge
+docker logs -f madhyamas
 
 # Stop container
-docker stop proxyforge
+docker stop madhyamas
 ```
 
 ### Building Custom Image
@@ -198,24 +198,24 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN useradd -r -u 1000 -s /bin/false proxyforge
+RUN useradd -r -u 1000 -s /bin/false madhyamas
 
 # Copy binary from builder
-COPY --from=builder /app/target/release/proxyforge /usr/local/bin/
+COPY --from=builder /app/target/release/madhyamas /usr/local/bin/
 
 # Copy web UI assets
-COPY web/dist /usr/share/proxyforge/web
+COPY web/dist /usr/share/madhyamas/web
 
 # Create data directory
 RUN mkdir -p /data/certs /data/logs && \
-    chown -R proxyforge:proxyforge /data
+    chown -R madhyamas:madhyamas /data
 
-USER proxyforge
+USER madhyamas
 WORKDIR /data
 
 EXPOSE 8888 3001
 
-ENTRYPOINT ["/usr/local/bin/proxyforge"]
+ENTRYPOINT ["/usr/local/bin/madhyamas"]
 CMD ["--host", "0.0.0.0", "--db-path", "/data/traffic.db", "--cert-path", "/data/certs"]
 ```
 
@@ -223,15 +223,15 @@ Build and run:
 
 ```bash
 # Build image
-docker build -t proxyforge:local .
+docker build -t madhyamas:local .
 
 # Run container
 docker run -d \
-  --name proxyforge \
+  --name madhyamas \
   -p 8888:8888 \
   -p 3001:3001 \
   -v $(pwd)/data:/data \
-  proxyforge:local
+  madhyamas:local
 ```
 
 ### Docker Compose
@@ -242,19 +242,19 @@ Create `docker-compose.yml`:
 version: '3.8'
 
 services:
-  proxyforge:
-    image: proxyforge/proxyforge:latest
-    container_name: proxyforge
+  madhyamas:
+    image: madhyamas/madhyamas:latest
+    container_name: madhyamas
     restart: unless-stopped
     ports:
       - "8888:8888"
       - "3001:3001"
     volumes:
-      - proxyforge-data:/data
-      - ./config.toml:/etc/proxyforge/config.toml:ro
+      - madhyamas-data:/data
+      - ./config.toml:/etc/madhyamas/config.toml:ro
     environment:
       - RUST_LOG=info
-      - PROXYFORGE_CONFIG=/etc/proxyforge/config.toml
+      - MADHYAMAS_CONFIG=/etc/madhyamas/config.toml
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
       interval: 30s
@@ -263,7 +263,7 @@ services:
       start_period: 40s
 
 volumes:
-  proxyforge-data:
+  madhyamas-data:
     driver: local
 ```
 
@@ -287,14 +287,14 @@ Create `k8s/deployment.yaml`:
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: proxyforge
+  name: madhyamas
 
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: proxyforge-config
-  namespace: proxyforge
+  name: madhyamas-config
+  namespace: madhyamas
 data:
   config.toml: |
     [general]
@@ -310,8 +310,8 @@ data:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: proxyforge-data
-  namespace: proxyforge
+  name: madhyamas-data
+  namespace: madhyamas
 spec:
   accessModes:
     - ReadWriteOnce
@@ -323,21 +323,21 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: proxyforge
-  namespace: proxyforge
+  name: madhyamas
+  namespace: madhyamas
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: proxyforge
+      app: madhyamas
   template:
     metadata:
       labels:
-        app: proxyforge
+        app: madhyamas
     spec:
       containers:
-      - name: proxyforge
-        image: proxyforge/proxyforge:latest
+      - name: madhyamas
+        image: madhyamas/madhyamas:latest
         ports:
         - containerPort: 8888
           name: proxy
@@ -350,7 +350,7 @@ spec:
         - name: data
           mountPath: /data
         - name: config
-          mountPath: /etc/proxyforge
+          mountPath: /etc/madhyamas
           readOnly: true
         resources:
           requests:
@@ -374,21 +374,21 @@ spec:
       volumes:
       - name: data
         persistentVolumeClaim:
-          claimName: proxyforge-data
+          claimName: madhyamas-data
       - name: config
         configMap:
-          name: proxyforge-config
+          name: madhyamas-config
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: proxyforge
-  namespace: proxyforge
+  name: madhyamas
+  namespace: madhyamas
 spec:
   type: LoadBalancer
   selector:
-    app: proxyforge
+    app: madhyamas
   ports:
   - name: proxy
     port: 8888
@@ -405,25 +405,25 @@ Deploy to Kubernetes:
 kubectl apply -f k8s/deployment.yaml
 
 # Check deployment status
-kubectl get pods -n proxyforge
-kubectl get svc -n proxyforge
+kubectl get pods -n madhyamas
+kubectl get svc -n madhyamas
 
 # View logs
-kubectl logs -f -n proxyforge deployment/proxyforge
+kubectl logs -f -n madhyamas deployment/madhyamas
 
 # Port forward for local access
-kubectl port-forward -n proxyforge svc/proxyforge 8888:8888 3001:3001
+kubectl port-forward -n madhyamas svc/madhyamas 8888:8888 3001:3001
 ```
 
 ### Helm Chart
 
-Create `helm/proxyforge/values.yaml`:
+Create `helm/madhyamas/values.yaml`:
 
 ```yaml
 replicaCount: 1
 
 image:
-  repository: proxyforge/proxyforge
+  repository: madhyamas/madhyamas
   tag: latest
   pullPolicy: IfNotPresent
 
@@ -453,9 +453,9 @@ config:
 Install with Helm:
 
 ```bash
-helm install proxyforge ./helm/proxyforge
-helm upgrade proxyforge ./helm/proxyforge
-helm uninstall proxyforge
+helm install madhyamas ./helm/madhyamas
+helm upgrade madhyamas ./helm/madhyamas
+helm uninstall madhyamas
 ```
 
 ---
@@ -474,14 +474,14 @@ sudo yum install -y docker
 sudo service docker start
 sudo usermod -a -G docker ec2-user
 
-# Run ProxyForge
+# Run Madhyamas
 docker run -d \
-  --name proxyforge \
+  --name madhyamas \
   --restart unless-stopped \
   -p 8888:8888 \
   -p 3001:3001 \
-  -v /data/proxyforge:/data \
-  proxyforge/proxyforge:latest
+  -v /data/madhyamas:/data \
+  madhyamas/madhyamas:latest
 ```
 
 #### ECS Fargate
@@ -490,15 +490,15 @@ Create task definition:
 
 ```json
 {
-  "family": "proxyforge",
+  "family": "madhyamas",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
   "memory": "1024",
   "containerDefinitions": [
     {
-      "name": "proxyforge",
-      "image": "proxyforge/proxyforge:latest",
+      "name": "madhyamas",
+      "image": "madhyamas/madhyamas:latest",
       "portMappings": [
         {
           "containerPort": 8888,
@@ -518,7 +518,7 @@ Create task definition:
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group": "/ecs/proxyforge",
+          "awslogs-group": "/ecs/madhyamas",
           "awslogs-region": "us-east-1",
           "awslogs-stream-prefix": "ecs"
         }
@@ -532,11 +532,11 @@ Create task definition:
 
 ```bash
 # Build and push image
-gcloud builds submit --tag gcr.io/PROJECT_ID/proxyforge
+gcloud builds submit --tag gcr.io/PROJECT_ID/madhyamas
 
 # Deploy to Cloud Run
-gcloud run deploy proxyforge \
-  --image gcr.io/PROJECT_ID/proxyforge \
+gcloud run deploy madhyamas \
+  --image gcr.io/PROJECT_ID/madhyamas \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
@@ -549,14 +549,14 @@ gcloud run deploy proxyforge \
 
 ```bash
 # Create resource group
-az group create --name proxyforge-rg --location eastus
+az group create --name madhyamas-rg --location eastus
 
 # Deploy container
 az container create \
-  --resource-group proxyforge-rg \
-  --name proxyforge \
-  --image proxyforge/proxyforge:latest \
-  --dns-name-label proxyforge \
+  --resource-group madhyamas-rg \
+  --name madhyamas \
+  --image madhyamas/madhyamas:latest \
+  --dns-name-label madhyamas \
   --ports 8888 3001 \
   --cpu 1 \
   --memory 1
@@ -568,13 +568,13 @@ az container create \
 
 ### Homebrew (macOS/Linux)
 
-Create formula `proxyforge.rb`:
+Create formula `madhyamas.rb`:
 
 ```ruby
 class Proxyforge < Formula
   desc "Open source HTTP/HTTPS debugging proxy"
-  homepage "https://github.com/proxyforge/proxyforge"
-  url "https://github.com/proxyforge/proxyforge/archive/v0.1.0.tar.gz"
+  homepage "https://github.com/madhyamas/madhyamas"
+  url "https://github.com/madhyamas/madhyamas/archive/v0.1.0.tar.gz"
   sha256 "..."
   license "MIT OR Apache-2.0"
 
@@ -585,14 +585,14 @@ class Proxyforge < Formula
   end
 
   service do
-    run [opt_bin/"proxyforge"]
+    run [opt_bin/"madhyamas"]
     keep_alive true
-    log_path var/"log/proxyforge.log"
-    error_log_path var/"log/proxyforge.err"
+    log_path var/"log/madhyamas.log"
+    error_log_path var/"log/madhyamas.err"
   end
 
   test do
-    system "#{bin}/proxyforge", "--version"
+    system "#{bin}/madhyamas", "--version"
   end
 end
 ```
@@ -600,9 +600,9 @@ end
 Install:
 
 ```bash
-brew tap proxyforge/tap
-brew install proxyforge
-brew services start proxyforge
+brew tap madhyamas/tap
+brew install madhyamas
+brew services start madhyamas
 ```
 
 ### Snap (Linux)
@@ -610,11 +610,11 @@ brew services start proxyforge
 Create `snapcraft.yaml`:
 
 ```yaml
-name: proxyforge
+name: madhyamas
 version: '0.1.0'
 summary: Open source HTTP/HTTPS debugging proxy
 description: |
-  ProxyForge is a high-performance debugging proxy built in Rust
+  Madhyamas is a high-performance debugging proxy built in Rust
   with a modern web-based UI.
 
 grade: stable
@@ -622,15 +622,15 @@ confinement: strict
 base: core22
 
 apps:
-  proxyforge:
-    command: bin/proxyforge
+  madhyamas:
+    command: bin/madhyamas
     daemon: simple
     plugs:
       - network
       - network-bind
 
 parts:
-  proxyforge:
+  madhyamas:
     plugin: rust
     source: .
     build-packages:
@@ -642,7 +642,7 @@ Build and publish:
 
 ```bash
 snapcraft
-snapcraft upload --release=stable proxyforge_0.1.0_amd64.snap
+snapcraft upload --release=stable madhyamas_0.1.0_amd64.snap
 ```
 
 ### AUR (Arch Linux)
@@ -650,16 +650,16 @@ snapcraft upload --release=stable proxyforge_0.1.0_amd64.snap
 Create `PKGBUILD`:
 
 ```bash
-pkgname=proxyforge
+pkgname=madhyamas
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="Open source HTTP/HTTPS debugging proxy"
 arch=('x86_64')
-url="https://github.com/proxyforge/proxyforge"
+url="https://github.com/madhyamas/madhyamas"
 license=('MIT' 'Apache')
 depends=('gcc-libs')
 makedepends=('rust' 'cargo')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/proxyforge/proxyforge/archive/v$pkgver.tar.gz")
+source=("$pkgname-$pkgver.tar.gz::https://github.com/madhyamas/madhyamas/archive/v$pkgver.tar.gz")
 sha256sums=('...')
 
 build() {
@@ -669,7 +669,7 @@ build() {
 
 package() {
     cd "$pkgname-$pkgver"
-    install -Dm755 target/release/proxyforge "$pkgdir/usr/bin/proxyforge"
+    install -Dm755 target/release/madhyamas "$pkgdir/usr/bin/madhyamas"
     install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
 }
 ```
@@ -686,7 +686,7 @@ export RUST_LOG=info
 export RUST_BACKTRACE=1
 
 # Custom config path
-export PROXYFORGE_CONFIG=/etc/proxyforge/config.toml
+export MADHYAMAS_CONFIG=/etc/madhyamas/config.toml
 
 # Performance tuning
 export TOKIO_WORKER_THREADS=4
@@ -694,7 +694,7 @@ export TOKIO_WORKER_THREADS=4
 
 ### Configuration File
 
-Create `/etc/proxyforge/config.toml`:
+Create `/etc/madhyamas/config.toml`:
 
 ```toml
 [general]
@@ -704,12 +704,12 @@ host = "0.0.0.0"
 log_level = "info"
 
 [tls]
-cert_dir = "/var/lib/proxyforge/certs"
+cert_dir = "/var/lib/madhyamas/certs"
 auto_generate = true
 
 [storage]
-data_dir = "/var/lib/proxyforge"
-db_path = "/var/lib/proxyforge/traffic.db"
+data_dir = "/var/lib/madhyamas"
+db_path = "/var/lib/madhyamas/traffic.db"
 max_entries = 100000
 
 [performance]
@@ -726,16 +726,16 @@ allowed_origins = ["*"]
 ### Reverse Proxy (nginx)
 
 ```nginx
-upstream proxyforge_api {
+upstream madhyamas_api {
     server localhost:3001;
 }
 
 server {
     listen 80;
-    server_name proxyforge.example.com;
+    server_name madhyamas.example.com;
     
     location / {
-        proxy_pass http://proxyforge_api;
+        proxy_pass http://madhyamas_api;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -746,7 +746,7 @@ server {
     }
     
     location /api/ws {
-        proxy_pass http://proxyforge_api;
+        proxy_pass http://madhyamas_api;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -773,7 +773,7 @@ curl http://localhost:3001/api/metrics
 ```yaml
 # prometheus.yml
 scrape_configs:
-  - job_name: 'proxyforge'
+  - job_name: 'madhyamas'
     static_configs:
       - targets: ['localhost:3001']
     metrics_path: '/api/metrics'
@@ -783,13 +783,13 @@ scrape_configs:
 
 ```bash
 # View logs
-tail -f /var/log/proxyforge/proxyforge.log
+tail -f /var/log/madhyamas/madhyamas.log
 
 # With systemd
-journalctl -u proxyforge -f
+journalctl -u madhyamas -f
 
 # Docker
-docker logs -f proxyforge
+docker logs -f madhyamas
 ```
 
 ---
@@ -819,20 +819,20 @@ docker logs -f proxyforge
 
 ```bash
 # Backup database
-cp ~/.proxyforge/traffic.db ~/backups/traffic-$(date +%Y%m%d).db
+cp ~/.madhyamas/traffic.db ~/backups/traffic-$(date +%Y%m%d).db
 
 # Backup certificates
-tar -czf ~/backups/certs-$(date +%Y%m%d).tar.gz ~/.proxyforge/certs/
+tar -czf ~/backups/certs-$(date +%Y%m%d).tar.gz ~/.madhyamas/certs/
 ```
 
 ### Restore Data
 
 ```bash
 # Restore database
-cp ~/backups/traffic-20260314.db ~/.proxyforge/traffic.db
+cp ~/backups/traffic-20260314.db ~/.madhyamas/traffic.db
 
 # Restore certificates
-tar -xzf ~/backups/certs-20260314.tar.gz -C ~/.proxyforge/
+tar -xzf ~/backups/certs-20260314.tar.gz -C ~/.madhyamas/
 ```
 
 ---
@@ -848,20 +848,20 @@ lsof -i :8888
 lsof -i :3001
 
 # Use different ports
-proxyforge --proxy-port 9999 --api-port 4001
+madhyamas --proxy-port 9999 --api-port 4001
 ```
 
 **Permission errors**
 ```bash
 # Fix permissions
-sudo chown -R $USER:$USER ~/.proxyforge
-chmod 755 ~/.proxyforge
+sudo chown -R $USER:$USER ~/.madhyamas
+chmod 755 ~/.madhyamas
 ```
 
 **High memory usage**
 ```bash
 # Reduce max entries
-proxyforge --max-requests 5000
+madhyamas --max-requests 5000
 
 # Clear old data
 curl -X POST http://localhost:3001/api/traffic/clear

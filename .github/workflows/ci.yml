@@ -127,6 +127,6 @@ jobs:
         with:
           context: .
           push: false
-          tags: proxyforge:test
+          tags: madhyamas:test
           cache-from: type=gha
           cache-to: type=gha,mode=max

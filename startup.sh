@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# ProxyForge Startup Script
-# This script builds and starts the ProxyForge application using Docker Compose
+# Madhyamas Startup Script
+# This script builds and starts the Madhyamas application using Docker Compose
 # All detection (OS, IP) happens automatically
 #
 # Usage:
@@ -9,7 +9,7 @@
 #   ./startup.sh --clean  # Clean rebuild (no cache)
 #
 # Environment variables (optional):
-#   PROXYFORGE_PUBLIC_IP  - Override auto-detected IP
+#   MADHYAMAS_PUBLIC_IP  - Override auto-detected IP
 
 set -e
 
@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo -e "${GREEN}ProxyForge Startup Script${NC}"
+echo -e "${GREEN}Madhyamas Startup Script${NC}"
 echo "================================"
 echo -e "Detected OS: ${BLUE}$OS${NC}"
 
@@ -84,7 +84,7 @@ if [ "$CLEAN_BUILD" = true ]; then
     
     # Prune Docker build cache for this project
     echo "  • Pruning Docker build cache..."
-    docker builder prune -f --filter "label=project=proxyforge" 2>/dev/null || true
+    docker builder prune -f --filter "label=project=madhyamas" 2>/dev/null || true
     
     echo -e "${GREEN}✓ Cleanup complete${NC}"
 fi
@@ -139,21 +139,21 @@ detect_host_ip() {
 }
 
 # Determine the IP to use (env var takes precedence, then auto-detect)
-if [[ -n "$PROXYFORGE_PUBLIC_IP" ]]; then
-    HOST_IP="$PROXYFORGE_PUBLIC_IP"
-    echo -e "Host IP: ${BLUE}$HOST_IP${NC} (from PROXYFORGE_PUBLIC_IP)"
+if [[ -n "$MADHYAMAS_PUBLIC_IP" ]]; then
+    HOST_IP="$MADHYAMAS_PUBLIC_IP"
+    echo -e "Host IP: ${BLUE}$HOST_IP${NC} (from MADHYAMAS_PUBLIC_IP)"
 else
     HOST_IP=$(detect_host_ip)
     if [[ -n "$HOST_IP" ]]; then
         echo -e "Host IP: ${BLUE}$HOST_IP${NC} (auto-detected)"
     else
         echo -e "${YELLOW}Warning: Could not auto-detect host IP.${NC}"
-        echo -e "${YELLOW}Set PROXYFORGE_PUBLIC_IP env var for mobile device access.${NC}"
+        echo -e "${YELLOW}Set MADHYAMAS_PUBLIC_IP env var for mobile device access.${NC}"
     fi
 fi
 
 # Export for Docker Compose
-export PROXYFORGE_PUBLIC_IP="${HOST_IP:-}"
+export MADHYAMAS_PUBLIC_IP="${HOST_IP:-}"
 
 # Stop any existing containers
 echo -e "${YELLOW}Stopping any existing containers...${NC}"
@@ -163,10 +163,10 @@ docker compose down 2>/dev/null || true
 if [ "$CLEAN_BUILD" = true ]; then
     echo -e "${GREEN}Building Docker images (no cache)...${NC}"
     docker compose build --no-cache
-    echo -e "${GREEN}Starting ProxyForge containers...${NC}"
+    echo -e "${GREEN}Starting Madhyamas containers...${NC}"
     docker compose up -d
 else
-    echo -e "${GREEN}Building and starting ProxyForge...${NC}"
+    echo -e "${GREEN}Building and starting Madhyamas...${NC}"
     docker compose up -d --build
 fi
 
@@ -176,7 +176,7 @@ sleep 5
 
 # Check if containers are running
 if docker compose ps | grep -q "Up"; then
-    echo -e "${GREEN}✓ ProxyForge is running!${NC}"
+    echo -e "${GREEN}✓ Madhyamas is running!${NC}"
     echo ""
     echo "Services:"
     echo "  • Web UI/API:    http://localhost:3001"
