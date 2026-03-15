@@ -1,7 +1,19 @@
 # Madhyamas Docker Image
 # Multi-stage build for optimized image size
 
-# Build stage
+# Frontend build stage
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/web
+
+# Copy frontend files
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web/ ./
+RUN npm run build
+
+# Backend build stage
 FROM rust:alpine AS builder
 
 RUN apk add --no-cache musl-dev openssl-dev openssl openssl-libs-static pkgconf build-base
@@ -53,7 +65,7 @@ COPY --from=builder /app/target/release/madhyamas /usr/local/bin/madhyamas
 COPY --from=builder /app/target/release/madhyamas-mcp /usr/local/bin/madhyamas-mcp
 
 # Copy web assets (built separately)
-COPY web/dist ./web/dist
+COPY --from=frontend-builder /app/web/dist ./web/dist
 
 # Create directories for data
 RUN mkdir -p /data/certs /data/sessions && chown -R madhyamas:madhyamas /data
