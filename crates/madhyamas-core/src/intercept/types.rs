@@ -678,7 +678,12 @@ mod tests {
                 assert!(condition.matches_response(404, &HashMap::new(), Some(error_body), None));
 
                 let success_body = b"{\"success\": true}";
-                assert!(!condition.matches_response(200, &HashMap::new(), Some(success_body), None));
+                assert!(!condition.matches_response(
+                    200,
+                    &HashMap::new(),
+                    Some(success_body),
+                    None
+                ));
             }
 
             #[test]
@@ -714,9 +719,19 @@ mod tests {
                     ],
                 };
 
-                assert!(condition.matches_response(404, &HashMap::new(), None, Some("application/json")));
+                assert!(condition.matches_response(
+                    404,
+                    &HashMap::new(),
+                    None,
+                    Some("application/json")
+                ));
                 assert!(!condition.matches_response(404, &HashMap::new(), None, Some("text/html")));
-                assert!(!condition.matches_response(200, &HashMap::new(), None, Some("application/json")));
+                assert!(!condition.matches_response(
+                    200,
+                    &HashMap::new(),
+                    None,
+                    Some("application/json")
+                ));
             }
         }
     }
@@ -793,12 +808,10 @@ mod tests {
         #[test]
         fn test_modify_decision() {
             let decision = InterceptDecision::Modify {
-                modifications: vec![
-                    Modification::SetHeader {
-                        name: "X-Custom".to_string(),
-                        value: "test".to_string(),
-                    },
-                ],
+                modifications: vec![Modification::SetHeader {
+                    name: "X-Custom".to_string(),
+                    value: "test".to_string(),
+                }],
             };
             let json = serde_json::to_string(&decision).unwrap();
             assert!(json.contains("\"Modify\""));

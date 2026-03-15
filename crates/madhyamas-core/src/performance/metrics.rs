@@ -1,7 +1,7 @@
 //! Metrics collection and reporting
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -98,7 +98,8 @@ impl MetricsCollector {
         }
         self.response_count.fetch_add(1, Ordering::Relaxed);
         self.bytes_received.fetch_add(bytes, Ordering::Relaxed);
-        self.total_latency_ns.fetch_add(latency.as_nanos() as u64, Ordering::Relaxed);
+        self.total_latency_ns
+            .fetch_add(latency.as_nanos() as u64, Ordering::Relaxed);
 
         // Update latency histogram
         let latency_ms = latency.as_millis() as u64;

@@ -19,14 +19,14 @@ fn main() {
     };
     let subscriber = FmtSubscriber::builder()
         .with_max_level(level)
-        .with_target(false)  // Don't include module path
+        .with_target(false) // Don't include module path
         .with_thread_ids(false)
         .finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 
     // Get configuration from environment
-    let api_url = env::var("MADHYAMAS_API_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:3001".to_string());
+    let api_url =
+        env::var("MADHYAMAS_API_URL").unwrap_or_else(|_| "http://127.0.0.1:3001".to_string());
 
     let timeout_secs: u64 = env::var("MADHYAMAS_TIMEOUT")
         .ok()
@@ -41,8 +41,7 @@ fn main() {
         timeout_secs,
     };
 
-    let server = McpServer::new(config)
-        .expect("Failed to create MCP server");
+    let server = McpServer::new(config).expect("Failed to create MCP server");
 
     // Run the server using stdio transport
     if let Err(e) = server.run() {

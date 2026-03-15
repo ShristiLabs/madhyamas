@@ -75,10 +75,7 @@ pub async fn save_request(
 }
 
 /// List saved requests
-pub async fn list_saved_requests(
-    client: &Client,
-    api_url: &str,
-) -> Result<Value, McpError> {
+pub async fn list_saved_requests(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/replay/saved", api_url);
 
     let response = client
@@ -128,10 +125,7 @@ pub async fn delete_saved_request(
 }
 
 /// Get replay history
-pub async fn get_replay_history(
-    client: &Client,
-    api_url: &str,
-) -> Result<Value, McpError> {
+pub async fn get_replay_history(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/replay/history", api_url);
 
     let response = client

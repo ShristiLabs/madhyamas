@@ -6,10 +6,7 @@ use serde_json::{json, Value};
 use crate::types::McpError;
 
 /// List all sessions
-pub async fn list_sessions(
-    client: &Client,
-    api_url: &str,
-) -> Result<Value, McpError> {
+pub async fn list_sessions(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/sessions", api_url);
 
     let response = client
@@ -132,7 +129,10 @@ pub async fn export_session(
     format: Option<&str>,
 ) -> Result<Value, McpError> {
     let fmt = format.unwrap_or("har");
-    let url = format!("{}/api/sessions/{}/export?format={}", api_url, session_id, fmt);
+    let url = format!(
+        "{}/api/sessions/{}/export?format={}",
+        api_url, session_id, fmt
+    );
 
     let response = client
         .get(&url)

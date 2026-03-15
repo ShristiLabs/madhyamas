@@ -143,7 +143,12 @@ impl RbacManager {
     }
 
     /// Check if a role has permission for a resource
-    pub fn has_permission(&self, role: &UserRole, resource_type: ResourceType, permission: Permission) -> bool {
+    pub fn has_permission(
+        &self,
+        role: &UserRole,
+        resource_type: ResourceType,
+        permission: Permission,
+    ) -> bool {
         self.role_permissions
             .read()
             .get(role)
@@ -161,7 +166,12 @@ impl RbacManager {
     }
 
     /// Grant permission to a role
-    pub fn grant_permission(&self, role: UserRole, resource_type: ResourceType, permission: Permission) {
+    pub fn grant_permission(
+        &self,
+        role: UserRole,
+        resource_type: ResourceType,
+        permission: Permission,
+    ) {
         self.role_permissions
             .write()
             .entry(role)
@@ -170,7 +180,12 @@ impl RbacManager {
     }
 
     /// Revoke permission from a role
-    pub fn revoke_permission(&self, role: &UserRole, resource_type: ResourceType, permission: Permission) {
+    pub fn revoke_permission(
+        &self,
+        role: &UserRole,
+        resource_type: ResourceType,
+        permission: Permission,
+    ) {
         if let Some(perms) = self.role_permissions.write().get_mut(role) {
             perms.remove(&(resource_type, permission));
         }

@@ -6,12 +6,12 @@
 //! - Connection pooling
 //! - Performance monitoring
 
-pub mod metrics;
 pub mod memory;
-pub mod pool;
+pub mod metrics;
 pub mod monitor;
+pub mod pool;
 
-pub use metrics::{Metrics, MetricsCollector, PerformanceStats, MemoryInfo, PoolStats};
-pub use memory::{MemoryManager, MemoryStats, GarbageCollectionConfig};
-pub use pool::{ConnectionPool, PoolConfig, PooledConnection, PoolStatistics};
-pub use monitor::{PerformanceMonitor, HealthCheck, AlertConfig, HealthStatus, Alert, AlertLevel};
+pub use memory::{GarbageCollectionConfig, MemoryManager, MemoryStats};
+pub use metrics::{MemoryInfo, Metrics, MetricsCollector, PerformanceStats, PoolStats};
+pub use monitor::{Alert, AlertConfig, AlertLevel, HealthCheck, HealthStatus, PerformanceMonitor};
+pub use pool::{ConnectionPool, PoolConfig, PoolStatistics, PooledConnection};

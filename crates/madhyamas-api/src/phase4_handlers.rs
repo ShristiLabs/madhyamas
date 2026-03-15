@@ -1,6 +1,5 @@
 //! Phase 4 API handlers - Enterprise features, performance monitoring, and onboarding
 
-use std::sync::Arc;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -8,14 +7,13 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use madhyamas_core::enterprise::{
-    AuditEvent, AuditFilter, AuditLogger,
-    AuthManager, ApiKey, JwtClaims,
-    User, UserRole, UserStatus,
-    Permission, RbacManager,
-};
 use crate::AppState;
+use madhyamas_core::enterprise::{
+    ApiKey, AuditEvent, AuditFilter, AuditLogger, AuthManager, JwtClaims, Permission, RbacManager,
+    User, UserRole, UserStatus,
+};
 
 // ============== Stub Types ==============
 
@@ -133,7 +131,9 @@ pub struct PoolStatsResponse {
 }
 
 /// Get performance stats
-pub async fn get_performance_stats(State(_state): State<Arc<AppState>>) -> Json<PerformanceStatsResponse> {
+pub async fn get_performance_stats(
+    State(_state): State<Arc<AppState>>,
+) -> Json<PerformanceStatsResponse> {
     Json(PerformanceStatsResponse {
         metrics: MetricsCollector::new().snapshot(),
         memory: MemoryInfoResponse {
@@ -190,7 +190,9 @@ pub async fn logout(State(_state): State<Arc<AppState>>) -> StatusCode {
 }
 
 /// Get current user
-pub async fn get_current_user(State(_state): State<Arc<AppState>>) -> Result<Json<UserInfo>, StatusCode> {
+pub async fn get_current_user(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<UserInfo>, StatusCode> {
     Err(StatusCode::NOT_IMPLEMENTED)
 }
 
@@ -416,7 +418,8 @@ pub async fn get_onboarding_status(State(_state): State<Arc<AppState>>) -> Json<
             OnboardingStep {
                 id: "certificate".to_string(),
                 title: "Install Certificate".to_string(),
-                description: "Install the root CA certificate to intercept HTTPS traffic".to_string(),
+                description: "Install the root CA certificate to intercept HTTPS traffic"
+                    .to_string(),
                 completed: false,
                 optional: false,
             },

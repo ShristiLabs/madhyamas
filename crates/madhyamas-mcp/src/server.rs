@@ -9,8 +9,8 @@ use serde_json::{json, Value};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info};
 
-use crate::types::*;
 use crate::tools::{ToolExecutor, ToolRegistry};
+use crate::types::*;
 
 /// MCP Server for Madhyamas
 pub struct McpServer {
@@ -28,8 +28,7 @@ impl McpServer {
             .build()
             .map_err(|e| McpError::Http(e.to_string()))?;
 
-        let tokio_runtime = Runtime::new()
-            .map_err(|e| McpError::ToolExecution(e.to_string()))?;
+        let tokio_runtime = Runtime::new().map_err(|e| McpError::ToolExecution(e.to_string()))?;
 
         Ok(Self {
             config,
@@ -58,7 +57,7 @@ impl McpServer {
                         Value::Null,
                         -32700,
                         "Parse error",
-                        Some(json!({ "details": e.to_string() }))
+                        Some(json!({ "details": e.to_string() })),
                     );
                     self.write_response(&mut stdout, &response)?;
                     continue;
@@ -87,7 +86,7 @@ impl McpServer {
                 request.id,
                 -32601,
                 "Method not found",
-                Some(json!({ "method": request.method }))
+                Some(json!({ "method": request.method })),
             ),
         }
     }
@@ -97,12 +96,16 @@ impl McpServer {
         let result = InitializeResult {
             protocol_version: "2024-11-05".to_string(),
             capabilities: ServerCapabilities {
-                tools: Some(ToolsCapability { list_changed: Some(false) }),
+                tools: Some(ToolsCapability {
+                    list_changed: Some(false),
+                }),
                 resources: Some(ResourcesCapability {
                     subscribe: Some(false),
                     list_changed: Some(false),
                 }),
-                prompts: Some(PromptsCapability { list_changed: Some(false) }),
+                prompts: Some(PromptsCapability {
+                    list_changed: Some(false),
+                }),
             },
             server_info: ServerInfo {
                 name: "madhyamas".to_string(),
@@ -161,14 +164,11 @@ impl McpServer {
 
         debug!("Calling tool: {} with args: {:?}", tool_name, arguments);
 
-        let executor = ToolExecutor::new(
-            self.config.api_url.clone(),
-            self.http_client.clone(),
-        );
+        let executor = ToolExecutor::new(self.config.api_url.clone(), self.http_client.clone());
 
-        let result = self.tokio_runtime.block_on(async {
-            executor.execute(&tool_name, arguments).await
-        });
+        let result = self
+            .tokio_runtime
+            .block_on(async { executor.execute(&tool_name, arguments).await });
 
         match result {
             Ok(content) => {
@@ -185,7 +185,9 @@ impl McpServer {
             }
             Err(e) => {
                 let tool_result = ToolResult {
-                    content: vec![ContentBlock::Text { text: e.to_string() }],
+                    content: vec![ContentBlock::Text {
+                        text: e.to_string(),
+                    }],
                     is_error: Some(true),
                 };
                 JsonRpcResponse {
@@ -257,10 +259,7 @@ impl McpServer {
             }
         };
 
-        let executor = ToolExecutor::new(
-            self.config.api_url.clone(),
-            self.http_client.clone(),
-        );
+        let executor = ToolExecutor::new(self.config.api_url.clone(), self.http_client.clone());
 
         let contents = self.tokio_runtime.block_on(async {
             match uri {
@@ -323,12 +322,7 @@ impl McpServer {
     }
 
     /// Create an error response
-    fn error_response(
-        id: Value,
-        code: i64,
-        message: &str,
-        data: Option<Value>,
-    ) -> JsonRpcResponse {
+    fn error_response(id: Value, code: i64, message: &str, data: Option<Value>) -> JsonRpcResponse {
         JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
             id: if id.is_null() { None } else { Some(id) },
@@ -342,12 +336,22 @@ impl McpServer {
     }
 
     /// Write response to stdout
-    fn write_response(&self, stdout: &mut io::StdoutLock, response: &JsonRpcResponse) -> Result<(), McpError> {
+    fn write_response(
+        &self,
+        stdout: &mut io::StdoutLock,
+        response: &JsonRpcResponse,
+    ) -> Result<(), McpError> {
         let json = serde_json::to_string(response).map_err(|e| McpError::JsonRpc(e.to_string()))?;
         debug!("Sending: {}", json);
-        stdout.write_all(json.as_bytes()).map_err(|e| McpError::JsonRpc(e.to_string()))?;
-        stdout.write_all(b"\n").map_err(|e| McpError::JsonRpc(e.to_string()))?;
-        stdout.flush().map_err(|e| McpError::JsonRpc(e.to_string()))?;
+        stdout
+            .write_all(json.as_bytes())
+            .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+        stdout
+            .write_all(b"\n")
+            .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+        stdout
+            .flush()
+            .map_err(|e| McpError::JsonRpc(e.to_string()))?;
         Ok(())
     }
 }

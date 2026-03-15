@@ -88,7 +88,10 @@ impl ApiKey {
     /// Generate a new API key
     pub fn generate(user_id: &str, name: &str) -> Self {
         let id = uuid::Uuid::new_v4().to_string();
-        let key = format!("pf_{}", uuid::Uuid::new_v4().simple().to_string().replace('-', ""));
+        let key = format!(
+            "pf_{}",
+            uuid::Uuid::new_v4().simple().to_string().replace('-', "")
+        );
         let now = chrono::Utc::now().timestamp();
 
         Self {
@@ -215,7 +218,9 @@ impl AuthManager {
         let api_key = ApiKey::generate(user_id, name);
 
         // Store by key value
-        self.api_keys.write().insert(api_key.key.clone(), api_key.clone());
+        self.api_keys
+            .write()
+            .insert(api_key.key.clone(), api_key.clone());
 
         // Store by user ID
         self.user_keys
@@ -230,9 +235,11 @@ impl AuthManager {
     /// Revoke an API key
     pub fn revoke_api_key(&self, key_id: &str) -> Result<(), EnterpriseError> {
         let mut keys = self.api_keys.write();
-        let api_key = keys.remove(key_id).ok_or_else(|| EnterpriseError::AuthFailed {
-            message: "API key not found".to_string(),
-        })?;
+        let api_key = keys
+            .remove(key_id)
+            .ok_or_else(|| EnterpriseError::AuthFailed {
+                message: "API key not found".to_string(),
+            })?;
 
         // Remove from user's keys
         if let Some(user_keys) = self.user_keys.write().get_mut(&api_key.user_id) {
@@ -249,11 +256,7 @@ impl AuthManager {
 
         user_keys
             .get(user_id)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| keys.get(id).cloned())
-                    .collect()
-            })
+            .map(|ids| ids.iter().filter_map(|id| keys.get(id).cloned()).collect())
             .unwrap_or_default()
     }
 
@@ -271,9 +274,10 @@ impl AuthManager {
         let decoded = base64::decode(token).map_err(|_| EnterpriseError::AuthFailed {
             message: "Invalid token".to_string(),
         })?;
-        let claims: JwtClaims = serde_json::from_slice(&decoded).map_err(|_| EnterpriseError::AuthFailed {
-            message: "Invalid token claims".to_string(),
-        })?;
+        let claims: JwtClaims =
+            serde_json::from_slice(&decoded).map_err(|_| EnterpriseError::AuthFailed {
+                message: "Invalid token claims".to_string(),
+            })?;
 
         if claims.is_expired() {
             return Err(EnterpriseError::TokenExpired {

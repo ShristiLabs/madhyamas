@@ -421,7 +421,11 @@ mod tests {
             for _ in 0..20 {
                 let latency = profile.effective_latency();
                 let ms = latency.as_millis();
-                assert!(ms >= 100 && ms <= 150, "Latency {}ms not in range 100-150", ms);
+                assert!(
+                    ms >= 100 && ms <= 150,
+                    "Latency {}ms not in range 100-150",
+                    ms
+                );
             }
         }
 

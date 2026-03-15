@@ -6,14 +6,14 @@
 //! - Multi-user support
 //! - Role-based access control
 
-pub mod auth;
 pub mod audit;
-pub mod user;
-pub mod rbac;
+pub mod auth;
 pub mod enterprise_error;
+pub mod rbac;
+pub mod user;
 
-pub use auth::{AuthManager, AuthConfig, ApiKey, JwtClaims};
-pub use audit::{AuditLogger, AuditEvent, AuditEventType, AuditFilter};
-pub use user::{User, UserRole, UserStatus};
-pub use rbac::{RbacManager, Permission, Resource, ResourceType};
+pub use audit::{AuditEvent, AuditEventType, AuditFilter, AuditLogger};
+pub use auth::{ApiKey, AuthConfig, AuthManager, JwtClaims};
 pub use enterprise_error::EnterpriseError;
+pub use rbac::{Permission, RbacManager, Resource, ResourceType};
+pub use user::{User, UserRole, UserStatus};

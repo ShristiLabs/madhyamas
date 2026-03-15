@@ -64,10 +64,7 @@ pub async fn create_mock(
 }
 
 /// List all mock rules
-pub async fn list_mocks(
-    client: &Client,
-    api_url: &str,
-) -> Result<Value, McpError> {
+pub async fn list_mocks(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/mocks", api_url);
 
     let response = client
@@ -91,11 +88,7 @@ pub async fn list_mocks(
 }
 
 /// Get a specific mock rule
-pub async fn get_mock(
-    client: &Client,
-    api_url: &str,
-    mock_id: &str,
-) -> Result<Value, McpError> {
+pub async fn get_mock(client: &Client, api_url: &str, mock_id: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/mocks/{}", api_url, mock_id);
 
     let response = client
@@ -119,11 +112,7 @@ pub async fn get_mock(
 }
 
 /// Delete a mock rule
-pub async fn delete_mock(
-    client: &Client,
-    api_url: &str,
-    mock_id: &str,
-) -> Result<Value, McpError> {
+pub async fn delete_mock(client: &Client, api_url: &str, mock_id: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/mocks/{}", api_url, mock_id);
 
     let response = client
@@ -176,10 +165,7 @@ pub async fn toggle_mock(
 }
 
 /// Get mock templates (predefined mock responses)
-pub async fn get_mock_templates(
-    client: &Client,
-    api_url: &str,
-) -> Result<Value, McpError> {
+pub async fn get_mock_templates(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/mocks/templates", api_url);
 
     let response = client

@@ -215,7 +215,8 @@ impl ConnectionPool {
         // Remove empty pools
         pools.retain(|(_, p)| p.total > 0);
 
-        self.total_expired.fetch_add(expired_count as u64, Ordering::Relaxed);
+        self.total_expired
+            .fetch_add(expired_count as u64, Ordering::Relaxed);
     }
 
     /// Get pool statistics

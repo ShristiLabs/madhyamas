@@ -1,6 +1,6 @@
 //! Memory management and optimization
 
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -57,7 +57,8 @@ impl MemoryManager {
 
     /// Set maximum memory in MB
     pub fn set_max_memory_mb(&self, mb: u64) {
-        self.max_memory_bytes.store(mb * 1024 * 1024, Ordering::SeqCst);
+        self.max_memory_bytes
+            .store(mb * 1024 * 1024, Ordering::SeqCst);
     }
 
     /// Set maximum entries
@@ -77,13 +78,15 @@ impl MemoryManager {
 
     /// Record entry added
     pub fn entry_added(&self, size_bytes: u64) {
-        self.current_usage_bytes.fetch_add(size_bytes, Ordering::SeqCst);
+        self.current_usage_bytes
+            .fetch_add(size_bytes, Ordering::SeqCst);
         self.current_entries.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Record entry removed
     pub fn entry_removed(&self, size_bytes: u64) {
-        self.current_usage_bytes.fetch_sub(size_bytes, Ordering::SeqCst);
+        self.current_usage_bytes
+            .fetch_sub(size_bytes, Ordering::SeqCst);
         self.current_entries.fetch_sub(1, Ordering::SeqCst);
     }
 
@@ -121,8 +124,10 @@ impl MemoryManager {
 
     /// Mark GC as completed
     pub fn gc_completed(&self, freed_bytes: u64, freed_entries: u64) {
-        self.current_usage_bytes.fetch_sub(freed_bytes, Ordering::SeqCst);
-        self.current_entries.fetch_sub(freed_entries, Ordering::SeqCst);
+        self.current_usage_bytes
+            .fetch_sub(freed_bytes, Ordering::SeqCst);
+        self.current_entries
+            .fetch_sub(freed_entries, Ordering::SeqCst);
         *self.last_gc.write() = Instant::now();
     }
 
@@ -136,10 +141,18 @@ impl MemoryManager {
         MemoryStats {
             used_bytes: usage,
             max_bytes: max,
-            usage_percent: if max > 0 { (usage as f64 / max as f64) * 100.0 } else { 0.0 },
+            usage_percent: if max > 0 {
+                (usage as f64 / max as f64) * 100.0
+            } else {
+                0.0
+            },
             entry_count: entries,
             max_entries,
-            entry_usage_percent: if max_entries > 0 { (entries as f64 / max_entries as f64) * 100.0 } else { 0.0 },
+            entry_usage_percent: if max_entries > 0 {
+                (entries as f64 / max_entries as f64) * 100.0
+            } else {
+                0.0
+            },
             is_under_pressure: self.is_under_pressure(),
             auto_gc_enabled: self.auto_gc_enabled.load(Ordering::SeqCst),
         }

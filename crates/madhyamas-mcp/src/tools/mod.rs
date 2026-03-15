@@ -1,12 +1,12 @@
 //! Tool registry and executor for MCP server
 
-mod registry;
-mod executor;
-mod traffic;
-mod mocks;
 mod breakpoints;
+mod executor;
+mod mocks;
+mod registry;
 mod replay;
 mod sessions;
+mod traffic;
 
-pub use registry::ToolRegistry;
 pub use executor::ToolExecutor;
+pub use registry::ToolRegistry;

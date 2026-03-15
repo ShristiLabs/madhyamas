@@ -56,10 +56,7 @@ pub async fn create_breakpoint(
 }
 
 /// List all breakpoint rules
-pub async fn list_breakpoints(
-    client: &Client,
-    api_url: &str,
-) -> Result<Value, McpError> {
+pub async fn list_breakpoints(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/breakpoints", api_url);
 
     let response = client
@@ -109,10 +106,7 @@ pub async fn delete_breakpoint(
 }
 
 /// Get paused traffic (traffic currently held at breakpoints)
-pub async fn get_paused_traffic(
-    client: &Client,
-    api_url: &str,
-) -> Result<Value, McpError> {
+pub async fn get_paused_traffic(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/breakpoints/paused", api_url);
 
     let response = client

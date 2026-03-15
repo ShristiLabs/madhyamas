@@ -19,7 +19,9 @@ pub mod websocket;
 pub use config::ProxyConfig;
 
 // Re-exports from traffic
-pub use traffic::{HttpMethod, RequestData, ResponseData, Session, TrafficEntry, TrafficFilter, TrafficStore};
+pub use traffic::{
+    HttpMethod, RequestData, ResponseData, Session, TrafficEntry, TrafficFilter, TrafficStore,
+};
 
 // Re-exports from tls
 pub use tls::CertificateManager;
@@ -32,10 +34,10 @@ pub use websocket::{WsConnection, WsDirection, WsFilter, WsManager, WsMessage, W
 
 // Re-exports from intercept
 pub use intercept::{
-    BreakpointAction, BreakpointDecision, BreakpointManager, BreakpointRule,
-    InterceptDecision, InterceptDirection, MatchCondition, MockManager, MockResponse,
-    MockRule, MockTemplates, PausedTraffic, RewriteAction, RewriteDirection,
-    RewriteManager, RewriteRule, RewriteTemplates, ThrottleManager, ThrottleProfile,
+    BreakpointAction, BreakpointDecision, BreakpointManager, BreakpointRule, InterceptDecision,
+    InterceptDirection, MatchCondition, MockManager, MockResponse, MockRule, MockTemplates,
+    PausedTraffic, RewriteAction, RewriteDirection, RewriteManager, RewriteRule, RewriteTemplates,
+    ThrottleManager, ThrottleProfile,
 };
 
 // Re-exports from persistence
