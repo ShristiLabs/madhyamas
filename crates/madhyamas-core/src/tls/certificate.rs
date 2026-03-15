@@ -4,7 +4,7 @@ use super::GeneratedCert;
 use crate::Error;
 use parking_lot::RwLock;
 use rcgen::{
-    Certificate, CertificateParams, DistinguishedName, DnType, Ia5String, KeyPair,
+    CertificateParams, DistinguishedName, DnType, Ia5String, Issuer, KeyPair,
     PKCS_ECDSA_P256_SHA256,
 };
 use std::collections::HashMap;
@@ -22,8 +22,8 @@ pub struct CertificateManager {
     ca_key_pem: Vec<u8>,
     /// CA key pair for signing
     ca_key_pair: KeyPair,
-    /// CA certificate object for signing leaf certs
-    ca_cert: Certificate,
+    /// CA certificate params for creating issuer
+    ca_params: CertificateParams,
     /// Cached leaf certificates by hostname
     cache: RwLock<HashMap<String, GeneratedCert>>,
     /// Path to store certificates
@@ -44,7 +44,7 @@ impl CertificateManager {
         let ca_cert_path = Path::new(cert_path).join("madhyamas-ca.pem");
         let ca_key_path = Path::new(cert_path).join("madhyamas-ca-key.pem");
 
-        let (ca_cert_pem, ca_key_pem, ca_key_pair, ca_cert) =
+        let (ca_cert_pem, ca_key_pem, ca_key_pair, ca_params) =
             if ca_cert_path.exists() && ca_key_path.exists() {
                 // Load existing CA
                 info!("Loading existing CA certificate");
@@ -52,7 +52,7 @@ impl CertificateManager {
             } else {
                 // Generate new CA
                 info!("Generating new CA certificate");
-                let (cert_pem, key_pem, key_pair, cert) = Self::generate_ca()?;
+                let (cert_pem, key_pem, key_pair, params) = Self::generate_ca()?;
 
                 // Save CA to disk
                 fs::write(&ca_cert_path, &cert_pem)
@@ -62,14 +62,14 @@ impl CertificateManager {
                     .await
                     .map_err(|e| Error::Certificate(format!("Failed to write CA key: {}", e)))?;
 
-                (cert_pem, key_pem, key_pair, cert)
+                (cert_pem, key_pem, key_pair, params)
             };
 
         Ok(Arc::new(Self {
             ca_cert_pem,
             ca_key_pem,
             ca_key_pair,
-            ca_cert,
+            ca_params,
             cache: RwLock::new(HashMap::new()),
             cert_path: cert_path.to_string(),
         }))
@@ -79,7 +79,7 @@ impl CertificateManager {
     async fn load_ca(
         cert_path: &Path,
         key_path: &Path,
-    ) -> crate::Result<(Vec<u8>, Vec<u8>, KeyPair, Certificate)> {
+    ) -> crate::Result<(Vec<u8>, Vec<u8>, KeyPair, CertificateParams)> {
         let cert_pem = fs::read(cert_path)
             .await
             .map_err(|e| Error::Certificate(format!("Failed to read CA cert: {}", e)))?;
@@ -90,7 +90,7 @@ impl CertificateManager {
         let key_pair = KeyPair::from_pem(&String::from_utf8_lossy(&key_pem))
             .map_err(|e| Error::Certificate(format!("Failed to parse CA key: {}", e)))?;
 
-        // Regenerate CA certificate params and create cert object
+        // Regenerate CA certificate params
         let mut params = CertificateParams::default();
         let mut dn = DistinguishedName::new();
         dn.push(DnType::OrganizationName, Self::ORG_NAME);
@@ -102,15 +102,11 @@ impl CertificateManager {
             rcgen::KeyUsagePurpose::CrlSign,
         ];
 
-        let cert = params
-            .self_signed(&key_pair)
-            .map_err(|e| Error::Certificate(format!("Failed to recreate CA cert: {}", e)))?;
-
-        Ok((cert_pem, key_pem, key_pair, cert))
+        Ok((cert_pem, key_pem, key_pair, params))
     }
 
     /// Generate a new CA certificate
-    fn generate_ca() -> crate::Result<(Vec<u8>, Vec<u8>, KeyPair, Certificate)> {
+    fn generate_ca() -> crate::Result<(Vec<u8>, Vec<u8>, KeyPair, CertificateParams)> {
         let mut params = CertificateParams::default();
         let mut dn = DistinguishedName::new();
         dn.push(DnType::OrganizationName, Self::ORG_NAME);
@@ -134,7 +130,7 @@ impl CertificateManager {
             cert.pem().into_bytes(),
             key_pair.serialize_pem().into_bytes(),
             key_pair,
-            cert,
+            params,
         ))
     }
 
@@ -172,17 +168,16 @@ impl CertificateManager {
         ];
 
         // Add subject alternative names
-        let ia5_hostname = Ia5String::try_from(hostname)
-            .map_err(|e| Error::Certificate(format!("Invalid hostname: {:?}", e)))?;
-        params.subject_alt_names = vec![rcgen::SanType::DnsName(ia5_hostname)];
+        params.subject_alt_names = vec![hostname.to_string()];
 
         // Generate key pair for this certificate
         let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
             .map_err(|e| Error::Certificate(format!("Failed to generate key pair: {}", e)))?;
 
         // Sign with CA
+        let issuer = Issuer::from_params(&self.ca_params, &self.ca_key_pair);
         let cert = params
-            .signed_by(&key_pair, &self.ca_cert, &self.ca_key_pair)
+            .signed_by(&key_pair, &issuer)
             .map_err(|e| Error::Certificate(format!("Failed to sign cert: {}", e)))?;
 
         let generated = GeneratedCert {

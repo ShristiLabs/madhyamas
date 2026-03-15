@@ -161,7 +161,7 @@ impl ThrottleProfile {
             return false;
         }
         use rand::Rng;
-        rand::thread_rng().gen_ratio(self.packet_loss_percent as u32, 100)
+        rand::thread_rng().random_ratio(self.packet_loss_percent as u32, 100)
     }
 }
 
