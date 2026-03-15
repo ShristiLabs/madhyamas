@@ -21,6 +21,9 @@ pub struct TrafficQuery {
     pub limit: Option<usize>,
     pub offset: Option<usize>,
     pub search: Option<String>,
+    pub file_type: Option<String>,
+    pub header: Option<String>,
+    pub cookie: Option<String>,
 }
 
 /// Get all traffic entries
@@ -48,6 +51,9 @@ pub async fn get_traffic(
         limit: query.limit,
         offset: query.offset,
         search: query.search,
+        file_type: query.file_type,
+        header: query.header,
+        cookie: query.cookie,
     };
 
     match state.traffic_store.get_traffic(&filter) {
@@ -253,15 +259,106 @@ fn generate_curl(req: &proxyforge_core::RequestData) -> String {
 }
 
 /// Get current configuration
-pub async fn get_config() -> impl IntoResponse {
-    let config = ProxyConfig::default();
+pub async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Use actual runtime config if available, otherwise fall back to default
+    let config = state
+        .proxy_config
+        .as_ref()
+        .map(|c| c.as_ref().clone())
+        .unwrap_or_else(ProxyConfig::default);
+
+    // Determine which IP to display:
+    // 1. If public_ip is configured, use it
+    // 2. Otherwise, try to detect private IP from network interfaces
+    // 3. Fall back to host value
+    let display_host = if let Some(ref public_ip) = config.public_ip {
+        public_ip.clone()
+    } else if let Some(detected_ip) = ProxyConfig::detect_private_ip() {
+        detected_ip
+    } else {
+        config.host.clone()
+    };
+
     Json(serde_json::json!({
         "proxy_port": config.proxy_port,
         "api_port": config.api_port,
-        "host": config.host,
+        "host": display_host,
+        "public_ip": config.public_ip,
         "intercept_https": config.intercept_https,
         "max_requests": config.max_requests
     }))
+}
+
+/// Get current capture status
+pub async fn get_capture_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let enabled = state.traffic_store.is_capture_enabled();
+    Json(serde_json::json!({
+        "capture_enabled": enabled,
+        "mode": if enabled { "recording" } else { "passthrough" }
+    }))
+}
+
+/// Toggle traffic capture on/off (passthrough mode)
+pub async fn toggle_capture(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let new_state = !state.traffic_store.is_capture_enabled();
+    state.traffic_store.set_capture_enabled(new_state);
+    Json(serde_json::json!({
+        "capture_enabled": new_state,
+        "mode": if new_state { "recording" } else { "passthrough" }
+    }))
+}
+
+/// Request body for updating runtime configuration
+#[derive(Debug, Deserialize)]
+pub struct PatchConfigRequest {
+    pub intercept_https: Option<bool>,
+    pub max_requests: Option<usize>,
+    pub verbose: Option<bool>,
+    pub public_ip: Option<serde_json::Value>,
+}
+
+/// Update runtime configuration fields
+pub async fn patch_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PatchConfigRequest>,
+) -> impl IntoResponse {
+    let Some(proxy_config) = state.proxy_config.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Runtime config not available" })),
+        );
+    };
+
+    // Clone, mutate, and re-expose the updated values as a JSON response.
+    // Note: Arc<ProxyConfig> is immutable at runtime; these values are returned
+    // to the client for display. Full mutation would require a RwLock wrapper.
+    let mut config = proxy_config.as_ref().clone();
+
+    if let Some(v) = req.intercept_https {
+        config.intercept_https = v;
+    }
+    if let Some(v) = req.max_requests {
+        config.max_requests = v;
+    }
+    if let Some(v) = req.verbose {
+        config.verbose = v;
+    }
+    if let Some(v) = req.public_ip {
+        config.public_ip = v.as_str().map(|s| s.to_string());
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "proxy_port": config.proxy_port,
+            "api_port": config.api_port,
+            "host": config.host,
+            "public_ip": config.public_ip,
+            "intercept_https": config.intercept_https,
+            "max_requests": config.max_requests,
+            "verbose": config.verbose
+        })),
+    )
 }
 
 /// WebSocket handler
@@ -278,10 +375,20 @@ pub async fn get_ca_certificate(State(state): State<Arc<AppState>>) -> impl Into
         Some(cert_manager) => {
             let cert_pem = cert_manager.ca_certificate_pem().to_vec();
             (
-                [(
-                    axum::http::header::CONTENT_DISPOSITION,
-                    "attachment; filename=\"proxyforge-ca.pem\"",
-                )],
+                [
+                    (
+                        axum::http::header::CONTENT_TYPE,
+                        "application/x-x509-ca-cert",
+                    ),
+                    (
+                        axum::http::header::CONTENT_DISPOSITION,
+                        "attachment; filename=\"proxyforge-ca.crt\"",
+                    ),
+                    (
+                        axum::http::header::CACHE_CONTROL,
+                        "no-cache, no-store, must-revalidate",
+                    ),
+                ],
                 cert_pem,
             )
                 .into_response()

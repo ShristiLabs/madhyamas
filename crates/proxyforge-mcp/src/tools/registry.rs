@@ -1,7 +1,7 @@
 //! Tool registry
 
-use serde_json::json;
 use crate::types::Tool;
+use serde_json::json;
 
 /// Tool registry that defines all available MCP tools
 pub struct ToolRegistry {
@@ -21,7 +21,7 @@ impl ToolRegistry {
             // Traffic inspection tools
             Tool {
                 name: "proxyforge_get_traffic".to_string(),
-                description: "List captured HTTP traffic with optional filtering. Returns a summary of requests including method, URL, status code, and timing.".to_string(),
+                description: "List captured HTTP traffic with advanced filtering. Returns a summary of requests including method, URL, status code, and timing.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -33,6 +33,42 @@ impl ToolRegistry {
                             "type": "string",
                             "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
                             "description": "Filter by HTTP method"
+                        },
+                        "status": {
+                            "type": "integer",
+                            "description": "Filter by HTTP status code (e.g., 200, 404, 500)"
+                        },
+                        "file_type": {
+                            "type": "string",
+                            "description": "Filter by file type/extension (e.g., json, html, css, js, png)"
+                        },
+                        "header": {
+                            "type": "string",
+                            "description": "Filter by header (format: 'key:value' or just 'key')"
+                        },
+                        "cookie": {
+                            "type": "string",
+                            "description": "Filter by cookie (format: 'name=value' or just 'name')"
+                        },
+                        "search": {
+                            "type": "string",
+                            "description": "Search in request/response bodies"
+                        },
+                        "min_size": {
+                            "type": "integer",
+                            "description": "Filter by minimum response size in bytes"
+                        },
+                        "max_size": {
+                            "type": "integer",
+                            "description": "Filter by maximum response size in bytes"
+                        },
+                        "min_time": {
+                            "type": "integer",
+                            "description": "Filter by minimum response time in milliseconds"
+                        },
+                        "max_time": {
+                            "type": "integer",
+                            "description": "Filter by maximum response time in milliseconds"
                         },
                         "limit": {
                             "type": "integer",
@@ -374,7 +410,50 @@ impl ToolRegistry {
             // Configuration tools
             Tool {
                 name: "proxyforge_get_config".to_string(),
-                description: "Get current ProxyForge configuration.".to_string(),
+                description: "Get current ProxyForge configuration including proxy port, API port, host, HTTPS interception status, and max requests.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "proxyforge_update_config".to_string(),
+                description: "Update runtime ProxyForge configuration. Only specified fields will be updated.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "intercept_https": {
+                            "type": "boolean",
+                            "description": "Enable or disable HTTPS interception"
+                        },
+                        "max_requests": {
+                            "type": "integer",
+                            "description": "Maximum number of requests to keep in memory"
+                        },
+                        "verbose": {
+                            "type": "boolean",
+                            "description": "Enable or disable verbose logging"
+                        },
+                        "public_ip": {
+                            "type": ["string", "null"],
+                            "description": "Public IP address to display (null to auto-detect)"
+                        }
+                    }
+                }),
+            },
+
+            // Capture mode tools
+            Tool {
+                name: "proxyforge_get_capture_status".to_string(),
+                description: "Get current capture mode status. Returns whether traffic is being recorded (recording mode) or just forwarded without recording (passthrough mode).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "proxyforge_toggle_capture".to_string(),
+                description: "Toggle capture mode between recording and passthrough. In passthrough mode, the proxy forwards traffic but does not record it to the database.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {}

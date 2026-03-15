@@ -40,6 +40,9 @@ export interface TrafficFilter {
   maxDuration?: number
   host?: string
   contentType?: string
+  fileType?: string
+  header?: string
+  cookie?: string
 }
 
 export interface Session {

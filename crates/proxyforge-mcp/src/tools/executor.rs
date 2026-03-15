@@ -4,12 +4,12 @@ use reqwest::Client;
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 
-use crate::types::{ContentBlock, McpError};
-use super::traffic;
-use super::mocks;
 use super::breakpoints;
+use super::mocks;
 use super::replay;
 use super::sessions;
+use super::traffic;
+use crate::types::{ContentBlock, McpError};
 
 /// Tool executor that handles tool calls
 pub struct ToolExecutor {
@@ -23,19 +23,32 @@ impl ToolExecutor {
     }
 
     /// Execute a tool by name
-    pub async fn execute(&self, tool_name: &str, arguments: Value) -> Result<Vec<ContentBlock>, McpError> {
+    pub async fn execute(
+        &self,
+        tool_name: &str,
+        arguments: Value,
+    ) -> Result<Vec<ContentBlock>, McpError> {
         match tool_name {
             // Traffic tools
             "proxyforge_get_traffic" => {
                 let args: TrafficArgs = self.parse_args(&arguments)?;
-                let result = traffic::get_traffic(
-                    &self.client,
-                    &self.api_url,
-                    args.filter.as_deref(),
-                    args.method.as_deref(),
-                    args.limit,
-                    args.offset,
-                ).await?;
+                let filter = traffic::TrafficFilter {
+                    filter: args.filter,
+                    method: args.method,
+                    status: args.status,
+                    file_type: args.file_type,
+                    header: args.header,
+                    cookie: args.cookie,
+                    search: args.search,
+                    min_size: args.min_size,
+                    max_size: args.max_size,
+                    min_time: args.min_time,
+                    max_time: args.max_time,
+                    limit: args.limit,
+                    offset: args.offset,
+                };
+                let result =
+                    traffic::get_traffic_filtered(&self.client, &self.api_url, filter).await?;
                 Ok(vec![ContentBlock::Text {
                     text: traffic::format_traffic_summary(&result),
                 }])
@@ -43,11 +56,8 @@ impl ToolExecutor {
 
             "proxyforge_get_traffic_entry" => {
                 let args: EntryArgs = self.parse_args(&arguments)?;
-                let result = traffic::get_traffic_entry(
-                    &self.client,
-                    &self.api_url,
-                    &args.id,
-                ).await?;
+                let result =
+                    traffic::get_traffic_entry(&self.client, &self.api_url, &args.id).await?;
                 Ok(vec![ContentBlock::Text {
                     text: traffic::format_traffic_detail(&result),
                 }])
@@ -55,11 +65,8 @@ impl ToolExecutor {
 
             "proxyforge_search_traffic" => {
                 let args: SearchArgs = self.parse_args(&arguments)?;
-                let result = traffic::search_traffic(
-                    &self.client,
-                    &self.api_url,
-                    &args.query,
-                ).await?;
+                let result =
+                    traffic::search_traffic(&self.client, &self.api_url, &args.query).await?;
                 Ok(vec![ContentBlock::Text {
                     text: traffic::format_traffic_summary(&result),
                 }])
@@ -92,7 +99,8 @@ impl ToolExecutor {
                     args.body,
                     args.delay_ms,
                     Some(args.enabled),
-                ).await?;
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -115,7 +123,8 @@ impl ToolExecutor {
 
             "proxyforge_toggle_mock" => {
                 let args: ToggleArgs = self.parse_args(&arguments)?;
-                let result = mocks::toggle_mock(&self.client, &self.api_url, &args.id, args.enabled).await?;
+                let result =
+                    mocks::toggle_mock(&self.client, &self.api_url, &args.id, args.enabled).await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -138,7 +147,8 @@ impl ToolExecutor {
                     args.method.as_deref(),
                     args.direction.as_deref(),
                     Some(args.enabled),
-                ).await?;
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -146,7 +156,8 @@ impl ToolExecutor {
 
             "proxyforge_delete_breakpoint" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result = breakpoints::delete_breakpoint(&self.client, &self.api_url, &args.id).await?;
+                let result =
+                    breakpoints::delete_breakpoint(&self.client, &self.api_url, &args.id).await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -160,7 +171,8 @@ impl ToolExecutor {
                     &self.api_url,
                     &args.id,
                     args.modifications,
-                ).await?;
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: replay::format_replay_result(&result),
                 }])
@@ -173,7 +185,8 @@ impl ToolExecutor {
                     &self.api_url,
                     &args.traffic_id,
                     args.name.as_deref(),
-                ).await?;
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -209,7 +222,8 @@ impl ToolExecutor {
                     &self.api_url,
                     args.name.as_deref(),
                     args.description.as_deref(),
-                ).await?;
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -217,7 +231,8 @@ impl ToolExecutor {
 
             "proxyforge_switch_session" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result = sessions::switch_session(&self.client, &self.api_url, &args.id).await?;
+                let result =
+                    sessions::switch_session(&self.client, &self.api_url, &args.id).await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -231,14 +246,36 @@ impl ToolExecutor {
                 }])
             }
 
+            "proxyforge_update_config" => {
+                let args: UpdateConfigArgs = self.parse_args(&arguments)?;
+                let result = self.update_config(args).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            // Capture mode
+            "proxyforge_get_capture_status" => {
+                let result = self.get_capture_status().await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "proxyforge_toggle_capture" => {
+                let result = self.toggle_capture().await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
             _ => Err(McpError::NotFound(format!("Unknown tool: {}", tool_name))),
         }
     }
 
     /// Parse arguments from JSON value
     fn parse_args<T: DeserializeOwned>(&self, value: &Value) -> Result<T, McpError> {
-        serde_json::from_value(value.clone())
-            .map_err(|e| McpError::InvalidParams(e.to_string()))
+        serde_json::from_value(value.clone()).map_err(|e| McpError::InvalidParams(e.to_string()))
     }
 
     /// Get traffic list (for resource access)
@@ -261,7 +298,8 @@ impl ToolExecutor {
     pub async fn get_config(&self) -> Result<Value, McpError> {
         let url = format!("{}/api/config", self.api_url);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -281,6 +319,90 @@ impl ToolExecutor {
         Ok(config)
     }
 
+    /// Update proxy configuration
+    pub async fn update_config(&self, args: UpdateConfigArgs) -> Result<Value, McpError> {
+        let url = format!("{}/api/config", self.api_url);
+
+        let mut payload = serde_json::Map::new();
+        if let Some(intercept) = args.intercept_https {
+            payload.insert("intercept_https".to_string(), Value::Bool(intercept));
+        }
+        if let Some(max_req) = args.max_requests {
+            payload.insert("max_requests".to_string(), Value::Number(max_req.into()));
+        }
+        if let Some(verbose) = args.verbose {
+            payload.insert("verbose".to_string(), Value::Bool(verbose));
+        }
+        if let Some(ip) = args.public_ip {
+            payload.insert("public_ip".to_string(), ip);
+        }
+
+        let response = self
+            .client
+            .patch(&url)
+            .json(&Value::Object(payload))
+            .send()
+            .await
+            .map_err(|e| McpError::Http(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(McpError::Http(format!("HTTP {}: {}", status, body)));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| McpError::Parse(e.to_string()))
+    }
+
+    /// Get capture status
+    pub async fn get_capture_status(&self) -> Result<Value, McpError> {
+        let url = format!("{}/api/capture", self.api_url);
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| McpError::Http(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(McpError::Http(format!("HTTP {}: {}", status, body)));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| McpError::Parse(e.to_string()))
+    }
+
+    /// Toggle capture mode
+    pub async fn toggle_capture(&self) -> Result<Value, McpError> {
+        let url = format!("{}/api/capture/toggle", self.api_url);
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .map_err(|e| McpError::Http(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(McpError::Http(format!("HTTP {}: {}", status, body)));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| McpError::Parse(e.to_string()))
+    }
 }
 
 // ============ Argument Types ============
@@ -291,6 +413,24 @@ struct TrafficArgs {
     filter: Option<String>,
     #[serde(default)]
     method: Option<String>,
+    #[serde(default)]
+    status: Option<u16>,
+    #[serde(default)]
+    file_type: Option<String>,
+    #[serde(default)]
+    header: Option<String>,
+    #[serde(default)]
+    cookie: Option<String>,
+    #[serde(default)]
+    search: Option<String>,
+    #[serde(default)]
+    min_size: Option<usize>,
+    #[serde(default)]
+    max_size: Option<usize>,
+    #[serde(default)]
+    min_time: Option<u64>,
+    #[serde(default)]
+    max_time: Option<u64>,
     #[serde(default)]
     limit: Option<usize>,
     #[serde(default)]
@@ -329,7 +469,9 @@ struct MockCreateArgs {
     enabled: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Deserialize)]
 struct ToggleArgs {
@@ -368,4 +510,16 @@ struct SessionCreateArgs {
     name: Option<String>,
     #[serde(default)]
     description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateConfigArgs {
+    #[serde(default)]
+    intercept_https: Option<bool>,
+    #[serde(default)]
+    max_requests: Option<usize>,
+    #[serde(default)]
+    verbose: Option<bool>,
+    #[serde(default)]
+    public_ip: Option<Value>,
 }

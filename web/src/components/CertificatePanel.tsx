@@ -7,7 +7,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -17,7 +16,6 @@ import {
   HelpCircle,
   CheckCircle,
   ChevronRight,
-  ExternalLink,
   Copy,
   Shield,
   Key,
@@ -78,7 +76,7 @@ const ANDROID_INSTRUCTIONS: InstructionStep[] = [
     subSteps: [
       'You may need to confirm your PIN/password',
       'Navigate to your Downloads folder',
-      'Select the proxyforge-ca.pem file',
+      'Select the proxyforge-ca.crt file',
       'Name it "ProxyForge CA" and tap OK',
     ],
   },
@@ -110,7 +108,7 @@ export function CertificatePanel() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'proxyforge-ca.pem'
+      a.download = 'proxyforge-ca.crt'
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -168,7 +166,7 @@ export function CertificatePanel() {
               <Download className="h-4 w-4 mr-2" />
               Download Certificate
             </Button>
-            <p className="text-sm text-muted-foreground">proxyforge-ca.pem</p>
+            <p className="text-sm text-muted-foreground">proxyforge-ca.crt</p>
           </div>
 
           {/* Platform Instructions */}

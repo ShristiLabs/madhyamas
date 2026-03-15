@@ -5,28 +5,70 @@ use serde_json::{json, Value};
 
 use crate::types::McpError;
 
-/// Get captured traffic
-pub async fn get_traffic(
+/// Advanced traffic filter parameters
+#[derive(Debug, Default)]
+pub struct TrafficFilter {
+    pub filter: Option<String>,
+    pub method: Option<String>,
+    pub status: Option<u16>,
+    pub file_type: Option<String>,
+    pub header: Option<String>,
+    pub cookie: Option<String>,
+    pub search: Option<String>,
+    pub min_size: Option<usize>,
+    pub max_size: Option<usize>,
+    pub min_time: Option<u64>,
+    pub max_time: Option<u64>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+/// Get captured traffic with advanced filtering
+pub async fn get_traffic_filtered(
     client: &Client,
     api_url: &str,
-    filter: Option<&str>,
-    method: Option<&str>,
-    limit: Option<usize>,
-    offset: Option<usize>,
+    filter: TrafficFilter,
 ) -> Result<Value, McpError> {
     let mut url = format!("{}/api/traffic", api_url);
     let mut params = Vec::new();
 
-    if let Some(f) = filter {
-        params.push(("filter", f.to_string()));
+    if let Some(ref f) = filter.filter {
+        params.push(("filter", f.clone()));
     }
-    if let Some(m) = method {
-        params.push(("method", m.to_string()));
+    if let Some(ref m) = filter.method {
+        params.push(("method", m.clone()));
     }
-    if let Some(l) = limit {
+    if let Some(s) = filter.status {
+        params.push(("status", s.to_string()));
+    }
+    if let Some(ref ft) = filter.file_type {
+        params.push(("file_type", ft.clone()));
+    }
+    if let Some(ref h) = filter.header {
+        params.push(("header", h.clone()));
+    }
+    if let Some(ref c) = filter.cookie {
+        params.push(("cookie", c.clone()));
+    }
+    if let Some(ref s) = filter.search {
+        params.push(("search", s.clone()));
+    }
+    if let Some(ms) = filter.min_size {
+        params.push(("min_size", ms.to_string()));
+    }
+    if let Some(ms) = filter.max_size {
+        params.push(("max_size", ms.to_string()));
+    }
+    if let Some(mt) = filter.min_time {
+        params.push(("min_time", mt.to_string()));
+    }
+    if let Some(mt) = filter.max_time {
+        params.push(("max_time", mt.to_string()));
+    }
+    if let Some(l) = filter.limit {
         params.push(("limit", l.to_string()));
     }
-    if let Some(o) = offset {
+    if let Some(o) = filter.offset {
         params.push(("offset", o.to_string()));
     }
 
@@ -60,6 +102,29 @@ pub async fn get_traffic(
     Ok(traffic)
 }
 
+/// Get captured traffic (legacy interface for backward compatibility)
+pub async fn get_traffic(
+    client: &Client,
+    api_url: &str,
+    filter: Option<&str>,
+    method: Option<&str>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Value, McpError> {
+    get_traffic_filtered(
+        client,
+        api_url,
+        TrafficFilter {
+            filter: filter.map(|s| s.to_string()),
+            method: method.map(|s| s.to_string()),
+            limit,
+            offset,
+            ..Default::default()
+        },
+    )
+    .await
+}
+
 /// Get a specific traffic entry
 pub async fn get_traffic_entry(
     client: &Client,
@@ -89,10 +154,7 @@ pub async fn get_traffic_entry(
 }
 
 /// Clear all traffic
-pub async fn clear_traffic(
-    client: &Client,
-    api_url: &str,
-) -> Result<Value, McpError> {
+pub async fn clear_traffic(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/traffic/clear", api_url);
 
     let response = client
@@ -111,10 +173,7 @@ pub async fn clear_traffic(
 }
 
 /// Get traffic count
-pub async fn get_traffic_count(
-    client: &Client,
-    api_url: &str,
-) -> Result<Value, McpError> {
+pub async fn get_traffic_count(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/traffic/count", api_url);
 
     let response = client
@@ -143,7 +202,11 @@ pub async fn search_traffic(
     api_url: &str,
     query: &str,
 ) -> Result<Value, McpError> {
-    let url = format!("{}/api/traffic?search={}", api_url, urlencoding::encode(query));
+    let url = format!(
+        "{}/api/traffic?search={}",
+        api_url,
+        urlencoding::encode(query)
+    );
 
     let response = client
         .get(&url)
@@ -182,7 +245,11 @@ pub fn format_traffic_summary(traffic: &Value) -> String {
 
                 summary.push_str(&format!(
                     "{}. **{}** {} - Status: {} ({}ms)\n",
-                    i + 1, method, url, status, duration
+                    i + 1,
+                    method,
+                    url,
+                    status,
+                    duration
                 ));
             }
         }
@@ -200,7 +267,11 @@ pub fn format_traffic_summary(traffic: &Value) -> String {
 
                     summary.push_str(&format!(
                         "{}. **{}** {} - Status: {} ({}ms)\n",
-                        i + 1, method, url, status, duration
+                        i + 1,
+                        method,
+                        url,
+                        status,
+                        duration
                     ));
                 }
             }
@@ -226,10 +297,16 @@ pub fn format_traffic_detail(entry: &Value) -> String {
             detail.push_str(&format!("- **URL**: {}\n", url));
         }
         if let Some(headers) = obj.get("request_headers") {
-            detail.push_str(&format!("- **Headers**: ```json\n{}\n```\n", serde_json::to_string_pretty(headers).unwrap_or_default()));
+            detail.push_str(&format!(
+                "- **Headers**: ```json\n{}\n```\n",
+                serde_json::to_string_pretty(headers).unwrap_or_default()
+            ));
         }
         if let Some(body) = obj.get("request_body") {
-            detail.push_str(&format!("- **Body**: ```json\n{}\n```\n", serde_json::to_string_pretty(body).unwrap_or_default()));
+            detail.push_str(&format!(
+                "- **Body**: ```json\n{}\n```\n",
+                serde_json::to_string_pretty(body).unwrap_or_default()
+            ));
         }
 
         // Response info
@@ -238,10 +315,16 @@ pub fn format_traffic_detail(entry: &Value) -> String {
             detail.push_str(&format!("- **Status**: {}\n", status));
         }
         if let Some(headers) = obj.get("response_headers") {
-            detail.push_str(&format!("- **Headers**: ```json\n{}\n```\n", serde_json::to_string_pretty(headers).unwrap_or_default()));
+            detail.push_str(&format!(
+                "- **Headers**: ```json\n{}\n```\n",
+                serde_json::to_string_pretty(headers).unwrap_or_default()
+            ));
         }
         if let Some(body) = obj.get("response_body") {
-            detail.push_str(&format!("- **Body**: ```json\n{}\n```\n", serde_json::to_string_pretty(body).unwrap_or_default()));
+            detail.push_str(&format!(
+                "- **Body**: ```json\n{}\n```\n",
+                serde_json::to_string_pretty(body).unwrap_or_default()
+            ));
         }
 
         // Timing

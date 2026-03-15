@@ -16,7 +16,7 @@ export function useCertificate() {
 }
 
 export function useDownloadCertificate() {
-  const { data: certificate, refetch } = useCertificate()
+  const { data: certificate, refetch, isFetching } = useCertificate()
   const downloadCertificate = async () => {
     if (!certificate) {
       await refetch()
@@ -27,7 +27,7 @@ export function useDownloadCertificate() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'proxyforge-ca.pem'
+    a.download = 'proxyforge-ca.crt'
     a.click()
     URL.revokeObjectURL(url)
   }

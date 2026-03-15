@@ -37,6 +37,10 @@ pub fn create_routes() -> Router<Arc<AppState>> {
         .route("/ws", get(handlers::ws_handler))
         // Config endpoints
         .route("/config", get(handlers::get_config))
+        .route("/config", patch(handlers::patch_config))
+        // Capture / passthrough mode
+        .route("/capture", get(handlers::get_capture_status))
+        .route("/capture/toggle", post(handlers::toggle_capture))
         // Health check
         .route("/health", get(|| async { "OK" }))
         // === WebSocket Traffic ===
@@ -191,7 +195,10 @@ pub fn create_routes() -> Router<Arc<AppState>> {
         .route("/auth/validate", post(phase4_handlers::validate_token))
         .route("/auth/api-keys", get(phase4_handlers::get_api_keys))
         .route("/auth/api-keys", post(phase4_handlers::create_api_key))
-        .route("/auth/api-keys/{id}", delete(phase4_handlers::revoke_api_key))
+        .route(
+            "/auth/api-keys/{id}",
+            delete(phase4_handlers::revoke_api_key),
+        )
         // === Phase 4: User Management ===
         .route("/users", get(phase4_handlers::get_users))
         .route("/users", post(phase4_handlers::create_user))
@@ -209,7 +216,10 @@ pub fn create_routes() -> Router<Arc<AppState>> {
         .route("/audit/clear", delete(phase4_handlers::clear_audit_events))
         // === Phase 4: Onboarding ===
         .route("/onboarding", get(phase4_handlers::get_onboarding_status))
-        .route("/onboarding/complete", post(phase4_handlers::complete_onboarding_step))
+        .route(
+            "/onboarding/complete",
+            post(phase4_handlers::complete_onboarding_step),
+        )
         .route("/onboarding/skip", post(phase4_handlers::skip_onboarding))
         // === Phase 4: Configuration ===
         .route("/config/export", get(phase4_handlers::export_config))

@@ -6,12 +6,15 @@ use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Traffic store backed by SQLite
 pub struct TrafficStore {
     conn: Mutex<Connection>,
     current_session_id: Mutex<String>,
+    /// When false the proxy forwards traffic but does not record it (passthrough mode)
+    capture_enabled: AtomicBool,
 }
 
 impl TrafficStore {
@@ -22,6 +25,7 @@ impl TrafficStore {
         let store = Arc::new(Self {
             conn: Mutex::new(conn),
             current_session_id: Mutex::new(String::new()),
+            capture_enabled: AtomicBool::new(true),
         });
 
         store.create_tables()?;
@@ -37,6 +41,7 @@ impl TrafficStore {
         let store = Arc::new(Self {
             conn: Mutex::new(conn),
             current_session_id: Mutex::new(String::new()),
+            capture_enabled: AtomicBool::new(true),
         });
 
         store.create_tables()?;
@@ -180,8 +185,21 @@ impl TrafficStore {
         self.current_session_id.lock().clone()
     }
 
+    /// Returns whether traffic capture is currently active
+    pub fn is_capture_enabled(&self) -> bool {
+        self.capture_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Enable or disable traffic capture (passthrough mode when false)
+    pub fn set_capture_enabled(&self, enabled: bool) {
+        self.capture_enabled.store(enabled, Ordering::Relaxed);
+    }
+
     /// Store a request
     pub fn store_request(&self, entry: &TrafficEntry) -> crate::Result<()> {
+        if !self.capture_enabled.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let conn = self.conn.lock();
         let headers = serde_json::to_string(&entry.request.headers).unwrap_or_default();
         let body = entry.request.body.as_ref();
@@ -222,6 +240,9 @@ impl TrafficStore {
         request_id: &str,
         response: &crate::traffic::ResponseData,
     ) -> crate::Result<()> {
+        if !self.capture_enabled.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let conn = self.conn.lock();
         let headers = serde_json::to_string(&response.headers).unwrap_or_default();
         let body = response.body.as_ref();
@@ -295,6 +316,23 @@ impl TrafficStore {
             let search_pattern = format!("%{}%", search);
             bind_params.push(Box::new(search_pattern.clone()));
             bind_params.push(Box::new(search_pattern));
+        }
+
+        if let Some(ref file_type) = filter.file_type {
+            sql.push_str(&format!(" AND r.path LIKE ?{}", bind_params.len() + 1));
+            bind_params.push(Box::new(format!("%{}", file_type)));
+        }
+
+        if let Some(ref header) = filter.header {
+            // Filter by header - supports "key:value" or just "key"
+            sql.push_str(&format!(" AND r.headers LIKE ?{}", bind_params.len() + 1));
+            bind_params.push(Box::new(format!("%{}%", header)));
+        }
+
+        if let Some(ref cookie) = filter.cookie {
+            // Filter by cookie - check if Cookie header contains the value
+            sql.push_str(&format!(" AND r.headers LIKE ?{}", bind_params.len() + 1));
+            bind_params.push(Box::new(format!("%Cookie%{}%", cookie)));
         }
 
         sql.push_str(" ORDER BY r.timestamp DESC");

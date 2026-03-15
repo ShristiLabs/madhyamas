@@ -106,16 +106,24 @@ pub struct ResponseData {
     pub duration_ms: u64,
 }
 
-// Custom body serializer: converts Vec<u8> to String (UTF-8 or base64)
+// Custom body serializer: converts Vec<u8> to String (UTF-8 or base64 for binary)
 fn serialize_body<S>(body: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
+    use base64::Engine;
+
     match body {
         Some(bytes) => {
-            // Try UTF-8 first, fall back to empty string for binary
-            let s = String::from_utf8(bytes.clone()).unwrap_or_default();
-            serializer.serialize_str(&s)
+            // Try UTF-8 first, fall back to base64 for binary data
+            match String::from_utf8(bytes.clone()) {
+                Ok(s) => serializer.serialize_str(&s),
+                Err(_) => {
+                    // Binary data - encode as base64 with prefix
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+                    serializer.serialize_str(&format!("base64:{}", b64))
+                }
+            }
         }
         None => serializer.serialize_none(),
     }
@@ -126,8 +134,19 @@ fn deserialize_body<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error
 where
     D: serde::Deserializer<'de>,
 {
+    use base64::Engine;
+
     let opt = Option::<String>::deserialize(deserializer)?;
-    Ok(opt.map(|s| s.into_bytes()))
+    Ok(opt.map(|s| {
+        // Check if it's base64 encoded
+        if let Some(b64_data) = s.strip_prefix("base64:") {
+            base64::engine::general_purpose::STANDARD
+                .decode(b64_data)
+                .unwrap_or_else(|_| s.into_bytes())
+        } else {
+            s.into_bytes()
+        }
+    }))
 }
 
 /// A complete traffic entry (request + response)
@@ -230,4 +249,10 @@ pub struct TrafficFilter {
     pub limit: Option<usize>,
     /// Offset for pagination
     pub offset: Option<usize>,
+    /// Filter by file extension (e.g., ".js", ".css")
+    pub file_type: Option<String>,
+    /// Filter by request header (format: "key:value" or "key")
+    pub header: Option<String>,
+    /// Filter by cookie (name or value contains)
+    pub cookie: Option<String>,
 }

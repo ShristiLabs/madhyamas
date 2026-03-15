@@ -4,7 +4,7 @@
 # Build stage
 FROM rust:alpine AS builder
 
-RUN apk add --no-cache musl-dev openssl-dev openssl pkgconf build-base
+RUN apk add --no-cache musl-dev openssl-dev openssl openssl-libs-static pkgconf build-base
 
 WORKDIR /app
 
@@ -35,8 +35,8 @@ COPY crates/proxyforge-mcp/src ./crates/proxyforge-mcp/src
 # Touch source files to invalidate cache and force rebuild
 RUN find crates -name "*.rs" -exec touch {} \;
 
-# Build the application
-RUN cargo build --release -p proxyforge-cli
+# Build the application (both CLI and MCP)
+RUN cargo build --release -p proxyforge-cli -p proxyforge-mcp
 
 # Runtime stage
 FROM alpine:3.19
@@ -48,8 +48,9 @@ RUN addgroup -S proxyforge && adduser -S proxyforge -G proxyforge
 
 WORKDIR /app
 
-# Copy binary from builder
+# Copy binaries from builder
 COPY --from=builder /app/target/release/proxyforge /usr/local/bin/proxyforge
+COPY --from=builder /app/target/release/proxyforge-mcp /usr/local/bin/proxyforge-mcp
 
 # Copy web assets (built separately)
 COPY web/dist ./web/dist

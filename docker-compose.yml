@@ -20,6 +20,10 @@ services:
       - PROXYFORGE_PROXY_PORT=8888
       - PROXYFORGE_PROXY_TLS_PORT=8443
       - PROXYFORGE_DATA_DIR=/data
+      # IMPORTANT: Set this to your machine's LAN IP for mobile device access
+      # The container cannot auto-detect the host's network IP
+      # Run: ./docker/get-host-ip.sh to find your IP
+      - PROXYFORGE_PUBLIC_IP=${PROXYFORGE_PUBLIC_IP:-}
     command: ["--host", "0.0.0.0"]
     restart: unless-stopped
     healthcheck:
@@ -38,6 +42,52 @@ services:
       start_period: 10s
     networks:
       - proxyforge_net
+
+  # Host network mode variant - uses host's network stack directly
+  # Use this if you need automatic IP detection to work
+  proxyforge-host:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: proxyforge:latest
+    container_name: proxyforge-host
+    network_mode: host
+    volumes:
+      - proxyforge_data:/data
+      - ./certs:/data/certs:ro
+    environment:
+      - PROXYFORGE_LOG_LEVEL=info
+      - PROXYFORGE_API_PORT=3001
+      - PROXYFORGE_PROXY_PORT=8888
+      - PROXYFORGE_PROXY_TLS_PORT=8443
+      - PROXYFORGE_DATA_DIR=/data
+    command: ["--host", "0.0.0.0"]
+    restart: unless-stopped
+    profiles:
+      - host
+
+  # MCP Server for AI assistant integration (Windsurf, Claude, etc.)
+  # Note: MCP uses stdio transport, so this service is mainly for building the binary
+  # For Windsurf integration, run proxyforge-mcp locally or use docker exec
+  proxyforge-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: proxyforge:latest
+    container_name: proxyforge-mcp
+    environment:
+      - PROXYFORGE_API_URL=http://proxyforge:3001
+      - PROXYFORGE_TIMEOUT=30
+    entrypoint: ["proxyforge-mcp"]
+    stdin_open: true
+    tty: true
+    restart: "no"
+    depends_on:
+      - proxyforge
+    networks:
+      - proxyforge_net
+    profiles:
+      - mcp
 
   # Development service with hot reload
   proxyforge-dev:

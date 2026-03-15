@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use clap::Parser;
+use std::sync::Arc;
 
 use proxyforge_api::create_router;
 use proxyforge_core::{CertificateManager, ProxyConfig, ProxyEngine, TrafficStore};
@@ -25,6 +26,12 @@ struct Args {
     /// Host to bind to
     #[arg(long, default_value = "127.0.0.1")]
     host: String,
+
+    /// Public IP address to show to users (optional)
+    /// If not set, the frontend will auto-detect the local network IP
+    /// Use this when hosting on a remote server or specific network interface
+    #[arg(long, env = "PROXYFORGE_PUBLIC_IP")]
+    public_ip: Option<String>,
 
     /// Certificate storage path (defaults to ~/.proxyforge/certs)
     #[arg(long)]
@@ -53,6 +60,11 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install rustls crypto provider (required by rustls 0.23+)
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls CryptoProvider");
+
     // Initialize logging
     let level = if cfg!(debug_assertions) {
         Level::DEBUG
@@ -73,6 +85,7 @@ async fn main() -> Result<()> {
         proxy_port: args.proxy_port,
         api_port: args.api_port,
         host: args.host,
+        public_ip: args.public_ip,
         cert_path: args.cert_path.unwrap_or(defaults.cert_path),
         db_path: args.db_path.unwrap_or(defaults.db_path),
         log_path: args.log_path.unwrap_or(defaults.log_path),
@@ -106,7 +119,8 @@ async fn main() -> Result<()> {
 
     // Create API state with certificate manager for cert download
     let api_state = proxyforge_api::AppState::new(traffic_store.clone())
-        .with_cert_manager(cert_manager_for_api);
+        .with_cert_manager(cert_manager_for_api)
+        .with_proxy_config(Arc::new(config.clone()));
 
     // Create the API router
     let app = create_router(api_state);
@@ -125,7 +139,10 @@ async fn main() -> Result<()> {
     info!("  HTTPS Proxy: {}:{}", config.host, config.proxy_port);
     info!("");
     info!("To intercept HTTPS, install the CA certificate:");
-    info!("  Certificate location: {}", config.ca_cert_path().display());
+    info!(
+        "  Certificate location: {}",
+        config.ca_cert_path().display()
+    );
 
     // Drop the proxy_task handle since we don't need to join it
     // (it runs until the program exits)

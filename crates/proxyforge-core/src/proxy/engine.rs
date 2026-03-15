@@ -56,6 +56,27 @@ impl ProxyEngine {
         }))
     }
 
+    /// Check if a request should be excluded from traffic capture
+    /// Excludes ProxyForge's own API requests to prevent feedback loops
+    fn should_exclude_from_capture(&self, request: &RequestData) -> bool {
+        let api_port = self.config.api_port;
+
+        // Check if request is to ProxyForge's own API
+        if let Some(host) = request.headers.get("Host").or(request.headers.get("host")) {
+            // Match patterns like "localhost:3001", "127.0.0.1:3001", "10.0.0.37:3001"
+            if host.ends_with(&format!(":{}", api_port)) {
+                return true;
+            }
+        }
+
+        // Also check the URL directly
+        if request.url.contains(&format!(":{}/api/", api_port)) {
+            return true;
+        }
+
+        false
+    }
+
     /// Set the mock manager
     pub fn with_mock_manager(mut self: Arc<Self>, manager: Arc<MockManager>) -> Arc<Self> {
         Arc::get_mut(&mut self).unwrap().mock_manager = Some(manager);
@@ -120,11 +141,11 @@ impl ProxyEngine {
     }
 
     /// Handle an incoming connection
-    async fn handle_connection(&self, client_socket: TcpStream) -> crate::Result<()> {
-        // Read the first line to determine if it's a CONNECT (HTTPS) or regular HTTP
-        let mut buf = [0u8; 8192];
+    async fn handle_connection(&self, mut client_socket: TcpStream) -> crate::Result<()> {
+        // Peek first to determine request type without consuming
+        let mut peek_buf = [0u8; 1024];
         let n = client_socket
-            .peek(&mut buf)
+            .peek(&mut peek_buf)
             .await
             .map_err(|e| Error::Proxy(format!("Failed to peek connection: {}", e)))?;
 
@@ -132,12 +153,36 @@ impl ProxyEngine {
             return Ok(());
         }
 
-        let request_str = String::from_utf8_lossy(&buf[..n.min(1024)]);
+        let request_str = String::from_utf8_lossy(&peek_buf[..n]);
 
         if request_str.starts_with("CONNECT ") {
+            // For CONNECT, we must consume the full CONNECT request from the buffer
+            // before starting TLS handshake. Read until we find \r\n\r\n.
+            let mut buf = vec![0u8; 8192];
+            let n = client_socket
+                .read(&mut buf)
+                .await
+                .map_err(|e| Error::Proxy(format!("Failed to read CONNECT request: {}", e)))?;
+
+            if n == 0 {
+                return Ok(());
+            }
+
+            let connect_str = String::from_utf8_lossy(&buf[..n]);
             // HTTPS tunneling
-            self.handle_https_tunnel(client_socket, &request_str).await
+            self.handle_https_tunnel(client_socket, &connect_str).await
         } else {
+            // For HTTP, read the full request data
+            let mut buf = vec![0u8; 65536];
+            let n = client_socket
+                .read(&mut buf)
+                .await
+                .map_err(|e| Error::Proxy(format!("Failed to read HTTP request: {}", e)))?;
+
+            if n == 0 {
+                return Ok(());
+            }
+
             // Regular HTTP proxy
             self.handle_http_proxy(client_socket, &buf[..n]).await
         }
@@ -207,211 +252,248 @@ impl ProxyEngine {
         Ok(Arc::new(config))
     }
 
-    /// Handle TLS-wrapped HTTP request
+    /// Handle TLS-wrapped HTTP requests (loops for HTTP/1.1 keep-alive)
     async fn handle_tls_request(
         &self,
         tls_stream: &mut tokio_rustls::server::TlsStream<TcpStream>,
         host: &str,
         port: u16,
     ) -> crate::Result<()> {
-        // Read the HTTP request
         let mut buf = vec![0u8; 65536];
-        let n = tls_stream
-            .read(&mut buf)
-            .await
-            .map_err(|e| Error::Proxy(format!("Failed to read TLS request: {}", e)))?;
 
-        if n == 0 {
-            return Ok(());
-        }
-
-        let mut request_data = self.parse_http_request(&buf[..n], host, port)?;
-
-        // Check for WebSocket upgrade
-        if is_websocket_upgrade(&request_data.headers) {
-            return self
-                .handle_websocket_upgrade_tls(tls_stream, &request_data, host, port)
-                .await;
-        }
-
-        // Apply rewrite rules to request
-        if let Some(ref rewrite_manager) = self.rewrite_manager {
-            rewrite_manager.rewrite_request(&mut request_data);
-        }
-
-        // Check for mock response
-        if let Some(ref mock_manager) = self.mock_manager {
-            if let Some(mock) = mock_manager.find_matching_mock(&request_data) {
-                debug!("Mock matched: {} for {}", mock.name, request_data.url);
-
-                // Apply throttle latency if enabled
-                if let Some(ref throttle_manager) = self.throttle_manager {
-                    throttle_manager.apply_latency().await;
+        loop {
+            // Read the next HTTP request from the TLS stream
+            let n = match tls_stream.read(&mut buf).await {
+                Ok(0) => {
+                    debug!("TLS client closed connection to {}", host);
+                    return Ok(());
                 }
+                Ok(n) => n,
+                Err(e) => {
+                    debug!("TLS read finished for {}: {}", host, e);
+                    return Ok(());
+                }
+            };
 
-                // Build mock response
-                let response = self.build_mock_response(&mock.response).await;
+            let mut request_data = match self.parse_http_request(&buf[..n], host, port) {
+                Ok(data) => data,
+                Err(e) => {
+                    debug!("Failed to parse request on keep-alive connection: {}", e);
+                    return Ok(());
+                }
+            };
 
-                // Store the request
-                let session_id = self.traffic_store.current_session_id();
-                let entry = TrafficEntry::new(&session_id, request_data.clone());
-                self.traffic_store.store_request(&entry)?;
-                self.traffic_store.store_response(&entry.id, &response)?;
-                let _ = self.traffic_tx.send(entry);
-
-                // Send response to client
-                let response_bytes = self.build_response_bytes(&response);
-                tls_stream.write_all(&response_bytes).await?;
-
-                info!(
-                    "{} {} -> {} (mocked)",
-                    request_data.method, request_data.url, response.status_code
-                );
-                return Ok(());
-            }
-        }
-
-        // Check for breakpoint on request
-        if let Some(ref breakpoint_manager) = self.breakpoint_manager {
-            if let Some(rule) = breakpoint_manager.check_request(&request_data) {
-                debug!("Breakpoint hit: {} for {}", rule.name, request_data.url);
-
-                let session_id = self.traffic_store.current_session_id();
-                let entry = TrafficEntry::new(&session_id, request_data.clone());
-                let entry_id = entry.id.clone();
-
-                let decision = breakpoint_manager
-                    .pause_and_wait(
-                        entry_id,
-                        crate::intercept::InterceptDirection::Request,
-                        request_data.clone(),
-                        None,
-                        rule.id.clone(),
-                    )
+            // Check for WebSocket upgrade (breaks the keep-alive loop)
+            if is_websocket_upgrade(&request_data.headers) {
+                return self
+                    .handle_websocket_upgrade_tls(tls_stream, &request_data, host, port)
                     .await;
+            }
 
-                match decision {
-                    BreakpointDecision::Abort => {
-                        warn!("Request aborted by breakpoint: {}", request_data.url);
-                        return Ok(());
+            // Determine if the client wants to close after this request
+            let connection_close = request_data
+                .headers
+                .get("Connection")
+                .or_else(|| request_data.headers.get("connection"))
+                .map(|v| v.eq_ignore_ascii_case("close"))
+                .unwrap_or(false);
+
+            // Apply rewrite rules to request
+            if let Some(ref rewrite_manager) = self.rewrite_manager {
+                rewrite_manager.rewrite_request(&mut request_data);
+            }
+
+            // Check for mock response
+            let mut handled = false;
+            if let Some(ref mock_manager) = self.mock_manager {
+                if let Some(mock) = mock_manager.find_matching_mock(&request_data) {
+                    debug!("Mock matched: {} for {}", mock.name, request_data.url);
+
+                    if let Some(ref throttle_manager) = self.throttle_manager {
+                        throttle_manager.apply_latency().await;
                     }
-                    BreakpointDecision::Continue => {}
-                    BreakpointDecision::Modify { modifications } => {
-                        BreakpointManager::apply_request_modifications(
-                            &mut request_data,
-                            &modifications,
-                        );
-                    }
-                    BreakpointDecision::Respond {
-                        status_code,
-                        headers,
-                        body,
-                    } => {
-                        let response = ResponseData {
-                            status_code,
-                            status_message: None,
-                            headers,
-                            body: body.map(|b| b.into_bytes()),
-                            content_type: Some("application/json".to_string()),
-                            duration_ms: 0,
-                        };
+
+                    let response = self.build_mock_response(&mock.response).await;
+
+                    let session_id = self.traffic_store.current_session_id();
+                    let entry = TrafficEntry::new(&session_id, request_data.clone());
+                    self.traffic_store.store_request(&entry)?;
+                    self.traffic_store.store_response(&entry.id, &response)?;
+                    let _ = self.traffic_tx.send(entry);
+
+                    let response_bytes = self.build_response_bytes(&response);
+                    tls_stream.write_all(&response_bytes).await?;
+
+                    info!(
+                        "{} {} -> {} (mocked)",
+                        request_data.method, request_data.url, response.status_code
+                    );
+                    handled = true;
+                }
+            }
+
+            if !handled {
+                // Check for breakpoint on request
+                if let Some(ref breakpoint_manager) = self.breakpoint_manager {
+                    if let Some(rule) = breakpoint_manager.check_request(&request_data) {
+                        debug!("Breakpoint hit: {} for {}", rule.name, request_data.url);
 
                         let session_id = self.traffic_store.current_session_id();
                         let entry = TrafficEntry::new(&session_id, request_data.clone());
-                        self.traffic_store.store_request(&entry)?;
-                        self.traffic_store.store_response(&entry.id, &response)?;
-                        let _ = self.traffic_tx.send(entry);
-
-                        let response_bytes = self.build_response_bytes(&response);
-                        tls_stream.write_all(&response_bytes).await?;
-
-                        info!(
-                            "{} {} -> {} (breakpoint response)",
-                            request_data.method, request_data.url, status_code
-                        );
-                        return Ok(());
-                    }
-                }
-            }
-        }
-
-        // Store the request
-        let session_id = self.traffic_store.current_session_id();
-        let entry = TrafficEntry::new(&session_id, request_data.clone());
-        self.traffic_store.store_request(&entry)?;
-
-        // Broadcast to WebSocket clients
-        let _ = self.traffic_tx.send(entry.clone());
-
-        // Apply throttle latency if enabled
-        if let Some(ref throttle_manager) = self.throttle_manager {
-            throttle_manager.apply_latency().await;
-        }
-
-        // Forward to upstream server
-        let start = std::time::Instant::now();
-
-        match self.forward_https_request(&request_data, tls_stream).await {
-            Ok(mut response) => {
-                let duration_ms = start.elapsed().as_millis() as u64;
-                response.duration_ms = duration_ms;
-
-                // Apply rewrite rules to response
-                if let Some(ref rewrite_manager) = self.rewrite_manager {
-                    rewrite_manager.rewrite_response(&request_data, &mut response);
-                }
-
-                // Check for breakpoint on response
-                if let Some(ref breakpoint_manager) = self.breakpoint_manager {
-                    if let Some(rule) = breakpoint_manager.check_response(&request_data, &response)
-                    {
-                        debug!(
-                            "Breakpoint hit on response: {} for {}",
-                            rule.name, request_data.url
-                        );
+                        let entry_id = entry.id.clone();
 
                         let decision = breakpoint_manager
                             .pause_and_wait(
-                                entry.id.clone(),
-                                crate::intercept::InterceptDirection::Response,
+                                entry_id,
+                                crate::intercept::InterceptDirection::Request,
                                 request_data.clone(),
-                                Some(response.clone()),
+                                None,
                                 rule.id.clone(),
                             )
                             .await;
 
                         match decision {
                             BreakpointDecision::Abort => {
-                                warn!("Response aborted by breakpoint: {}", request_data.url);
+                                warn!("Request aborted by breakpoint: {}", request_data.url);
                                 return Ok(());
                             }
                             BreakpointDecision::Continue => {}
                             BreakpointDecision::Modify { modifications } => {
-                                BreakpointManager::apply_response_modifications(
-                                    &mut response,
+                                BreakpointManager::apply_request_modifications(
+                                    &mut request_data,
                                     &modifications,
                                 );
                             }
-                            BreakpointDecision::Respond { .. } => {
-                                // Already have the response, just continue
+                            BreakpointDecision::Respond {
+                                status_code,
+                                headers,
+                                body,
+                            } => {
+                                let response = ResponseData {
+                                    status_code,
+                                    status_message: None,
+                                    headers,
+                                    body: body.map(|b| b.into_bytes()),
+                                    content_type: Some("application/json".to_string()),
+                                    duration_ms: 0,
+                                };
+
+                                let session_id = self.traffic_store.current_session_id();
+                                let entry = TrafficEntry::new(&session_id, request_data.clone());
+                                self.traffic_store.store_request(&entry)?;
+                                self.traffic_store.store_response(&entry.id, &response)?;
+                                let _ = self.traffic_tx.send(entry);
+
+                                let response_bytes = self.build_response_bytes(&response);
+                                tls_stream.write_all(&response_bytes).await?;
+
+                                info!(
+                                    "{} {} -> {} (breakpoint response)",
+                                    request_data.method, request_data.url, status_code
+                                );
+                                handled = true;
                             }
                         }
                     }
                 }
-
-                // Store the response
-                self.traffic_store.store_response(&entry.id, &response)?;
-                info!(
-                    "{} {} -> {} ({}ms)",
-                    request_data.method, request_data.url, response.status_code, duration_ms
-                );
             }
-            Err(e) => {
-                warn!("Failed to forward request to {}: {}", request_data.url, e);
+
+            if !handled {
+                // Skip storing ProxyForge's own API requests to prevent feedback loops
+                let should_capture = !self.should_exclude_from_capture(&request_data);
+
+                // Store the request (if not excluded)
+                let session_id = self.traffic_store.current_session_id();
+                let entry = TrafficEntry::new(&session_id, request_data.clone());
+                if should_capture {
+                    self.traffic_store.store_request(&entry)?;
+                    // Broadcast to WebSocket clients
+                    let _ = self.traffic_tx.send(entry.clone());
+                }
+
+                // Apply throttle latency if enabled
+                if let Some(ref throttle_manager) = self.throttle_manager {
+                    throttle_manager.apply_latency().await;
+                }
+
+                // Forward to upstream server
+                let start = std::time::Instant::now();
+
+                match self.forward_https_request(&request_data, tls_stream).await {
+                    Ok(mut response) => {
+                        let duration_ms = start.elapsed().as_millis() as u64;
+                        response.duration_ms = duration_ms;
+
+                        // Apply rewrite rules to response
+                        if let Some(ref rewrite_manager) = self.rewrite_manager {
+                            rewrite_manager.rewrite_response(&request_data, &mut response);
+                        }
+
+                        // Check for breakpoint on response
+                        if let Some(ref breakpoint_manager) = self.breakpoint_manager {
+                            if let Some(rule) =
+                                breakpoint_manager.check_response(&request_data, &response)
+                            {
+                                debug!(
+                                    "Breakpoint hit on response: {} for {}",
+                                    rule.name, request_data.url
+                                );
+
+                                let decision = breakpoint_manager
+                                    .pause_and_wait(
+                                        entry.id.clone(),
+                                        crate::intercept::InterceptDirection::Response,
+                                        request_data.clone(),
+                                        Some(response.clone()),
+                                        rule.id.clone(),
+                                    )
+                                    .await;
+
+                                match decision {
+                                    BreakpointDecision::Abort => {
+                                        warn!(
+                                            "Response aborted by breakpoint: {}",
+                                            request_data.url
+                                        );
+                                        return Ok(());
+                                    }
+                                    BreakpointDecision::Continue => {}
+                                    BreakpointDecision::Modify { modifications } => {
+                                        BreakpointManager::apply_response_modifications(
+                                            &mut response,
+                                            &modifications,
+                                        );
+                                    }
+                                    BreakpointDecision::Respond { .. } => {}
+                                }
+                            }
+                        }
+
+                        // Store the response (if not excluded)
+                        if should_capture {
+                            self.traffic_store.store_response(&entry.id, &response)?;
+                        }
+                        info!(
+                            "{} {} -> {} ({}ms)",
+                            request_data.method,
+                            request_data.url,
+                            response.status_code,
+                            duration_ms
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Failed to forward request to {}: {}", request_data.url, e);
+                        return Ok(());
+                    }
+                }
+            }
+
+            // If the client sent Connection: close, stop the keep-alive loop
+            if connection_close {
+                debug!("Client requested connection close for {}", host);
+                return Ok(());
             }
         }
-
-        Ok(())
     }
 
     /// Handle regular HTTP proxy request
@@ -552,13 +634,17 @@ impl ProxyEngine {
             }
         }
 
-        // Store the request
+        // Skip storing ProxyForge's own API requests to prevent feedback loops
+        let should_capture = !self.should_exclude_from_capture(&request_data);
+
+        // Store the request (if not excluded)
         let session_id = self.traffic_store.current_session_id();
         let entry = TrafficEntry::new(&session_id, request_data.clone());
-        self.traffic_store.store_request(&entry)?;
-
-        // Broadcast to WebSocket clients
-        let _ = self.traffic_tx.send(entry.clone());
+        if should_capture {
+            self.traffic_store.store_request(&entry)?;
+            // Broadcast to WebSocket clients
+            let _ = self.traffic_tx.send(entry.clone());
+        }
 
         // Apply throttle latency if enabled
         if let Some(ref throttle_manager) = self.throttle_manager {
@@ -619,7 +705,9 @@ impl ProxyEngine {
                     }
                 }
 
-                self.traffic_store.store_response(&entry.id, &response)?;
+                if should_capture {
+                    self.traffic_store.store_response(&entry.id, &response)?;
+                }
                 info!(
                     "{} {} -> {} ({}ms)",
                     request_data.method, request_data.url, response.status_code, duration_ms
@@ -744,18 +832,26 @@ impl ProxyEngine {
         let request_bytes = self.build_http_request(request_data);
         upstream_stream.write_all(&request_bytes).await?;
 
-        // Read response
-        let mut response_buf = vec![0u8; 65536];
-        let n = upstream_stream
-            .read(&mut response_buf)
-            .await
-            .map_err(|e| Error::Proxy(format!("Failed to read upstream response: {}", e)))?;
+        // Read ALL response data (loop until upstream closes connection)
+        let mut response_buf = Vec::new();
+        let mut chunk = vec![0u8; 65536];
+        loop {
+            match upstream_stream.read(&mut chunk).await {
+                Ok(0) => break,
+                Ok(n) => response_buf.extend_from_slice(&chunk[..n]),
+                Err(_) => break,
+            }
+        }
 
-        // Parse response
-        let response_data = self.parse_http_response(&response_buf[..n])?;
+        if response_buf.is_empty() {
+            return Err(Error::Proxy("Empty response from upstream".into()));
+        }
 
-        // Forward response to client
-        client_stream.write_all(&response_buf[..n]).await?;
+        // Parse response (for storage)
+        let response_data = self.parse_http_response(&response_buf)?;
+
+        // Forward complete response to client
+        client_stream.write_all(&response_buf).await?;
 
         Ok(response_data)
     }
@@ -777,18 +873,26 @@ impl ProxyEngine {
         let request_bytes = self.build_http_request(request_data);
         upstream_write.write_all(&request_bytes).await?;
 
-        // Read response
-        let mut response_buf = vec![0u8; 65536];
-        let n = upstream_read
-            .read(&mut response_buf)
-            .await
-            .map_err(|e| Error::Proxy(format!("Failed to read upstream response: {}", e)))?;
+        // Read ALL response data (loop until upstream closes connection)
+        let mut response_buf = Vec::new();
+        let mut chunk = vec![0u8; 65536];
+        loop {
+            match upstream_read.read(&mut chunk).await {
+                Ok(0) => break,
+                Ok(n) => response_buf.extend_from_slice(&chunk[..n]),
+                Err(_) => break,
+            }
+        }
 
-        // Parse response
-        let response_data = self.parse_http_response(&response_buf[..n])?;
+        if response_buf.is_empty() {
+            return Err(Error::Proxy("Empty response from upstream".into()));
+        }
 
-        // Forward response to client
-        client_stream.write_all(&response_buf[..n]).await?;
+        // Parse response (for storage)
+        let response_data = self.parse_http_response(&response_buf)?;
+
+        // Forward complete response to client
+        client_stream.write_all(&response_buf).await?;
 
         Ok(response_data)
     }

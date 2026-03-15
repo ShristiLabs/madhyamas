@@ -1,153 +1,274 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import { useTraffic, useTrafficCount, useClearTraffic } from '@/hooks/useTraffic'
-import { TrafficList } from './TrafficList'
-import { TrafficDetail } from './TrafficDetail'
-import { TrafficToolbar } from './TrafficToolbar'
-import { ToolsSidebar } from './ToolsSidebar'
-import { Button } from './ui/button'
-import { Trash2, RefreshCw, Wrench, Keyboard } from 'lucide-react'
-import type { TrafficEntry, TrafficFilter } from '@/types/traffic'
-import { cn } from '@/lib/utils'
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import {
+  useTraffic,
+  useTrafficCount,
+  useClearTraffic,
+} from "@/hooks/useTraffic";
+import { TrafficList } from "./TrafficList";
+import { TrafficDetail } from "./TrafficDetail";
+import { TrafficToolbar } from "./TrafficToolbar";
+import { ToolsSidebar } from "./ToolsSidebar";
+import { Button } from "./ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import {
+  Trash2,
+  RefreshCw,
+  Wrench,
+  Keyboard,
+  Download,
+  ChevronDown,
+} from "lucide-react";
+import type { TrafficEntry } from "@/types/traffic";
+import type { ActiveFilter } from "@/types/filters";
+import { applyFilters } from "@/types/filters";
+import { cn } from "@/lib/utils";
 
-const STORAGE_KEY_LIST_WIDTH = 'proxyforge-traffic-list-width'
-const STORAGE_KEY_TOOLS_WIDTH = 'proxyforge-tools-width'
-const DEFAULT_LIST_WIDTH = 40
-const DEFAULT_TOOLS_WIDTH = 400
-const MIN_LIST_WIDTH = 20
-const MAX_LIST_WIDTH = 60
-const MIN_TOOLS_WIDTH = 300
-const MAX_TOOLS_WIDTH = 600
+const STORAGE_KEY_LIST_WIDTH = "proxyforge-traffic-list-width";
+const STORAGE_KEY_TOOLS_WIDTH = "proxyforge-tools-width";
+const DEFAULT_LIST_WIDTH = 40;
+const DEFAULT_TOOLS_WIDTH = 400;
+const MIN_LIST_WIDTH = 20;
+const MAX_LIST_WIDTH = 60;
+const MIN_TOOLS_WIDTH = 300;
+const MAX_TOOLS_WIDTH = 600;
 
 export function TrafficView() {
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [filter, setFilter] = useState<TrafficFilter>({})
-  const [showTools, setShowTools] = useState(false)
-  const [showShortcuts, setShowShortcuts] = useState(false)
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
+  const [showTools, setShowTools] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [listWidth, setListWidth] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(STORAGE_KEY_LIST_WIDTH)
-      return saved ? parseInt(saved, 10) : DEFAULT_LIST_WIDTH
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(STORAGE_KEY_LIST_WIDTH);
+      return saved ? parseInt(saved, 10) : DEFAULT_LIST_WIDTH;
     }
-    return DEFAULT_LIST_WIDTH
-  })
+    return DEFAULT_LIST_WIDTH;
+  });
   const [toolsWidth, setToolsWidth] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(STORAGE_KEY_TOOLS_WIDTH)
-      return saved ? parseInt(saved, 10) : DEFAULT_TOOLS_WIDTH
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(STORAGE_KEY_TOOLS_WIDTH);
+      return saved ? parseInt(saved, 10) : DEFAULT_TOOLS_WIDTH;
     }
-    return DEFAULT_TOOLS_WIDTH
-  })
+    return DEFAULT_TOOLS_WIDTH;
+  });
 
-  const { data: traffic, isLoading, refetch } = useTraffic(filter)
-  const { data: count } = useTrafficCount()
-  const clearTraffic = useClearTraffic()
+  const {
+    data: traffic,
+    isLoading,
+    refetch,
+  } = useTraffic(search ? { search } : undefined);
+  const { data: count } = useTrafficCount();
+  const clearTraffic = useClearTraffic();
 
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [isResizingList, setIsResizingList] = useState(false)
-  const [isResizingTools, setIsResizingTools] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isResizingList, setIsResizingList] = useState(false);
+  const [isResizingTools, setIsResizingTools] = useState(false);
+
+  const filteredTraffic = useMemo(() => {
+    if (!traffic) return [];
+    return applyFilters(traffic, activeFilters);
+  }, [traffic, activeFilters]);
 
   const selectedEntry = useMemo(() => {
-    if (!traffic || !selectedId) return null
-    return traffic.find((t: TrafficEntry) => t.id === selectedId) || null
-  }, [traffic, selectedId])
+    if (!traffic || !selectedId) return null;
+    return traffic.find((t: TrafficEntry) => t.id === selectedId) || null;
+  }, [traffic, selectedId]);
 
-  const handleClear = useCallback(() => {
-    if (confirm('Clear all traffic?')) {
-      clearTraffic.mutate()
-      setSelectedId(null)
+  const handleClear = useCallback(
+    async (clearAll: boolean) => {
+      if (clearAll) {
+        if (!confirm("Clear all traffic?")) return;
+        clearTraffic.mutate();
+        setSelectedId(null);
+        setSelectedIds(new Set());
+      } else {
+        if (selectedIds.size === 0) return;
+        if (
+          !confirm(
+            `Clear ${selectedIds.size} selected ${selectedIds.size === 1 ? "entry" : "entries"}?`,
+          )
+        )
+          return;
+
+        try {
+          const ids = Array.from(selectedIds).join(",");
+          const response = await fetch(
+            `/api/traffic/clear?ids=${encodeURIComponent(ids)}`,
+            { method: "POST" },
+          );
+          if (!response.ok) throw new Error("Failed to clear selected traffic");
+
+          // Clear selection and refetch
+          setSelectedIds(new Set());
+          if (selectedIds.has(selectedId || "")) {
+            setSelectedId(null);
+          }
+          refetch();
+        } catch (error) {
+          console.error("Failed to clear selected traffic:", error);
+        }
+      }
+    },
+    [clearTraffic, selectedIds, selectedId, refetch],
+  );
+
+  const handleToggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    if (selectedIds.size === filteredTraffic.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredTraffic.map((t) => t.id)));
     }
-  }, [clearTraffic])
+  }, [filteredTraffic, selectedIds.size]);
+
+  const handleExportHar = useCallback(
+    async (exportAll: boolean) => {
+      try {
+        let url = "/api/export/har";
+        if (!exportAll && selectedIds.size > 0) {
+          const ids = Array.from(selectedIds).join(",");
+          url = `/api/export/har?ids=${encodeURIComponent(ids)}`;
+        }
+
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Failed to export HAR");
+
+        const har = await response.json();
+        const blob = new Blob([JSON.stringify(har, null, 2)], {
+          type: "application/json",
+        });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = `proxyforge-${new Date().toISOString().slice(0, 10)}.har`;
+        a.click();
+        URL.revokeObjectURL(blobUrl);
+      } catch (error) {
+        console.error("Failed to export HAR:", error);
+      }
+    },
+    [selectedIds],
+  );
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't trigger shortcuts when typing in inputs
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
       }
 
       switch (e.key.toLowerCase()) {
-        case 'r':
+        case "r":
           if (!e.metaKey && !e.ctrlKey) {
-            e.preventDefault()
-            refetch()
+            e.preventDefault();
+            refetch();
           }
-          break
-        case 'c':
+          break;
+        case "c":
           if (!e.metaKey && !e.ctrlKey) {
-            e.preventDefault()
-            handleClear()
+            e.preventDefault();
+            handleClear(true);
           }
-          break
-        case 't':
-          e.preventDefault()
-          setShowTools(prev => !prev)
-          break
-        case '?':
-          e.preventDefault()
-          setShowShortcuts(prev => !prev)
-          break
-        case 'escape':
-          setShowShortcuts(false)
-          break
+          break;
+        case "t":
+          e.preventDefault();
+          setShowTools((prev) => !prev);
+          break;
+        case "?":
+          e.preventDefault();
+          setShowShortcuts((prev) => !prev);
+          break;
+        case "escape":
+          setShowShortcuts(false);
+          break;
       }
-    }
+    };
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [refetch, handleClear])
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [refetch, handleClear]);
 
   // List panel resize handlers
   const handleListMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsResizingList(true)
-  }, [])
+    e.preventDefault();
+    setIsResizingList(true);
+  }, []);
 
   const handleToolsMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsResizingTools(true)
-  }, [])
+    e.preventDefault();
+    setIsResizingTools(true);
+  }, []);
 
   useEffect(() => {
-    if (!isResizingList && !isResizingTools) return
+    if (!isResizingList && !isResizingTools) return;
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!containerRef.current) return
-      const rect = containerRef.current.getBoundingClientRect()
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
 
       if (isResizingList) {
-        const percent = ((e.clientX - rect.left) / rect.width) * 100
-        const newWidth = Math.min(MAX_LIST_WIDTH, Math.max(MIN_LIST_WIDTH, percent))
-        setListWidth(newWidth)
-        localStorage.setItem(STORAGE_KEY_LIST_WIDTH, newWidth.toString())
+        const percent = ((e.clientX - rect.left) / rect.width) * 100;
+        const newWidth = Math.min(
+          MAX_LIST_WIDTH,
+          Math.max(MIN_LIST_WIDTH, percent),
+        );
+        setListWidth(newWidth);
+        localStorage.setItem(STORAGE_KEY_LIST_WIDTH, newWidth.toString());
       } else if (isResizingTools && showTools) {
-        const percent = ((rect.right - e.clientX) / rect.width) * 100
-        const newWidth = Math.min(MAX_TOOLS_WIDTH, Math.max(MIN_TOOLS_WIDTH, rect.width * (percent / 100)))
-        setToolsWidth(newWidth)
-        localStorage.setItem(STORAGE_KEY_TOOLS_WIDTH, newWidth.toString())
+        const percent = ((rect.right - e.clientX) / rect.width) * 100;
+        const newWidth = Math.min(
+          MAX_TOOLS_WIDTH,
+          Math.max(MIN_TOOLS_WIDTH, rect.width * (percent / 100)),
+        );
+        setToolsWidth(newWidth);
+        localStorage.setItem(STORAGE_KEY_TOOLS_WIDTH, newWidth.toString());
       }
-    }
+    };
 
     const handleMouseUp = () => {
-      setIsResizingList(false)
-      setIsResizingTools(false)
-    }
+      setIsResizingList(false);
+      setIsResizingTools(false);
+    };
 
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
 
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [isResizingList, isResizingTools, showTools])
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizingList, isResizingTools, showTools]);
 
   return (
     <div className="h-full flex flex-col">
       <TrafficToolbar
-        filter={filter}
-        onFilterChange={setFilter}
-        count={count || 0}
+        search={search}
+        onSearchChange={setSearch}
+        filters={activeFilters}
+        onFiltersChange={setActiveFilters}
+        count={filteredTraffic.length}
       />
 
       <div className="flex-1 flex overflow-hidden border-t" ref={containerRef}>
@@ -157,8 +278,28 @@ export function TrafficView() {
               {count ?? 0} requests
             </span>
             <div className="flex gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm">
+                    <Download className="h-4 w-4 mr-1" />
+                    Export
+                    <ChevronDown className="h-3 w-3 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={() => handleExportHar(false)}
+                    disabled={selectedIds.size === 0}
+                  >
+                    Export Selected ({selectedIds.size})
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleExportHar(true)}>
+                    Export All ({filteredTraffic.length})
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
-                variant={showTools ? 'default' : 'ghost'}
+                variant={showTools ? "default" : "ghost"}
                 size="sm"
                 onClick={() => setShowTools(!showTools)}
                 title="Toggle Tools Panel (T)"
@@ -181,15 +322,30 @@ export function TrafficView() {
               >
                 <RefreshCw className="h-4 w-4" />
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleClear}
-                disabled={clearTraffic.isPending}
-                title="Clear All (C)"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={clearTraffic.isPending}
+                  >
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    Clear
+                    <ChevronDown className="h-3 w-3 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={() => handleClear(false)}
+                    disabled={selectedIds.size === 0}
+                  >
+                    Clear Selected ({selectedIds.size})
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleClear(true)}>
+                    Clear All ({filteredTraffic.length})
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
 
@@ -206,9 +362,12 @@ export function TrafficView() {
                   </div>
                 ) : (
                   <TrafficList
-                    traffic={traffic || []}
+                    traffic={filteredTraffic}
                     selectedId={selectedId}
                     onSelect={setSelectedId}
+                    selectedIds={selectedIds}
+                    onToggleSelect={handleToggleSelect}
+                    onSelectAll={handleSelectAll}
                   />
                 )}
               </div>
@@ -217,8 +376,8 @@ export function TrafficView() {
             {/* Resize Handle for List */}
             <div
               className={cn(
-                'w-1 cursor-col-resize hover:bg-primary/50 transition-colors flex-shrink-0',
-                isResizingList && 'bg-primary'
+                "w-1 cursor-col-resize hover:bg-primary/50 transition-colors flex-shrink-0",
+                isResizingList && "bg-primary",
               )}
               onMouseDown={handleListMouseDown}
             />
@@ -242,8 +401,8 @@ export function TrafficView() {
             {/* Resize Handle for Tools */}
             <div
               className={cn(
-                'w-1 cursor-col-resize hover:bg-primary/50 transition-colors flex-shrink-0',
-                isResizingTools && 'bg-primary'
+                "w-1 cursor-col-resize hover:bg-primary/50 transition-colors flex-shrink-0",
+                isResizingTools && "bg-primary",
               )}
               onMouseDown={handleToolsMouseDown}
             />
@@ -269,29 +428,41 @@ export function TrafficView() {
         >
           <div
             className="bg-background border rounded-lg shadow-lg p-6 max-w-md w-full mx-4"
-            onClick={e => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold mb-4">Keyboard Shortcuts</h2>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Refresh traffic</span>
-                <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">R</kbd>
+                <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
+                  R
+                </kbd>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Clear all traffic</span>
-                <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">C</kbd>
+                <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
+                  C
+                </kbd>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Toggle tools panel</span>
-                <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">T</kbd>
+                <span className="text-muted-foreground">
+                  Toggle tools panel
+                </span>
+                <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
+                  T
+                </kbd>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Show shortcuts</span>
-                <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">?</kbd>
+                <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
+                  ?
+                </kbd>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Close modal</span>
-                <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">Esc</kbd>
+                <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
+                  Esc
+                </kbd>
               </div>
             </div>
             <Button
@@ -304,5 +475,5 @@ export function TrafficView() {
         </div>
       )}
     </div>
-  )
+  );
 }

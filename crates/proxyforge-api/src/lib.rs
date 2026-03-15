@@ -10,8 +10,8 @@ pub mod ws;
 use axum::Router;
 use proxyforge_core::{
     BreakpointManager, CertificateManager, GrpcManager, InterceptStore, MockManager, PluginManager,
-    ReplayManager, RewriteManager, ScriptRuntime, SessionManager, ThrottleManager, TrafficStore,
-    WsManager,
+    ProxyConfig, ReplayManager, RewriteManager, ScriptRuntime, SessionManager, ThrottleManager,
+    TrafficStore, WsManager,
 };
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -34,6 +34,7 @@ pub struct AppState {
     pub ws_manager: Arc<WsManager>,
     pub session_manager: Arc<SessionManager>,
     pub intercept_store: Option<Arc<InterceptStore>>,
+    pub proxy_config: Option<Arc<ProxyConfig>>,
 }
 
 impl AppState {
@@ -53,6 +54,7 @@ impl AppState {
             ws_manager: Arc::new(WsManager::new()),
             session_manager,
             intercept_store: None,
+            proxy_config: None,
         }
     }
 
@@ -113,6 +115,11 @@ impl AppState {
 
     pub fn with_intercept_store(mut self, store: Arc<InterceptStore>) -> Self {
         self.intercept_store = Some(store);
+        self
+    }
+
+    pub fn with_proxy_config(mut self, config: Arc<ProxyConfig>) -> Self {
+        self.proxy_config = Some(config);
         self
     }
 }

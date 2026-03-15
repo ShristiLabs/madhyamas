@@ -1,11 +1,18 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { TrafficView } from './components/TrafficView'
-import { CertificateHelper } from './components/CertificateHelper'
-import { Toaster } from './components/ui/toaster'
-import { Button } from './components/ui/button'
-import { Download, Moon, Sun } from 'lucide-react'
-import { useState, useEffect } from 'react'
-import { useToast } from './components/ui/use-toast'
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { TrafficView } from "./components/TrafficView";
+import { CertificateHelper } from "./components/CertificateHelper";
+import { ConfigDialog } from "./components/ConfigDialog";
+import { Toaster } from "./components/ui/toaster";
+import { Button } from "./components/ui/button";
+import {
+  Moon,
+  Sun,
+  Settings,
+  SlidersHorizontal,
+  CircleDot,
+  CircleSlash,
+} from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -14,44 +21,76 @@ const queryClient = new QueryClient({
       staleTime: 1000,
     },
   },
-})
+});
 
 function App() {
   const [isDark, setIsDark] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return document.documentElement.classList.contains('dark')
+    if (typeof window !== "undefined") {
+      return document.documentElement.classList.contains("dark");
     }
-    return false
-  })
-  const { toast } = useToast()
+    return false;
+  });
+  const [proxyAddress, setProxyAddress] = useState("localhost:8888");
+  const [captureEnabled, setCaptureEnabled] = useState(true);
+  const [captureLoading, setCaptureLoading] = useState(false);
 
   useEffect(() => {
     if (isDark) {
-      document.documentElement.classList.add('dark')
+      document.documentElement.classList.add("dark");
     } else {
-      document.documentElement.classList.remove('dark')
+      document.documentElement.classList.remove("dark");
     }
-  }, [isDark])
+  }, [isDark]);
 
-  const handleExportHar = async () => {
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const theme = (e as CustomEvent<string>).detail;
+      if (theme === "dark") setIsDark(true);
+      else if (theme === "light") setIsDark(false);
+      else {
+        setIsDark(window.matchMedia("(prefers-color-scheme: dark)").matches);
+      }
+    };
+    window.addEventListener("proxyforge-theme-change", handler);
+    return () => window.removeEventListener("proxyforge-theme-change", handler);
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/capture")
+      .then((r) => r.json())
+      .then((d) => setCaptureEnabled(d.capture_enabled ?? true))
+      .catch(() => {});
+  }, []);
+
+  const handleToggleCapture = useCallback(async () => {
+    setCaptureLoading(true);
     try {
-      const response = await fetch('/api/export/har')
-      if (!response.ok) throw new Error('Failed to export HAR')
-
-      const har = await response.json()
-      const blob = new Blob([JSON.stringify(har, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `proxyforge-${new Date().toISOString().slice(0, 10)}.har`
-      a.click()
-      URL.revokeObjectURL(url)
-
-      toast({ description: 'HAR file exported successfully' })
-    } catch (error) {
-      toast({ description: 'Failed to export HAR file', variant: 'destructive' })
+      const res = await fetch("/api/capture/toggle", { method: "POST" });
+      const data = await res.json();
+      setCaptureEnabled(data.capture_enabled);
+    } catch {
+      // ignore
+    } finally {
+      setCaptureLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    const fetchProxyConfig = async () => {
+      try {
+        const response = await fetch("/api/config");
+        if (response.ok) {
+          const config = await response.json();
+          const host = config.host || "localhost";
+          const port = config.proxy_port || 8888;
+          setProxyAddress(`${host}:${port}`);
+        }
+      } catch (e) {
+        console.log("Failed to fetch proxy config:", e);
+      }
+    };
+    fetchProxyConfig();
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -59,25 +98,67 @@ function App() {
         <header className="border-b px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-sm">PF</span>
+              <span className="text-primary-foreground font-bold text-sm">
+                PF
+              </span>
             </div>
             <h1 className="text-xl font-semibold">ProxyForge</h1>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground mr-2">
-              Proxy: localhost:8888
+            <span className="text-sm font-mono px-2.5 py-1 rounded-md bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+              Proxy: {proxyAddress}
             </span>
-            <CertificateHelper />
-            <Button variant="ghost" size="sm" onClick={handleExportHar}>
-              <Download className="h-4 w-4 mr-1" />
-              Export HAR
-            </Button>
+            <button
+              onClick={handleToggleCapture}
+              disabled={captureLoading}
+              title={
+                captureEnabled
+                  ? "Recording — click to enable passthrough"
+                  : "Passthrough — click to resume recording"
+              }
+              className={[
+                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors select-none",
+                captureEnabled
+                  ? "bg-green-50 dark:bg-green-950 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-900"
+                  : "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900",
+                captureLoading
+                  ? "opacity-50 cursor-not-allowed"
+                  : "cursor-pointer",
+              ].join(" ")}
+            >
+              {captureEnabled ? (
+                <CircleDot className="h-3.5 w-3.5" />
+              ) : (
+                <CircleSlash className="h-3.5 w-3.5" />
+              )}
+              {captureEnabled ? "Recording" : "Passthrough"}
+            </button>
+            <CertificateHelper
+              trigger={
+                <Button variant="ghost" size="sm">
+                  <Settings className="h-4 w-4 mr-1" />
+                  Setup
+                </Button>
+              }
+            />
+            <ConfigDialog
+              trigger={
+                <Button variant="ghost" size="sm">
+                  <SlidersHorizontal className="h-4 w-4 mr-1" />
+                  Config
+                </Button>
+              }
+            />
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setIsDark(!isDark)}
             >
-              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              {isDark ? (
+                <Sun className="h-4 w-4" />
+              ) : (
+                <Moon className="h-4 w-4" />
+              )}
             </Button>
           </div>
         </header>
@@ -87,7 +168,7 @@ function App() {
       </div>
       <Toaster />
     </QueryClientProvider>
-  )
+  );
 }
 
-export default App
+export default App;
