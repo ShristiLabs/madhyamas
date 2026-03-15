@@ -27,19 +27,14 @@ pub enum GrpcMessageType {
 }
 
 /// gRPC compression algorithm
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum GrpcCompression {
+    #[default]
     None,
     Gzip,
     Deflate,
     Snappy,
-}
-
-impl Default for GrpcCompression {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// gRPC message frame
