@@ -283,7 +283,7 @@ impl PluginRegistry {
         }
 
         let mut entries: Vec<_> = self.cache.values().cloned().collect();
-        entries.sort_by(|a, b| b.downloads.cmp(&a.downloads));
+        entries.sort_by_key(|b| std::cmp::Reverse(b.downloads));
         entries.truncate(limit);
         Ok(entries)
     }

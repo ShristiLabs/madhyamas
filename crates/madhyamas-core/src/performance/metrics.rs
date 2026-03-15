@@ -192,11 +192,7 @@ impl MetricsCollector {
         let response_count = self.response_count.load(Ordering::Relaxed);
         let total_latency_ns = self.total_latency_ns.load(Ordering::Relaxed);
 
-        let avg_latency_ns = if response_count > 0 {
-            total_latency_ns / response_count
-        } else {
-            0
-        };
+        let avg_latency_ns = total_latency_ns.checked_div(response_count).unwrap_or(0);
 
         Metrics {
             uptime_secs: self.start_time.elapsed().as_secs(),
