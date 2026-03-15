@@ -30,7 +30,7 @@
     "react-dom": "^18.2.0",
     "react-json-view-lite": "^1.2.0",
     "react-split": "^2.0.14",
-    "tailwind-merge": "^2.2.1",
+    "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
     "zustand": "^4.5.1"
   },
