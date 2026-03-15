@@ -1,43 +1,22 @@
 version: 2
 updates:
-  # Rust dependencies
+  # Rust dependencies - DISABLED
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
-    reviewers:
-      - "harikiranbavineni"
-    labels:
-      - "dependencies"
-      - "rust"
-    commit-message:
-      prefix: "deps(rust)"
+    open-pull-requests-limit: 0
 
-  # npm dependencies for web frontend
+  # npm dependencies for web frontend - DISABLED
   - package-ecosystem: "npm"
     directory: "/web"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
-    reviewers:
-      - "harikiranbavineni"
-    labels:
-      - "dependencies"
-      - "frontend"
-    commit-message:
-      prefix: "deps(web)"
+    open-pull-requests-limit: 0
 
-  # GitHub Actions
+  # GitHub Actions - DISABLED
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 5
-    reviewers:
-      - "harikiranbavineni"
-    labels:
-      - "dependencies"
-      - "ci"
-    commit-message:
-      prefix: "ci"
+    open-pull-requests-limit: 0
