@@ -20,7 +20,7 @@ repository = "https://github.com/madhyamas/madhyamas"
 tokio = { version = "1.36", features = ["full"] }
 
 # HTTP
-axum = { version = "0.7", features = ["ws", "macros"] }
+axum = { version = "0.8", features = ["ws", "macros"] }
 axum-extra = { version = "0.9", features = ["typed-header"] }
 hyper = { version = "1.2", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
