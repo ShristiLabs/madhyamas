@@ -70,8 +70,7 @@ impl MatchCondition {
                 .unwrap_or(false),
             MatchCondition::Method { method: m } => method.eq_ignore_ascii_case(m),
             MatchCondition::Header { name, value } => headers.iter().any(|(k, v)| {
-                k.eq_ignore_ascii_case(name)
-                    && value.as_ref().map_or(true, |expected| v == expected)
+                k.eq_ignore_ascii_case(name) && value.as_ref().is_none_or(|expected| v == expected)
             }),
             MatchCondition::BodyPattern { pattern } => body
                 .and_then(|b| std::str::from_utf8(b).ok())
@@ -130,8 +129,7 @@ impl MatchCondition {
                 }
             }
             MatchCondition::Header { name, value } => headers.iter().any(|(k, v)| {
-                k.eq_ignore_ascii_case(name)
-                    && value.as_ref().map_or(true, |expected| v == expected)
+                k.eq_ignore_ascii_case(name) && value.as_ref().is_none_or(|expected| v == expected)
             }),
             MatchCondition::BodyPattern { pattern } => body
                 .and_then(|b| std::str::from_utf8(b).ok())

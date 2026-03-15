@@ -500,7 +500,7 @@ function AppearanceTab() {
       root.classList.remove("dark");
     } else {
       const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      prefersDark ? root.classList.add("dark") : root.classList.remove("dark");
+      void (prefersDark ? root.classList.add("dark") : root.classList.remove("dark"));
     }
 
     // Emit custom event so App.tsx can sync its isDark state

@@ -91,6 +91,7 @@ impl Default for ScriptConfig {
 }
 
 /// JavaScript runtime manager
+#[allow(dead_code)]
 pub struct ScriptRuntime {
     /// Registered scripts
     scripts: RwLock<HashMap<String, Script>>,

@@ -204,6 +204,7 @@ pub struct URLComponents {
     pub fragment: Option<String>,
 }
 
+#[allow(dead_code)]
 impl URLComponents {
     pub fn parse(url: &str) -> Option<Self> {
         let parsed = url.parse::<hyper::Uri>().ok()?;

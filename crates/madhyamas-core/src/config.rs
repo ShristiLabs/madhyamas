@@ -115,30 +115,28 @@ impl ProxyConfig {
                 }
 
                 // Check if it's a private IP
-                if let Ok(addr) = ip_str.parse::<std::net::IpAddr>() {
-                    if let std::net::IpAddr::V4(ipv4) = addr {
-                        let octets = ipv4.octets();
+                if let Ok(std::net::IpAddr::V4(ipv4)) = ip_str.parse::<std::net::IpAddr>() {
+                    let octets = ipv4.octets();
 
-                        // 192.168.0.0/16 - highest priority (typical home/office LAN)
-                        if octets[0] == 192 && octets[1] == 168 {
-                            private_ips.push((1, ip_str.clone()));
-                            continue;
-                        }
+                    // 192.168.0.0/16 - highest priority (typical home/office LAN)
+                    if octets[0] == 192 && octets[1] == 168 {
+                        private_ips.push((1, ip_str.clone()));
+                        continue;
+                    }
 
-                        // 10.0.0.0/8 - medium priority
-                        if octets[0] == 10 {
-                            // Skip typical Docker network ranges (172.17-31.x.x)
-                            private_ips.push((2, ip_str.clone()));
-                            continue;
-                        }
+                    // 10.0.0.0/8 - medium priority
+                    if octets[0] == 10 {
+                        // Skip typical Docker network ranges (172.17-31.x.x)
+                        private_ips.push((2, ip_str.clone()));
+                        continue;
+                    }
 
-                        // 172.16.0.0/12 - lower priority (often Docker networks)
-                        if octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31 {
-                            // Docker typically uses 172.17.x.x - 172.31.x.x
-                            // 172.16.x.x is less common for Docker
-                            let priority = if octets[1] == 16 { 3 } else { 4 };
-                            private_ips.push((priority, ip_str.clone()));
-                        }
+                    // 172.16.0.0/12 - lower priority (often Docker networks)
+                    if octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31 {
+                        // Docker typically uses 172.17.x.x - 172.31.x.x
+                        // 172.16.x.x is less common for Docker
+                        let priority = if octets[1] == 16 { 3 } else { 4 };
+                        private_ips.push((priority, ip_str.clone()));
                     }
                 }
             }

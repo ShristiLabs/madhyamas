@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use madhyamas_core::{GrpcDirection, GrpcFilter, Script, ScriptConfig, ScriptTemplates};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 
 // ============== gRPC Handlers ==============

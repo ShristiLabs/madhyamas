@@ -148,7 +148,7 @@ impl ThrottleProfile {
     pub fn effective_latency(&self) -> Duration {
         use rand::Rng;
         let jitter = if self.jitter_ms > 0 {
-            rand::thread_rng().random_range(0..=self.jitter_ms)
+            rand::rng().random_range(0..=self.jitter_ms)
         } else {
             0
         };
@@ -161,7 +161,7 @@ impl ThrottleProfile {
             return false;
         }
         use rand::Rng;
-        rand::thread_rng().random_ratio(self.packet_loss_percent as u32, 100)
+        rand::rng().random_ratio(self.packet_loss_percent as u32, 100)
     }
 }
 
@@ -256,6 +256,7 @@ impl Default for ThrottleManager {
 }
 
 /// Trait for throttled I/O operations
+#[allow(dead_code)]
 pub trait ThrottledIO {
     /// Read with throttling applied
     async fn throttled_read(
@@ -422,7 +423,7 @@ mod tests {
                 let latency = profile.effective_latency();
                 let ms = latency.as_millis();
                 assert!(
-                    ms >= 100 && ms <= 150,
+                    (100..=150).contains(&ms),
                     "Latency {}ms not in range 100-150",
                     ms
                 );

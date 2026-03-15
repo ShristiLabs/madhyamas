@@ -106,6 +106,7 @@ pub async fn delete_breakpoint(
 }
 
 /// Get paused traffic (traffic currently held at breakpoints)
+#[allow(dead_code)]
 pub async fn get_paused_traffic(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/breakpoints/paused", api_url);
 
@@ -130,6 +131,7 @@ pub async fn get_paused_traffic(client: &Client, api_url: &str) -> Result<Value,
 }
 
 /// Resume paused traffic
+#[allow(dead_code)]
 pub async fn resume_paused_traffic(
     client: &Client,
     api_url: &str,

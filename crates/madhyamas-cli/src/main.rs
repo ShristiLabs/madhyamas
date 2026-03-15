@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
         Level::INFO
     };
     let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
-    tracing::subscriber::set_global_default(subscriber);
+    let _ = tracing::subscriber::set_global_default(subscriber);
 
     info!("Starting Madhyamas...");
 

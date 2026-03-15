@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use crate::types::McpError;
 
 /// Create a mock rule
+#[allow(clippy::too_many_arguments)]
 pub async fn create_mock(
     client: &Client,
     api_url: &str,
@@ -88,6 +89,7 @@ pub async fn list_mocks(client: &Client, api_url: &str) -> Result<Value, McpErro
 }
 
 /// Get a specific mock rule
+#[allow(dead_code)]
 pub async fn get_mock(client: &Client, api_url: &str, mock_id: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/mocks/{}", api_url, mock_id);
 
@@ -165,6 +167,7 @@ pub async fn toggle_mock(
 }
 
 /// Get mock templates (predefined mock responses)
+#[allow(dead_code)]
 pub async fn get_mock_templates(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/mocks/templates", api_url);
 

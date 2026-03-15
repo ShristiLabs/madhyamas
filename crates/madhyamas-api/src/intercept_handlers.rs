@@ -10,7 +10,7 @@ use madhyamas_core::{
     RequestModifications, RewriteAction, RewriteDirection, RewriteRule, SavedRequest,
     ThrottleProfile,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 
 use super::handlers::ErrorResponse;

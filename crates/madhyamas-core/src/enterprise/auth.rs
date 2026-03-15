@@ -3,8 +3,6 @@
 //! Supports API keys and JWT tokens
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -149,7 +147,7 @@ impl JwtClaims {
             sub: user_id.to_string(),
             iss: "madhyamas".to_string(),
             aud: "madhyamas-api".to_string(),
-            exp: now + expiration_secs as i64,
+            exp: now + expiration_secs,
             iat: now,
             role: role.to_string(),
             sid: Some(uuid::Uuid::new_v4().to_string()),
@@ -226,7 +224,7 @@ impl AuthManager {
         self.user_keys
             .write()
             .entry(user_id.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(api_key.id.clone());
 
         api_key
@@ -263,17 +261,21 @@ impl AuthManager {
     /// Generate a JWT token for a user (stub - returns a simple token)
     pub fn generate_jwt(&self, user_id: &str, role: &str) -> Result<String, EnterpriseError> {
         // Stub implementation - in production, use proper JWT library
+        use base64::prelude::{Engine, BASE64_STANDARD};
         let claims = JwtClaims::new(user_id, role, self.config.jwt_expiration_secs as i64);
-        let token = base64::encode(&serde_json::to_string(&claims).unwrap_or_default());
+        let token = BASE64_STANDARD.encode(serde_json::to_string(&claims).unwrap_or_default());
         Ok(token)
     }
 
     /// Validate a JWT token (stub - parses the simple token)
     pub fn validate_jwt(&self, token: &str) -> Result<JwtClaims, EnterpriseError> {
         // Stub implementation - in production, use proper JWT library
-        let decoded = base64::decode(token).map_err(|_| EnterpriseError::AuthFailed {
-            message: "Invalid token".to_string(),
-        })?;
+        use base64::prelude::{Engine, BASE64_STANDARD};
+        let decoded = BASE64_STANDARD
+            .decode(token)
+            .map_err(|_| EnterpriseError::AuthFailed {
+                message: "Invalid token".to_string(),
+            })?;
         let claims: JwtClaims =
             serde_json::from_slice(&decoded).map_err(|_| EnterpriseError::AuthFailed {
                 message: "Invalid token claims".to_string(),

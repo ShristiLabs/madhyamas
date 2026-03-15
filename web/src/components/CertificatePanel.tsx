@@ -118,7 +118,7 @@ export function CertificatePanel() {
         title: 'Certificate Downloaded',
         description: 'Install this certificate on your devices to enable HTTPS interception.',
       })
-    } catch (error) {
+    } catch {
       toast({
         title: 'Download Failed',
         description: 'Could not download the certificate. Make sure HTTPS interception is enabled.',

@@ -1251,6 +1251,7 @@ impl ProxyEngine {
     }
 
     /// Forward WebSocket frames between client and server
+    #[allow(dead_code)]
     async fn forward_websocket_frames(
         &self,
         mut client_read: tokio::io::ReadHalf<tokio::net::TcpStream>,
@@ -1330,6 +1331,7 @@ impl ProxyEngine {
     }
 
     /// Record a WebSocket frame
+    #[allow(dead_code)]
     fn record_ws_frame(
         &self,
         conn_id: &str,

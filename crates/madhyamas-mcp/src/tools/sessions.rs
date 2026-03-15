@@ -68,6 +68,7 @@ pub async fn create_session(
 }
 
 /// Get a specific session
+#[allow(dead_code)]
 pub async fn get_session(
     client: &Client,
     api_url: &str,
@@ -96,6 +97,7 @@ pub async fn get_session(
 }
 
 /// Delete a session
+#[allow(dead_code)]
 pub async fn delete_session(
     client: &Client,
     api_url: &str,
@@ -122,6 +124,7 @@ pub async fn delete_session(
 }
 
 /// Export a session
+#[allow(dead_code)]
 pub async fn export_session(
     client: &Client,
     api_url: &str,
@@ -155,6 +158,7 @@ pub async fn export_session(
 }
 
 /// Import a session
+#[allow(dead_code)]
 pub async fn import_session(
     client: &Client,
     api_url: &str,

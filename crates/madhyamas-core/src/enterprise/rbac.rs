@@ -1,7 +1,6 @@
 //! Role-Based access control module
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -175,7 +174,7 @@ impl RbacManager {
         self.role_permissions
             .write()
             .entry(role)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert((resource_type, permission));
     }
 

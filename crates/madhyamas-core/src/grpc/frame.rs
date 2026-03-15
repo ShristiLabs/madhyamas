@@ -268,7 +268,7 @@ mod tests {
         assert_eq!(encoded[0], 0);
 
         let parsed = GrpcFrameHeader::parse(&encoded).unwrap().unwrap();
-        assert_eq!(parsed.compressed, false);
+        assert!(!parsed.compressed);
         assert_eq!(parsed.length, 100);
     }
 
@@ -282,7 +282,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(len, frame_data.len());
-        assert_eq!(frame.compressed, false);
+        assert!(!frame.compressed);
         assert_eq!(frame.data_bytes().unwrap(), data.to_vec());
     }
 }

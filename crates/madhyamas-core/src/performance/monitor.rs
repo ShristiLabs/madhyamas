@@ -1,7 +1,7 @@
 //! Performance monitoring and alerting
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -83,6 +83,7 @@ pub struct Alert {
 
 /// Performance monitor
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct PerformanceMonitor {
     config: AlertConfig,
     alerts: RwLock<Vec<Alert>>,

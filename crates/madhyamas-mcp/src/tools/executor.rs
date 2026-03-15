@@ -513,7 +513,7 @@ struct SessionCreateArgs {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct UpdateConfigArgs {
+pub struct UpdateConfigArgs {
     #[serde(default)]
     intercept_https: Option<bool>,
     #[serde(default)]
