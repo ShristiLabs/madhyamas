@@ -6,18 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 /// User role
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UserRole {
+    #[default]
     Admin,
     User,
     Viewer,
     ReadOnly,
-}
-
-impl Default for UserRole {
-    fn default() -> Self {
-        Self::Admin
-    }
 }
 
 impl UserRole {
@@ -37,18 +32,13 @@ impl UserRole {
 }
 
 /// User status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UserStatus {
+    #[default]
     Active,
     Inactive,
     Suspended,
     PendingVerification,
-}
-
-impl Default for UserStatus {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 /// User
