@@ -19,7 +19,7 @@ pub async fn handle_ws(socket: WebSocket, traffic_store: Arc<TrafficStore>) {
             "data": count
         });
         if let Ok(json) = serde_json::to_string(&msg) {
-            let _ = tx.send(Message::Text(json)).await;
+            let _ = tx.send(Message::Text(json.into())).await;
         }
     }
 
@@ -31,7 +31,7 @@ pub async fn handle_ws(socket: WebSocket, traffic_store: Arc<TrafficStore>) {
 
                 // Handle ping/pong or commands
                 if text == "ping" {
-                    let _ = tx.send(Message::Text("pong".to_string())).await;
+                    let _ = tx.send(Message::Text("pong".to_string().into())).await;
                 }
             }
             Ok(Message::Close(_)) => {

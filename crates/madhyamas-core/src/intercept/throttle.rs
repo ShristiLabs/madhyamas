@@ -148,7 +148,7 @@ impl ThrottleProfile {
     pub fn effective_latency(&self) -> Duration {
         use rand::Rng;
         let jitter = if self.jitter_ms > 0 {
-            rand::thread_rng().gen_range(0..=self.jitter_ms)
+            rand::thread_rng().random_range(0..=self.jitter_ms)
         } else {
             0
         };

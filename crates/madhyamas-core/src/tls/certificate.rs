@@ -4,8 +4,7 @@ use super::GeneratedCert;
 use crate::Error;
 use parking_lot::RwLock;
 use rcgen::{
-    CertificateParams, DistinguishedName, DnType, Ia5String, Issuer, KeyPair,
-    PKCS_ECDSA_P256_SHA256,
+    CertificateParams, DistinguishedName, DnType, Issuer, KeyPair, PKCS_ECDSA_P256_SHA256,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -168,7 +167,10 @@ impl CertificateManager {
         ];
 
         // Add subject alternative names
-        params.subject_alt_names = vec![hostname.to_string()];
+        params.subject_alt_names =
+            vec![rcgen::SanType::DnsName(hostname.try_into().map_err(
+                |e| Error::Certificate(format!("Invalid hostname: {:?}", e)),
+            )?)];
 
         // Generate key pair for this certificate
         let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)

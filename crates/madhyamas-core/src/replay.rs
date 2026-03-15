@@ -935,7 +935,7 @@ mod tests {
         fn test_build_request_bytes_with_body() {
             let manager = ReplayManager::new();
 
-            let mut request = RequestData {
+            let request = RequestData {
                 method: HttpMethod::Post,
                 url: "https://example.com/api".to_string(),
                 host: "example.com".to_string(),
