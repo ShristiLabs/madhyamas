@@ -22,6 +22,9 @@ import {
   Keyboard,
   Download,
   ChevronDown,
+  Wifi,
+  WifiOff,
+  Loader2,
 } from "lucide-react";
 import type { TrafficEntry } from "@/types/traffic";
 import type { ActiveFilter } from "@/types/filters";
@@ -63,9 +66,16 @@ export function TrafficView() {
     data: traffic,
     isLoading,
     refetch,
-  } = useTraffic(search ? { search } : undefined);
+    connectionInfo,
+    isWebSocketMode,
+    setWebSocketMode,
+  } = useTraffic(search ? { filter: { search } } : undefined);
   const { data: count } = useTrafficCount();
   const clearTraffic = useClearTraffic();
+
+  // Derive connection status for UI
+  const wsConnected = connectionInfo?.state === "connected";
+  const wsReconnecting = connectionInfo?.state === "reconnecting";
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [isResizingList, setIsResizingList] = useState(false);
@@ -274,9 +284,61 @@ export function TrafficView() {
       <div className="flex-1 flex overflow-hidden border-t" ref={containerRef}>
         <div className="flex-1 flex flex-col min-w-0">
           <div className="px-3 py-2 border-b bg-muted/50 flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">
-              {count ?? 0} requests
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">
+                {count ?? 0} requests
+              </span>
+              {/* WebSocket Connection Status */}
+              {isWebSocketMode && (
+                <div className="flex items-center gap-1.5">
+                  {wsReconnecting ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 text-yellow-500 animate-spin" />
+                      <span className="text-xs text-yellow-500">
+                        Reconnecting...
+                      </span>
+                    </>
+                  ) : wsConnected ? (
+                    <>
+                      <Wifi className="h-3.5 w-3.5 text-green-500" />
+                      <span className="text-xs text-green-500">Live</span>
+                    </>
+                  ) : (
+                    <>
+                      <WifiOff className="h-3.5 w-3.5 text-red-500" />
+                      <span className="text-xs text-red-500">Disconnected</span>
+                    </>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => setWebSocketMode(!isWebSocketMode)}
+                    title={
+                      isWebSocketMode
+                        ? "Switch to polling mode"
+                        : "Switch to WebSocket mode"
+                    }
+                  >
+                    {isWebSocketMode ? "WS" : "Poll"}
+                  </Button>
+                </div>
+              )}
+              {!isWebSocketMode && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground">Polling</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => setWebSocketMode(true)}
+                    title="Switch to WebSocket mode"
+                  >
+                    Enable Live
+                  </Button>
+                </div>
+              )}
+            </div>
             <div className="flex gap-2">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

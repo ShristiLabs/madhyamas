@@ -11,10 +11,23 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Switch } from "./ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import { Slider } from "./ui/slider";
 import { useToast } from "./ui/use-toast";
-import { Save, RotateCcw, Server, Network, Camera, Palette } from "lucide-react";
+import {
+  Save,
+  RotateCcw,
+  Server,
+  Network,
+  Camera,
+  Palette,
+} from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,6 +62,7 @@ interface CaptureConfig {
 interface AppearanceConfig {
   theme: "light" | "dark" | "system";
   auto_refresh_interval: string;
+  use_websocket: string;
 }
 
 const LS_UPSTREAM = "madhyamas-upstream-config";
@@ -78,6 +92,7 @@ const DEFAULT_CAPTURE: CaptureConfig = {
 const DEFAULT_APPEARANCE: AppearanceConfig = {
   theme: "system",
   auto_refresh_interval: "2000",
+  use_websocket: "true",
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -86,13 +101,21 @@ function loadLS<T>(key: string, defaults: T): T {
   try {
     const raw = localStorage.getItem(key);
     if (raw) return { ...defaults, ...JSON.parse(raw) };
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return defaults;
 }
 
 // ─── Section wrapper ──────────────────────────────────────────────────────────
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="space-y-4">
       <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide border-b pb-1">
@@ -175,29 +198,56 @@ function GeneralTab() {
       if (res.ok) {
         toast({ description: "Configuration saved successfully." });
       } else {
-        toast({ description: "Failed to save configuration.", variant: "destructive" });
+        toast({
+          description: "Failed to save configuration.",
+          variant: "destructive",
+        });
       }
     } catch {
-      toast({ description: "Failed to save configuration.", variant: "destructive" });
+      toast({
+        description: "Failed to save configuration.",
+        variant: "destructive",
+      });
     } finally {
       setSaving(false);
     }
   };
 
   if (loading) {
-    return <div className="flex items-center justify-center h-48 text-muted-foreground">Loading…</div>;
+    return (
+      <div className="flex items-center justify-center h-48 text-muted-foreground">
+        Loading…
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
       <Section title="Proxy Address">
-        <Row label="Proxy Port" description="Port clients connect to. Requires restart to change.">
-          <Input value={config.proxy_port} disabled className="w-24 text-right opacity-70" />
+        <Row
+          label="Proxy Port"
+          description="Port clients connect to. Requires restart to change."
+        >
+          <Input
+            value={config.proxy_port}
+            disabled
+            className="w-24 text-right opacity-70"
+          />
         </Row>
-        <Row label="API Port" description="Port for the web UI and API. Requires restart to change.">
-          <Input value={config.api_port} disabled className="w-24 text-right opacity-70" />
+        <Row
+          label="API Port"
+          description="Port for the web UI and API. Requires restart to change."
+        >
+          <Input
+            value={config.api_port}
+            disabled
+            className="w-24 text-right opacity-70"
+          />
         </Row>
-        <Row label="Bind Host" description="Network interface the proxy is bound to. Requires restart.">
+        <Row
+          label="Bind Host"
+          description="Network interface the proxy is bound to. Requires restart."
+        >
           <Input value={config.host} disabled className="w-36 opacity-70" />
         </Row>
         <Row
@@ -206,7 +256,9 @@ function GeneralTab() {
         >
           <Input
             value={config.public_ip}
-            onChange={(e) => setConfig((p) => ({ ...p, public_ip: e.target.value }))}
+            onChange={(e) =>
+              setConfig((p) => ({ ...p, public_ip: e.target.value }))
+            }
             placeholder="e.g. 192.168.1.100"
             className="w-40"
           />
@@ -220,7 +272,9 @@ function GeneralTab() {
         >
           <Switch
             checked={config.intercept_https}
-            onCheckedChange={(v) => setConfig((p) => ({ ...p, intercept_https: v }))}
+            onCheckedChange={(v) =>
+              setConfig((p) => ({ ...p, intercept_https: v }))
+            }
           />
         </Row>
         <Row
@@ -231,7 +285,10 @@ function GeneralTab() {
             type="number"
             value={config.max_requests}
             onChange={(e) =>
-              setConfig((p) => ({ ...p, max_requests: parseInt(e.target.value) || 1000 }))
+              setConfig((p) => ({
+                ...p,
+                max_requests: parseInt(e.target.value) || 1000,
+              }))
             }
             min={100}
             max={100000}
@@ -265,7 +322,9 @@ function GeneralTab() {
 
 function UpstreamProxyTab() {
   const { toast } = useToast();
-  const [cfg, setCfg] = useState<UpstreamConfig>(() => loadLS(LS_UPSTREAM, DEFAULT_UPSTREAM));
+  const [cfg, setCfg] = useState<UpstreamConfig>(() =>
+    loadLS(LS_UPSTREAM, DEFAULT_UPSTREAM),
+  );
 
   const save = useCallback(() => {
     localStorage.setItem(LS_UPSTREAM, JSON.stringify(cfg));
@@ -315,7 +374,9 @@ function UpstreamProxyTab() {
             <Row label="Host">
               <Input
                 value={cfg.host}
-                onChange={(e) => setCfg((p) => ({ ...p, host: e.target.value }))}
+                onChange={(e) =>
+                  setCfg((p) => ({ ...p, host: e.target.value }))
+                }
                 placeholder="proxy.example.com"
                 className="w-48"
               />
@@ -324,7 +385,9 @@ function UpstreamProxyTab() {
               <Input
                 type="number"
                 value={cfg.port}
-                onChange={(e) => setCfg((p) => ({ ...p, port: e.target.value }))}
+                onChange={(e) =>
+                  setCfg((p) => ({ ...p, port: e.target.value }))
+                }
                 placeholder="8080"
                 className="w-24 text-right"
               />
@@ -335,7 +398,9 @@ function UpstreamProxyTab() {
             <Row label="Require Authentication">
               <Switch
                 checked={cfg.auth_enabled}
-                onCheckedChange={(v) => setCfg((p) => ({ ...p, auth_enabled: v }))}
+                onCheckedChange={(v) =>
+                  setCfg((p) => ({ ...p, auth_enabled: v }))
+                }
               />
             </Row>
             {cfg.auth_enabled && (
@@ -343,7 +408,9 @@ function UpstreamProxyTab() {
                 <Row label="Username">
                   <Input
                     value={cfg.username}
-                    onChange={(e) => setCfg((p) => ({ ...p, username: e.target.value }))}
+                    onChange={(e) =>
+                      setCfg((p) => ({ ...p, username: e.target.value }))
+                    }
                     className="w-40"
                   />
                 </Row>
@@ -351,7 +418,9 @@ function UpstreamProxyTab() {
                   <Input
                     type="password"
                     value={cfg.password}
-                    onChange={(e) => setCfg((p) => ({ ...p, password: e.target.value }))}
+                    onChange={(e) =>
+                      setCfg((p) => ({ ...p, password: e.target.value }))
+                    }
                     className="w-40"
                   />
                 </Row>
@@ -363,12 +432,14 @@ function UpstreamProxyTab() {
             <div className="space-y-2">
               <Label className="text-sm font-medium">No-Proxy Hosts</Label>
               <p className="text-xs text-muted-foreground">
-                Comma-separated list of hosts to bypass the upstream proxy (e.g. localhost,
-                192.168.0.0/16).
+                Comma-separated list of hosts to bypass the upstream proxy (e.g.
+                localhost, 192.168.0.0/16).
               </p>
               <textarea
                 value={cfg.no_proxy}
-                onChange={(e) => setCfg((p) => ({ ...p, no_proxy: e.target.value }))}
+                onChange={(e) =>
+                  setCfg((p) => ({ ...p, no_proxy: e.target.value }))
+                }
                 rows={3}
                 placeholder="localhost, 127.0.0.1, *.internal.corp"
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -394,7 +465,9 @@ function UpstreamProxyTab() {
 
 function CaptureTab() {
   const { toast } = useToast();
-  const [cfg, setCfg] = useState<CaptureConfig>(() => loadLS(LS_CAPTURE, DEFAULT_CAPTURE));
+  const [cfg, setCfg] = useState<CaptureConfig>(() =>
+    loadLS(LS_CAPTURE, DEFAULT_CAPTURE),
+  );
 
   const save = useCallback(() => {
     localStorage.setItem(LS_CAPTURE, JSON.stringify(cfg));
@@ -416,7 +489,9 @@ function CaptureTab() {
         >
           <Switch
             checked={cfg.capture_request_bodies}
-            onCheckedChange={(v) => setCfg((p) => ({ ...p, capture_request_bodies: v }))}
+            onCheckedChange={(v) =>
+              setCfg((p) => ({ ...p, capture_request_bodies: v }))
+            }
           />
         </Row>
         <Row
@@ -425,7 +500,9 @@ function CaptureTab() {
         >
           <Switch
             checked={cfg.capture_response_bodies}
-            onCheckedChange={(v) => setCfg((p) => ({ ...p, capture_response_bodies: v }))}
+            onCheckedChange={(v) =>
+              setCfg((p) => ({ ...p, capture_response_bodies: v }))
+            }
           />
         </Row>
         <div className="space-y-3">
@@ -442,7 +519,9 @@ function CaptureTab() {
             max={4096}
             step={16}
             value={[cfg.max_body_size_kb]}
-            onValueChange={([v]) => setCfg((p) => ({ ...p, max_body_size_kb: v }))}
+            onValueChange={([v]) =>
+              setCfg((p) => ({ ...p, max_body_size_kb: v }))
+            }
             className="w-full"
           />
           <div className="flex justify-between text-xs text-muted-foreground">
@@ -456,14 +535,18 @@ function CaptureTab() {
         <div className="space-y-2">
           <Label className="text-sm font-medium">Ignored Domains</Label>
           <p className="text-xs text-muted-foreground">
-            Traffic from these domains will not be recorded. One pattern per line.
-            Supports wildcards (e.g. *.googleapis.com).
+            Traffic from these domains will not be recorded. One pattern per
+            line. Supports wildcards (e.g. *.googleapis.com).
           </p>
           <textarea
             value={cfg.ignored_domains}
-            onChange={(e) => setCfg((p) => ({ ...p, ignored_domains: e.target.value }))}
+            onChange={(e) =>
+              setCfg((p) => ({ ...p, ignored_domains: e.target.value }))
+            }
             rows={5}
-            placeholder={"*.google-analytics.com\n*.doubleclick.net\ntelemetry.example.com"}
+            placeholder={
+              "*.google-analytics.com\n*.doubleclick.net\ntelemetry.example.com"
+            }
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono resize-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
         </div>
@@ -486,7 +569,7 @@ function CaptureTab() {
 function AppearanceTab() {
   const { toast } = useToast();
   const [cfg, setCfg] = useState<AppearanceConfig>(() =>
-    loadLS(LS_APPEARANCE, DEFAULT_APPEARANCE)
+    loadLS(LS_APPEARANCE, DEFAULT_APPEARANCE),
   );
 
   const save = useCallback(() => {
@@ -499,12 +582,18 @@ function AppearanceTab() {
     } else if (cfg.theme === "light") {
       root.classList.remove("dark");
     } else {
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      void (prefersDark ? root.classList.add("dark") : root.classList.remove("dark"));
+      const prefersDark = window.matchMedia(
+        "(prefers-color-scheme: dark)",
+      ).matches;
+      void (prefersDark
+        ? root.classList.add("dark")
+        : root.classList.remove("dark"));
     }
 
     // Emit custom event so App.tsx can sync its isDark state
-    window.dispatchEvent(new CustomEvent("madhyamas-theme-change", { detail: cfg.theme }));
+    window.dispatchEvent(
+      new CustomEvent("madhyamas-theme-change", { detail: cfg.theme }),
+    );
 
     toast({ description: "Appearance settings saved." });
   }, [cfg, toast]);
@@ -539,12 +628,32 @@ function AppearanceTab() {
 
       <Section title="Traffic View">
         <Row
-          label="Auto-Refresh Interval"
-          description="How often the traffic list automatically refreshes."
+          label="Real-time Updates"
+          description="Use WebSocket for instant traffic updates instead of polling."
+        >
+          <Select
+            value={cfg.use_websocket ?? "true"}
+            onValueChange={(v) => setCfg((p) => ({ ...p, use_websocket: v }))}
+          >
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="true">WebSocket (Live)</SelectItem>
+              <SelectItem value="false">Polling</SelectItem>
+            </SelectContent>
+          </Select>
+        </Row>
+        <Row
+          label="Polling Interval"
+          description="How often to refresh when using polling mode (fallback)."
         >
           <Select
             value={cfg.auto_refresh_interval}
-            onValueChange={(v) => setCfg((p) => ({ ...p, auto_refresh_interval: v }))}
+            onValueChange={(v) =>
+              setCfg((p) => ({ ...p, auto_refresh_interval: v }))
+            }
+            disabled={cfg.use_websocket === "true"}
           >
             <SelectTrigger className="w-32">
               <SelectValue />
@@ -585,13 +694,20 @@ export function ConfigDialog({ trigger }: ConfigDialogProps) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        {trigger ?? <Button variant="ghost" size="sm">Config</Button>}
+        {trigger ?? (
+          <Button variant="ghost" size="sm">
+            Config
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-0">
         <DialogHeader className="px-6 pt-6 pb-0">
           <DialogTitle className="text-lg">Proxy Configuration</DialogTitle>
         </DialogHeader>
-        <Tabs defaultValue="general" className="flex-1 flex flex-col min-h-0 mt-4">
+        <Tabs
+          defaultValue="general"
+          className="flex-1 flex flex-col min-h-0 mt-4"
+        >
           <TabsList className="mx-6 justify-start shrink-0">
             <TabsTrigger value="general" className="flex items-center gap-1.5">
               <Server className="h-3.5 w-3.5" />
@@ -605,7 +721,10 @@ export function ConfigDialog({ trigger }: ConfigDialogProps) {
               <Camera className="h-3.5 w-3.5" />
               Capture
             </TabsTrigger>
-            <TabsTrigger value="appearance" className="flex items-center gap-1.5">
+            <TabsTrigger
+              value="appearance"
+              className="flex items-center gap-1.5"
+            >
               <Palette className="h-3.5 w-3.5" />
               Appearance
             </TabsTrigger>

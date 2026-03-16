@@ -1,6 +1,6 @@
 //! Traffic storage using SQLite
 
-use super::{Session, TrafficEntry, TrafficFilter};
+use super::{Session, TrafficEntry, TrafficEntrySnapshot, TrafficEvent, TrafficFilter};
 use crate::Error;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
@@ -8,6 +8,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::broadcast;
 
 /// Traffic store backed by SQLite
 pub struct TrafficStore {
@@ -15,17 +16,21 @@ pub struct TrafficStore {
     current_session_id: Mutex<String>,
     /// When false the proxy forwards traffic but does not record it (passthrough mode)
     capture_enabled: AtomicBool,
+    /// Broadcast sender for traffic events (WebSocket real-time updates)
+    event_sender: broadcast::Sender<TrafficEvent>,
 }
 
 impl TrafficStore {
     /// Create a new traffic store
     pub fn new<P: AsRef<Path>>(path: P) -> crate::Result<Arc<Self>> {
         let conn = Connection::open(path).map_err(Error::Database)?;
+        let (event_sender, _) = broadcast::channel(super::TRAFFIC_EVENT_CHANNEL_CAPACITY);
 
         let store = Arc::new(Self {
             conn: Mutex::new(conn),
             current_session_id: Mutex::new(String::new()),
             capture_enabled: AtomicBool::new(true),
+            event_sender,
         });
 
         store.create_tables()?;
@@ -37,17 +42,35 @@ impl TrafficStore {
     /// Create an in-memory traffic store
     pub fn in_memory() -> crate::Result<Arc<Self>> {
         let conn = Connection::open_in_memory().map_err(Error::Database)?;
+        let (event_sender, _) = broadcast::channel(super::TRAFFIC_EVENT_CHANNEL_CAPACITY);
 
         let store = Arc::new(Self {
             conn: Mutex::new(conn),
             current_session_id: Mutex::new(String::new()),
             capture_enabled: AtomicBool::new(true),
+            event_sender,
         });
 
         store.create_tables()?;
         store.ensure_session()?;
 
         Ok(store)
+    }
+
+    /// Subscribe to traffic events
+    pub fn subscribe(&self) -> broadcast::Receiver<TrafficEvent> {
+        self.event_sender.subscribe()
+    }
+
+    /// Get the event sender for broadcasting traffic events
+    pub fn event_sender(&self) -> broadcast::Sender<TrafficEvent> {
+        self.event_sender.clone()
+    }
+
+    /// Emit a traffic event to all subscribers
+    fn emit_event(&self, event: TrafficEvent) {
+        // Ignore send errors (no subscribers)
+        let _ = self.event_sender.send(event);
     }
 
     /// Create database tables
@@ -231,6 +254,10 @@ impl TrafficStore {
         )
         .ok();
 
+        // Emit traffic added event
+        let snapshot = TrafficEntrySnapshot::from(entry);
+        self.emit_event(TrafficEvent::Added(snapshot));
+
         Ok(())
     }
 
@@ -261,6 +288,15 @@ impl TrafficStore {
                 response.duration_ms as i64
             ]
         ).map_err(Error::Database)?;
+
+        // Drop the connection lock before fetching the full entry
+        drop(conn);
+
+        // Emit traffic updated event with full entry data
+        if let Ok(Some(entry)) = self.get_by_id(request_id) {
+            let snapshot = TrafficEntrySnapshot::from(&entry);
+            self.emit_event(TrafficEvent::Updated(snapshot));
+        }
 
         Ok(())
     }
@@ -509,6 +545,43 @@ impl TrafficStore {
             params![&session_id],
         )
         .map_err(Error::Database)?;
+
+        // Emit traffic cleared event
+        drop(conn);
+        self.emit_event(TrafficEvent::Cleared);
+
+        Ok(())
+    }
+
+    /// Delete specific traffic entries by IDs
+    pub fn delete_traffic(&self, ids: &[String]) -> crate::Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let conn = self.conn.lock();
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
+        let placeholders_str = placeholders.join(",");
+
+        // Delete responses first
+        let delete_responses_sql = format!(
+            "DELETE FROM responses WHERE request_id IN ({})",
+            placeholders_str
+        );
+        let params: Vec<&dyn rusqlite::ToSql> =
+            ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        conn.execute(&delete_responses_sql, params.as_slice())
+            .map_err(Error::Database)?;
+
+        // Delete requests
+        let delete_requests_sql =
+            format!("DELETE FROM requests WHERE id IN ({})", placeholders_str);
+        conn.execute(&delete_requests_sql, params.as_slice())
+            .map_err(Error::Database)?;
+
+        // Emit traffic deleted event
+        drop(conn);
+        self.emit_event(TrafficEvent::Deleted(ids.to_vec()));
 
         Ok(())
     }

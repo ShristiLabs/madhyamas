@@ -20,7 +20,9 @@ pub use config::ProxyConfig;
 
 // Re-exports from traffic
 pub use traffic::{
-    HttpMethod, RequestData, ResponseData, Session, TrafficEntry, TrafficFilter, TrafficStore,
+    create_traffic_event_channel, HttpMethod, RequestData, ResponseData, Session, TrafficEntry,
+    TrafficEntrySnapshot, TrafficEvent, TrafficFilter, TrafficStore, TrafficSubscriptionFilter,
+    WsClientMessage, WsServerMessage, TRAFFIC_EVENT_CHANNEL_CAPACITY,
 };
 
 // Re-exports from tls
