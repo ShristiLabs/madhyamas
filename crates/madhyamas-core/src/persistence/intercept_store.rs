@@ -108,20 +108,27 @@ impl InterceptStore {
     pub fn save_mock_rule(&self, rule: &MockRule) -> crate::Result<()> {
         let conn = self.conn.lock();
         let condition = serde_json::to_string(&rule.condition)?;
-        let response = serde_json::to_string(&rule.response)?;
+        let response_config = serde_json::to_string(&rule.response_config)?;
+        let description = rule.description.as_deref().unwrap_or("");
+        let tags = serde_json::to_string(&rule.tags)?;
+        let collection_id = rule.collection_id.as_deref().unwrap_or("");
 
         conn.execute(
             r#"INSERT OR REPLACE INTO mock_rules
-               (id, name, condition, response, enabled, priority, created_at, hit_count)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
+               (id, name, description, tags, collection_id, condition, response_config, enabled, priority, created_at, updated_at, hit_count)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"#,
             params![
                 rule.id,
                 rule.name,
+                description,
+                tags,
+                collection_id,
                 condition,
-                response,
+                response_config,
                 rule.enabled as i32,
                 rule.priority,
                 rule.created_at.timestamp(),
+                rule.updated_at.timestamp(),
                 rule.hit_count as i64
             ],
         )
@@ -134,34 +141,82 @@ impl InterceptStore {
     pub fn load_mock_rules(&self) -> crate::Result<Vec<MockRule>> {
         let conn = self.conn.lock();
 
+        // Try new schema first, fall back to old schema for backward compatibility
         let rules = conn.prepare(
-            "SELECT id, name, condition, response, enabled, priority, created_at, hit_count FROM mock_rules ORDER BY priority"
-        ).map_err(Error::Database)?
+            "SELECT id, name, description, tags, collection_id, condition, response_config, enabled, priority, created_at, updated_at, hit_count FROM mock_rules ORDER BY priority"
+        ).or_else(|_| {
+            // Fall back to old schema
+            conn.prepare("SELECT id, name, condition, response, enabled, priority, created_at, hit_count FROM mock_rules ORDER BY priority")
+        }).map_err(Error::Database)?
         .query_map([], |row| {
+            // Try to read new schema fields
             let id: String = row.get(0)?;
             let name: String = row.get(1)?;
-            let condition_json: String = row.get(2)?;
-            let response_json: String = row.get(3)?;
-            let enabled: i32 = row.get(4)?;
-            let priority: u32 = row.get(5)?;
-            let created_at: i64 = row.get(6)?;
-            let hit_count: i64 = row.get(7)?;
+
+            // Check if we have the new schema (12 columns) or old schema (8 columns)
+            let (description, tags, collection_id, condition_json, response_config_json, enabled, priority, created_at, updated_at, hit_count) =
+                if row.as_ref().column_count() >= 12 {
+                    let description: String = row.get(2)?;
+                    let tags_json: String = row.get(3)?;
+                    let collection_id: String = row.get(4)?;
+                    let condition_json: String = row.get(5)?;
+                    let response_config_json: String = row.get(6)?;
+                    let enabled: i32 = row.get(7)?;
+                    let priority: u32 = row.get(8)?;
+                    let created_at: i64 = row.get(9)?;
+                    let updated_at: i64 = row.get(10)?;
+                    let hit_count: i64 = row.get(11)?;
+                    (
+                        if description.is_empty() { None } else { Some(description) },
+                        serde_json::from_str(&tags_json).unwrap_or_default(),
+                        if collection_id.is_empty() { None } else { Some(collection_id) },
+                        condition_json,
+                        response_config_json,
+                        enabled,
+                        priority,
+                        created_at,
+                        updated_at,
+                        hit_count
+                    )
+                } else {
+                    // Old schema - convert response to response_config
+                    let condition_json: String = row.get(2)?;
+                    let response_json: String = row.get(3)?;
+                    let enabled: i32 = row.get(4)?;
+                    let priority: u32 = row.get(5)?;
+                    let created_at: i64 = row.get(6)?;
+                    let hit_count: i64 = row.get(7)?;
+
+                    // Wrap old response in Single config
+                    let response_config_json = format!(r#"{{"type":"single","response":{}}}"#, response_json);
+                    (None, Vec::new(), None, condition_json, response_config_json, enabled, priority, created_at, created_at, hit_count)
+                };
 
             let condition = serde_json::from_str(&condition_json)
                 .map_err(|_| rusqlite::Error::InvalidQuery)?;
-            let response = serde_json::from_str(&response_json)
+            let response_config = serde_json::from_str(&response_config_json)
                 .map_err(|_| rusqlite::Error::InvalidQuery)?;
 
             Ok(MockRule {
                 id,
                 name,
+                description,
+                tags,
+                collection_id,
                 condition,
-                response,
+                response_config,
                 enabled: enabled != 0,
                 priority,
                 created_at: chrono::DateTime::from_timestamp(created_at, 0)
                     .unwrap_or(chrono::Utc::now()),
+                updated_at: chrono::DateTime::from_timestamp(updated_at, 0)
+                    .unwrap_or(chrono::Utc::now()),
                 hit_count: hit_count as u64,
+                expiration: None,
+                version: 1,
+                version_history: Vec::new(),
+                response_schema: None,
+                response_script: None,
             })
         }).map_err(Error::Database)?
         .collect::<Result<Vec<_>, _>>().map_err(Error::Database)?;

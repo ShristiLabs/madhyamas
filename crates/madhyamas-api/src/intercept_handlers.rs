@@ -6,9 +6,9 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use madhyamas_core::{
-    BreakpointDecision, BreakpointRule, InterceptDirection, MatchCondition, MockResponse, MockRule,
-    RequestModifications, RewriteAction, RewriteDirection, RewriteRule, SavedRequest,
-    ThrottleProfile,
+    BreakpointDecision, BreakpointRule, InterceptDirection, MatchCondition, MockCollection,
+    MockResponse, MockRule, RequestData, RequestModifications, ResponseConfig, RewriteAction,
+    RewriteDirection, RewriteRule, SavedRequest, ThrottleProfile,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -290,6 +290,406 @@ pub async fn get_mock_templates() -> impl IntoResponse {
             }
         }),
     ])
+}
+
+// ============================================================================
+// Mock Collections
+// ============================================================================
+
+/// Get all mock collections
+pub async fn get_mock_collections(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let collections = state.mock_manager.get_collections();
+    Json(collections)
+}
+
+/// Create a mock collection
+#[derive(Debug, Deserialize)]
+pub struct CreateCollectionRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+pub async fn create_mock_collection(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateCollectionRequest>,
+) -> impl IntoResponse {
+    let mut collection = MockCollection::new(req.name);
+    if let Some(desc) = req.description {
+        collection.description = Some(desc);
+    }
+    if let Some(tags) = req.tags {
+        collection.tags = tags;
+    }
+    let id = state.mock_manager.add_collection(collection);
+    (StatusCode::CREATED, Json(serde_json::json!({ "id": id })))
+}
+
+/// Get a specific mock collection
+pub async fn get_mock_collection(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.mock_manager.get_collection(&id) {
+        Some(collection) => Json(collection).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Collection not found".to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// Delete a mock collection
+#[derive(Debug, Deserialize)]
+pub struct DeleteCollectionRequest {
+    pub delete_rules: Option<bool>,
+}
+
+pub async fn delete_mock_collection(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<Option<DeleteCollectionRequest>>,
+) -> impl IntoResponse {
+    let delete_rules = req.and_then(|r| r.delete_rules).unwrap_or(false);
+    if state.mock_manager.delete_collection(&id, delete_rules) {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Collection not found".to_string(),
+            }),
+        )
+            .into_response()
+    }
+}
+
+/// Toggle a mock collection (enable/disable all rules in collection)
+pub async fn toggle_mock_collection(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<ToggleRequest>,
+) -> impl IntoResponse {
+    let count = state.mock_manager.toggle_collection(&id, req.enabled);
+    if count > 0 {
+        Json(serde_json::json!({ "toggled": count })).into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Collection not found or no rules in collection".to_string(),
+            }),
+        )
+            .into_response()
+    }
+}
+
+// ============================================================================
+// Mock Hit Analytics
+// ============================================================================
+
+/// Get hit history for all mocks
+pub async fn get_mock_analytics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let history = state.mock_manager.get_all_hit_history();
+    Json(history)
+}
+
+/// Get hit statistics for a specific mock
+pub async fn get_mock_rule_analytics(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let stats = state.mock_manager.get_hit_stats(&id);
+    Json(stats)
+}
+
+/// Get hit history for a specific mock
+pub async fn get_mock_hit_history(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let history = state.mock_manager.get_hit_history(&id);
+    Json(history)
+}
+
+/// Clear all hit history
+pub async fn clear_mock_hit_history(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    state.mock_manager.clear_hit_history();
+    StatusCode::NO_CONTENT
+}
+
+// ============================================================================
+// Mock Testing & Preview
+// ============================================================================
+
+/// Test a mock rule against a sample request
+#[derive(Debug, Deserialize)]
+pub struct TestMockRequest {
+    pub request: RequestData,
+}
+
+pub async fn test_mock_rule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<TestMockRequest>,
+) -> impl IntoResponse {
+    // Check if rule exists and matches the request
+    if let Some(rule) = state.mock_manager.get_rule(&id) {
+        let body_str = req
+            .request
+            .body
+            .as_ref()
+            .and_then(|b| std::str::from_utf8(b).ok());
+        let matches = rule.condition.matches_request(
+            &req.request.url,
+            &req.request.method.to_string(),
+            &req.request.headers,
+            req.request.body.as_deref(),
+            body_str,
+        );
+        Json(serde_json::json!({
+            "matches": matches,
+            "rule_id": id,
+            "rule_name": rule.name
+        }))
+        .into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Mock rule not found".to_string(),
+            }),
+        )
+            .into_response()
+    }
+}
+
+/// Preview which mock would match a request
+pub async fn preview_mock_match(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<TestMockRequest>,
+) -> impl IntoResponse {
+    match state.mock_manager.find_matching_mock(&req.request) {
+        Some(rule) => Json(serde_json::json!({
+            "matched": true,
+            "rule_id": rule.id,
+            "rule_name": rule.name,
+            "response": rule.response()
+        }))
+        .into_response(),
+        None => Json(serde_json::json!({
+            "matched": false,
+            "message": "No mock rule matches this request"
+        }))
+        .into_response(),
+    }
+}
+
+// ============================================================================
+// Mock Import/Export
+// ============================================================================
+
+/// Export mocks as JSON
+pub async fn export_mocks(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let rules = state.mock_manager.export_rules();
+    Json(rules)
+}
+
+/// Import mocks from HAR format
+#[derive(Debug, Deserialize)]
+pub struct ImportMocksRequest {
+    pub format: String, // "har", "openapi", "postman"
+    pub data: String,
+}
+
+pub async fn import_mocks(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ImportMocksRequest>,
+) -> impl IntoResponse {
+    let result = match req.format.as_str() {
+        "har" => state.mock_manager.import_from_har(&req.data),
+        "openapi" => state.mock_manager.import_from_openapi(&req.data),
+        "postman" => state.mock_manager.import_from_postman(&req.data),
+        _ => Err(format!("Unsupported format: {}", req.format)),
+    };
+
+    match result {
+        Ok(count) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({
+                "imported": count,
+                "format": req.format
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("Import failed: {}", e),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+// ============================================================================
+// Mock Recording
+// ============================================================================
+
+/// Set recording mode
+#[derive(Debug, Deserialize)]
+pub struct RecordingRequest {
+    pub enabled: bool,
+}
+
+pub async fn set_mock_recording(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RecordingRequest>,
+) -> impl IntoResponse {
+    state.mock_manager.set_recording(req.enabled);
+    Json(serde_json::json!({ "recording": req.enabled }))
+}
+
+/// Get recording status
+pub async fn get_mock_recording_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let is_recording = state.mock_manager.is_recording();
+    Json(serde_json::json!({ "recording": is_recording }))
+}
+
+/// Get recorded mocks
+pub async fn get_recorded_mocks(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let mocks = state.mock_manager.get_recorded_mocks();
+    Json(mocks)
+}
+
+/// Promote recorded mocks to active rules
+pub async fn promote_recorded_mocks(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let count = state.mock_manager.promote_recorded_mocks();
+    Json(serde_json::json!({ "promoted": count }))
+}
+
+/// Clear recorded mocks
+pub async fn clear_recorded_mocks(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    state.mock_manager.clear_recorded_mocks();
+    StatusCode::NO_CONTENT
+}
+
+// ============================================================================
+// Mock Versioning
+// ============================================================================
+
+/// Duplicate a mock rule
+#[derive(Debug, Deserialize)]
+pub struct DuplicateRequest {
+    pub new_name: Option<String>,
+}
+
+pub async fn duplicate_mock_rule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<Option<DuplicateRequest>>,
+) -> impl IntoResponse {
+    let new_name = req.and_then(|r| r.new_name);
+    match state.mock_manager.duplicate_rule(&id, new_name) {
+        Some(new_id) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({ "id": new_id })),
+        )
+            .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Mock rule not found".to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// Rollback a mock rule to a previous version
+#[derive(Debug, Deserialize)]
+pub struct RollbackRequest {
+    pub version: u32,
+}
+
+pub async fn rollback_mock_rule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<RollbackRequest>,
+) -> impl IntoResponse {
+    if state.mock_manager.rollback_rule(&id, req.version) {
+        StatusCode::OK.into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Mock rule or version not found".to_string(),
+            }),
+        )
+            .into_response()
+    }
+}
+
+/// Get version history for a mock rule
+pub async fn get_mock_version_history(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.mock_manager.get_rule(&id) {
+        Some(rule) => Json(rule.version_history).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Mock rule not found".to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+// ============================================================================
+// Enhanced Mock Creation
+// ============================================================================
+
+/// Create a mock rule with advanced configuration
+#[derive(Debug, Deserialize)]
+pub struct CreateAdvancedMockRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub condition: MatchCondition,
+    pub response_config: ResponseConfig,
+    pub enabled: Option<bool>,
+    pub priority: Option<u32>,
+    pub tags: Option<Vec<String>>,
+    pub collection_id: Option<String>,
+}
+
+pub async fn create_advanced_mock_rule(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateAdvancedMockRequest>,
+) -> impl IntoResponse {
+    let mut rule = MockRule::with_config(req.name, req.condition, req.response_config);
+    if let Some(desc) = req.description {
+        rule.description = Some(desc);
+    }
+    if let Some(enabled) = req.enabled {
+        rule.enabled = enabled;
+    }
+    if let Some(priority) = req.priority {
+        rule.priority = priority;
+    }
+    if let Some(tags) = req.tags {
+        rule.tags = tags;
+    }
+    if let Some(collection_id) = req.collection_id {
+        rule.collection_id = Some(collection_id);
+    }
+
+    let id = state.mock_manager.add_rule(rule);
+    (StatusCode::CREATED, Json(serde_json::json!({ "id": id })))
 }
 
 // ============================================================================

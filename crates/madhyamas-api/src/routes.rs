@@ -95,6 +95,48 @@ pub fn create_routes() -> Router<Arc<AppState>> {
             "/mocks/{id}/toggle",
             post(intercept_handlers::toggle_mock_rule),
         )
+        // Mock Collections
+        .route(
+            "/mocks/collections",
+            get(intercept_handlers::get_mock_collections),
+        )
+        .route(
+            "/mocks/collections",
+            post(intercept_handlers::create_mock_collection),
+        )
+        .route(
+            "/mocks/collections/{id}",
+            get(intercept_handlers::get_mock_collection),
+        )
+        .route(
+            "/mocks/collections/{id}",
+            delete(intercept_handlers::delete_mock_collection),
+        )
+        .route(
+            "/mocks/collections/{id}/toggle",
+            post(intercept_handlers::toggle_mock_collection),
+        )
+        // Mock Recording
+        .route(
+            "/mocks/recording",
+            post(intercept_handlers::set_mock_recording),
+        )
+        .route(
+            "/mocks/recording/status",
+            get(intercept_handlers::get_mock_recording_status),
+        )
+        .route(
+            "/mocks/recording/recorded",
+            get(intercept_handlers::get_recorded_mocks),
+        )
+        .route(
+            "/mocks/recording/promote",
+            post(intercept_handlers::promote_recorded_mocks),
+        )
+        .route(
+            "/mocks/recording/clear",
+            post(intercept_handlers::clear_recorded_mocks),
+        )
         // Rewrite endpoints
         .route("/rewrites", get(intercept_handlers::get_rewrite_rules))
         .route("/rewrites", post(intercept_handlers::create_rewrite_rule))

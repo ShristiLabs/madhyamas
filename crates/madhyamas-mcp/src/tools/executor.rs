@@ -130,6 +130,208 @@ impl ToolExecutor {
                 }])
             }
 
+            // Advanced Mock tools
+            "madhyamas_create_advanced_mock" => {
+                let args: AdvancedMockCreateArgs = self.parse_args(&arguments)?;
+                let result = mocks::create_advanced_mock(
+                    &self.client,
+                    &self.api_url,
+                    &args.name,
+                    args.condition,
+                    args.response_config,
+                    args.description.as_deref(),
+                    args.tags,
+                    args.collection_id.as_deref(),
+                    args.enabled,
+                    args.priority,
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_update_mock" => {
+                let args: UpdateMockArgs = self.parse_args(&arguments)?;
+                let result =
+                    mocks::update_mock(&self.client, &self.api_url, &args.id, args.mock).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_get_mock" => {
+                let args: IdArgs = self.parse_args(&arguments)?;
+                let result = mocks::get_mock(&self.client, &self.api_url, &args.id).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_duplicate_mock" => {
+                let args: DuplicateMockArgs = self.parse_args(&arguments)?;
+                let result = mocks::duplicate_mock(
+                    &self.client,
+                    &self.api_url,
+                    &args.id,
+                    args.new_name.as_deref(),
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_rollback_mock" => {
+                let args: RollbackMockArgs = self.parse_args(&arguments)?;
+                let result =
+                    mocks::rollback_mock(&self.client, &self.api_url, &args.id, args.version)
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_get_mock_versions" => {
+                let args: IdArgs = self.parse_args(&arguments)?;
+                let result =
+                    mocks::get_mock_versions(&self.client, &self.api_url, &args.id).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            // Mock Collections
+            "madhyamas_list_mock_collections" => {
+                let result = mocks::list_collections(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_create_mock_collection" => {
+                let args: CreateCollectionArgs = self.parse_args(&arguments)?;
+                let result = mocks::create_collection(
+                    &self.client,
+                    &self.api_url,
+                    &args.name,
+                    args.description.as_deref(),
+                    args.tags,
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_delete_mock_collection" => {
+                let args: DeleteCollectionArgs = self.parse_args(&arguments)?;
+                let result = mocks::delete_collection(
+                    &self.client,
+                    &self.api_url,
+                    &args.id,
+                    args.delete_rules.unwrap_or(false),
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_toggle_mock_collection" => {
+                let args: ToggleCollectionArgs = self.parse_args(&arguments)?;
+                let result =
+                    mocks::toggle_collection(&self.client, &self.api_url, &args.id, args.enabled)
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            // Mock Analytics
+            "madhyamas_get_mock_analytics" => {
+                let result = mocks::get_analytics(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_get_mock_hit_history" => {
+                let args: IdArgs = self.parse_args(&arguments)?;
+                let result = mocks::get_hit_history(&self.client, &self.api_url, &args.id).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            // Mock Testing & Preview
+            "madhyamas_test_mock" => {
+                let args: TestMockArgs = self.parse_args(&arguments)?;
+                let result =
+                    mocks::test_mock(&self.client, &self.api_url, &args.id, args.request).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_preview_mock_match" => {
+                let args: PreviewMockArgs = self.parse_args(&arguments)?;
+                let result =
+                    mocks::preview_mock_match(&self.client, &self.api_url, args.request).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            // Mock Import/Export
+            "madhyamas_export_mocks" => {
+                let result = mocks::export_mocks(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_import_mocks" => {
+                let args: ImportMocksArgs = self.parse_args(&arguments)?;
+                let result =
+                    mocks::import_mocks(&self.client, &self.api_url, &args.format, &args.data)
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            // Mock Recording
+            "madhyamas_set_mock_recording" => {
+                let args: RecordingArgs = self.parse_args(&arguments)?;
+                let result =
+                    mocks::set_recording(&self.client, &self.api_url, args.enabled).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_get_mock_recording_status" => {
+                let result = mocks::get_recording_status(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_get_recorded_mocks" => {
+                let result = mocks::get_recorded_mocks(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_promote_recorded_mocks" => {
+                let result = mocks::promote_recorded_mocks(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
             // Breakpoint tools
             "madhyamas_list_breakpoints" => {
                 let result = breakpoints::list_breakpoints(&self.client, &self.api_url).await?;
@@ -522,4 +724,89 @@ pub struct UpdateConfigArgs {
     verbose: Option<bool>,
     #[serde(default)]
     public_ip: Option<Value>,
+}
+
+// Advanced Mock Arguments
+#[derive(Debug, Clone, Deserialize)]
+struct AdvancedMockCreateArgs {
+    name: String,
+    condition: Value,
+    response_config: Value,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    #[serde(default)]
+    collection_id: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    priority: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateMockArgs {
+    id: String,
+    mock: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DuplicateMockArgs {
+    id: String,
+    #[serde(default)]
+    new_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RollbackMockArgs {
+    id: String,
+    version: u32,
+}
+
+// Collection Arguments
+#[derive(Debug, Clone, Deserialize)]
+struct CreateCollectionArgs {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DeleteCollectionArgs {
+    id: String,
+    #[serde(default)]
+    delete_rules: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ToggleCollectionArgs {
+    id: String,
+    enabled: bool,
+}
+
+// Testing Arguments
+#[derive(Debug, Clone, Deserialize)]
+struct TestMockArgs {
+    id: String,
+    request: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PreviewMockArgs {
+    request: Value,
+}
+
+// Import Arguments
+#[derive(Debug, Clone, Deserialize)]
+struct ImportMocksArgs {
+    format: String,
+    data: String,
+}
+
+// Recording Arguments
+#[derive(Debug, Clone, Deserialize)]
+struct RecordingArgs {
+    enabled: bool,
 }

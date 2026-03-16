@@ -205,6 +205,322 @@ impl ToolRegistry {
                     "required": ["id", "enabled"]
                 }),
             },
+            Tool {
+                name: "madhyamas_create_advanced_mock".to_string(),
+                description: "Create an advanced mock rule with full configuration including response sequences, conditional responses, or probabilistic responses. Use this for complex mocking scenarios.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name for the mock rule"
+                        },
+                        "condition": {
+                            "type": "object",
+                            "description": "Match condition (e.g., {\"type\": \"url_pattern\", \"pattern\": \"https://api.example.com/.*\"})"
+                        },
+                        "response_config": {
+                            "type": "object",
+                            "description": "Response configuration. Can be: Single {\"type\": \"single\", \"response\": {...}}, Sequence {\"type\": \"sequence\", \"responses\": [...]}, Conditional {\"type\": \"conditional\", \"conditions\": [...]}, or Probabilistic {\"type\": \"probabilistic\", \"responses\": [...]}"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Optional description/documentation"
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Tags for organization"
+                        },
+                        "collection_id": {
+                            "type": "string",
+                            "description": "Collection to add this mock to"
+                        },
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Whether the mock is enabled (default: true)"
+                        },
+                        "priority": {
+                            "type": "integer",
+                            "description": "Priority (lower = higher priority, default: 100)"
+                        }
+                    },
+                    "required": ["name", "condition", "response_config"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_update_mock".to_string(),
+                description: "Update an existing mock rule with new configuration.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the mock rule to update"
+                        },
+                        "mock": {
+                            "type": "object",
+                            "description": "The full mock rule object to update"
+                        }
+                    },
+                    "required": ["id", "mock"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_mock".to_string(),
+                description: "Get details of a specific mock rule.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the mock rule to retrieve"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_duplicate_mock".to_string(),
+                description: "Duplicate an existing mock rule with a new name.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the mock rule to duplicate"
+                        },
+                        "new_name": {
+                            "type": "string",
+                            "description": "Optional new name for the duplicate"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_rollback_mock".to_string(),
+                description: "Rollback a mock rule to a previous version.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the mock rule to rollback"
+                        },
+                        "version": {
+                            "type": "integer",
+                            "description": "The version number to rollback to"
+                        }
+                    },
+                    "required": ["id", "version"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_mock_versions".to_string(),
+                description: "Get version history for a mock rule.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the mock rule"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            // Mock Collections
+            Tool {
+                name: "madhyamas_list_mock_collections".to_string(),
+                description: "List all mock collections. Collections help organize related mock rules.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_create_mock_collection".to_string(),
+                description: "Create a new mock collection for organizing related mock rules.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name for the collection"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Optional description"
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Tags for the collection"
+                        }
+                    },
+                    "required": ["name"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_delete_mock_collection".to_string(),
+                description: "Delete a mock collection. Optionally delete all rules in the collection.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the collection to delete"
+                        },
+                        "delete_rules": {
+                            "type": "boolean",
+                            "description": "Whether to also delete all rules in this collection (default: false)"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_toggle_mock_collection".to_string(),
+                description: "Enable or disable all mock rules in a collection.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the collection to toggle"
+                        },
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "true to enable all, false to disable all"
+                        }
+                    },
+                    "required": ["id", "enabled"]
+                }),
+            },
+            // Mock Analytics
+            Tool {
+                name: "madhyamas_get_mock_analytics".to_string(),
+                description: "Get hit analytics for all mock rules, including hit counts and history.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_mock_hit_history".to_string(),
+                description: "Get detailed hit history for a specific mock rule.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the mock rule"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            // Mock Testing & Preview
+            Tool {
+                name: "madhyamas_test_mock".to_string(),
+                description: "Test a mock rule against a sample request to see if it matches and what response would be returned.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the mock rule to test"
+                        },
+                        "request": {
+                            "type": "object",
+                            "description": "Sample request data with url, method, headers, body"
+                        }
+                    },
+                    "required": ["id", "request"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_preview_mock_match".to_string(),
+                description: "Preview which mock rule would match a given request without actually intercepting traffic.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "request": {
+                            "type": "object",
+                            "description": "Request data to test against all mocks"
+                        }
+                    },
+                    "required": ["request"]
+                }),
+            },
+            // Mock Import/Export
+            Tool {
+                name: "madhyamas_export_mocks".to_string(),
+                description: "Export all mock rules as JSON for backup or sharing.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_import_mocks".to_string(),
+                description: "Import mock rules from HAR, OpenAPI, or Postman format.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "format": {
+                            "type": "string",
+                            "enum": ["har", "openapi", "postman"],
+                            "description": "Import format"
+                        },
+                        "data": {
+                            "type": "string",
+                            "description": "The data to import (JSON string)"
+                        }
+                    },
+                    "required": ["format", "data"]
+                }),
+            },
+            // Mock Recording
+            Tool {
+                name: "madhyamas_set_mock_recording".to_string(),
+                description: "Enable or disable mock recording mode. When enabled, responses are captured as potential mock rules.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "true to enable recording, false to disable"
+                        }
+                    },
+                    "required": ["enabled"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_mock_recording_status".to_string(),
+                description: "Get current mock recording status.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_recorded_mocks".to_string(),
+                description: "Get all mock rules that have been recorded from live traffic.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_promote_recorded_mocks".to_string(),
+                description: "Promote all recorded mocks to active mock rules.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
 
             // Breakpoint tools
             Tool {

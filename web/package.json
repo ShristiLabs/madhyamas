@@ -10,8 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@radix-ui/react-accordion": "^1.2.12",
+    "@radix-ui/react-checkbox": "^1.0.4",
     "@radix-ui/react-dialog": "^1.0.5",
     "@radix-ui/react-dropdown-menu": "^2.0.6",
+    "@radix-ui/react-label": "^2.0.2",
     "@radix-ui/react-scroll-area": "^1.0.5",
     "@radix-ui/react-select": "^2.0.0",
     "@radix-ui/react-separator": "^1.0.3",
@@ -48,7 +51,6 @@
     "playwright": "^1.58.2",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.19",
-
     "typescript": "^5.3.3",
     "vite": "^5.1.4"
   }

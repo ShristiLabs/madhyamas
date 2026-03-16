@@ -313,7 +313,7 @@ impl ProxyEngine {
                         throttle_manager.apply_latency().await;
                     }
 
-                    let response = self.build_mock_response(&mock.response).await;
+                    let response = self.build_mock_response(&mock.response()).await;
 
                     let session_id = self.traffic_store.current_session_id();
                     let entry = TrafficEntry::new(&session_id, request_data.clone());
@@ -473,6 +473,20 @@ impl ProxyEngine {
                         if should_capture {
                             self.traffic_store.store_response(&entry.id, &response)?;
                         }
+
+                        // Record as mock if recording is enabled
+                        if let Some(ref mock_manager) = self.mock_manager {
+                            if mock_manager.is_recording() {
+                                mock_manager.record_from_traffic(
+                                    &request_data,
+                                    response.status_code,
+                                    response.headers.clone(),
+                                    response.body.clone(),
+                                );
+                                debug!("Recorded mock for: {}", request_data.url);
+                            }
+                        }
+
                         info!(
                             "{} {} -> {} ({}ms)",
                             request_data.method,
@@ -549,7 +563,7 @@ impl ProxyEngine {
                 }
 
                 // Build mock response
-                let response = self.build_mock_response(&mock.response).await;
+                let response = self.build_mock_response(&mock.response()).await;
 
                 // Store the request
                 let session_id = self.traffic_store.current_session_id();
@@ -708,6 +722,20 @@ impl ProxyEngine {
                 if should_capture {
                     self.traffic_store.store_response(&entry.id, &response)?;
                 }
+
+                // Record as mock if recording is enabled
+                if let Some(ref mock_manager) = self.mock_manager {
+                    if mock_manager.is_recording() {
+                        mock_manager.record_from_traffic(
+                            &request_data,
+                            response.status_code,
+                            response.headers.clone(),
+                            response.body.clone(),
+                        );
+                        debug!("Recorded mock for: {}", request_data.url);
+                    }
+                }
+
                 info!(
                     "{} {} -> {} ({}ms)",
                     request_data.method, request_data.url, response.status_code, duration_ms

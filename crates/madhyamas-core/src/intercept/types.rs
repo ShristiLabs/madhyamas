@@ -41,10 +41,42 @@ pub enum MatchCondition {
     StatusCode { range: String },
     /// Match by header presence/value
     Header { name: String, value: Option<String> },
+    /// Match by header with regex pattern
+    HeaderPattern { name: String, pattern: String },
     /// Match by request body content (regex)
     BodyPattern { pattern: String },
     /// Match by content type
     ContentType { pattern: String },
+    /// Match by query parameter (exact match)
+    QueryParam { name: String, value: Option<String> },
+    /// Match by query parameter with regex
+    QueryParamPattern { name: String, pattern: String },
+    /// Match by JSON path in request body (using JSONPath syntax like $.user.id)
+    JsonPath {
+        path: String,
+        value: serde_json::Value,
+    },
+    /// Match by JSON path with regex pattern
+    JsonPathPattern { path: String, pattern: String },
+    /// Match by GraphQL operation name
+    GraphQLOperation { operation_name: String },
+    /// Match by GraphQL operation type (query, mutation, subscription)
+    GraphQLType { operation_type: String },
+    /// Match by GraphQL variable value
+    GraphQLVariable {
+        name: String,
+        value: serde_json::Value,
+    },
+    /// Match by URL path segment (e.g., /api/users/:id where :id is a path param)
+    PathSegment { index: usize, value: String },
+    /// Match by URL path with regex
+    PathPattern { pattern: String },
+    /// Match by host/domain
+    Host { pattern: String },
+    /// Match by port
+    Port { port: u16 },
+    /// Match by scheme (http/https)
+    Scheme { scheme: String },
     /// Combine conditions with AND
     And { conditions: Vec<MatchCondition> },
     /// Combine conditions with OR
@@ -72,6 +104,12 @@ impl MatchCondition {
             MatchCondition::Header { name, value } => headers.iter().any(|(k, v)| {
                 k.eq_ignore_ascii_case(name) && value.as_ref().is_none_or(|expected| v == expected)
             }),
+            MatchCondition::HeaderPattern { name, pattern } => headers.iter().any(|(k, v)| {
+                k.eq_ignore_ascii_case(name)
+                    && regex::Regex::new(pattern)
+                        .map(|re| re.is_match(v))
+                        .unwrap_or(false)
+            }),
             MatchCondition::BodyPattern { pattern } => body
                 .and_then(|b| std::str::from_utf8(b).ok())
                 .map(|body_str| {
@@ -87,6 +125,139 @@ impl MatchCondition {
                         .unwrap_or(false)
                 })
                 .unwrap_or(false),
+            MatchCondition::QueryParam { name, value } => {
+                if let Ok(parsed_url) = url::Url::parse(url) {
+                    parsed_url.query_pairs().any(|(k, v)| {
+                        k == *name && value.as_ref().is_none_or(|expected| v == *expected)
+                    })
+                } else {
+                    false
+                }
+            }
+            MatchCondition::QueryParamPattern { name, pattern } => {
+                if let Ok(parsed_url) = url::Url::parse(url) {
+                    parsed_url.query_pairs().any(|(k, v)| {
+                        k == *name
+                            && regex::Regex::new(pattern)
+                                .map(|re| re.is_match(&v))
+                                .unwrap_or(false)
+                    })
+                } else {
+                    false
+                }
+            }
+            MatchCondition::JsonPath { path, value } => body
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+                .map(|json| {
+                    jsonpath_lib::select(&json, path)
+                        .map(|results| results.contains(&value))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false),
+            MatchCondition::JsonPathPattern { path, pattern } => body
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+                .map(|json| {
+                    if let Ok(re) = regex::Regex::new(pattern) {
+                        jsonpath_lib::select(&json, path)
+                            .map(|results| {
+                                results.iter().any(|r| {
+                                    if let Some(s) = r.as_str() {
+                                        re.is_match(s)
+                                    } else {
+                                        re.is_match(&r.to_string())
+                                    }
+                                })
+                            })
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false),
+            MatchCondition::GraphQLOperation { operation_name } => body
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+                .and_then(|json| {
+                    json.get("operationName")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .map(|op| op == *operation_name)
+                .unwrap_or(false),
+            MatchCondition::GraphQLType { operation_type } => body
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+                .and_then(|json| {
+                    json.get("query")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .map(|query| {
+                    let query_lower = query.trim().to_lowercase();
+                    match operation_type.to_lowercase().as_str() {
+                        "query" => query_lower.starts_with("query") || query_lower.starts_with("{"),
+                        "mutation" => query_lower.starts_with("mutation"),
+                        "subscription" => query_lower.starts_with("subscription"),
+                        _ => false,
+                    }
+                })
+                .unwrap_or(false),
+            MatchCondition::GraphQLVariable { name, value } => body
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+                .and_then(|json| json.get("variables").cloned())
+                .and_then(|vars| vars.get(name).cloned())
+                .map(|v| v == *value)
+                .unwrap_or(false),
+            MatchCondition::PathSegment { index, value } => {
+                if let Ok(parsed_url) = url::Url::parse(url) {
+                    parsed_url
+                        .path_segments()
+                        .and_then(|segments| {
+                            segments
+                                .collect::<Vec<_>>()
+                                .get(*index)
+                                .map(|s| *s == value)
+                        })
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+            MatchCondition::PathPattern { pattern } => {
+                if let Ok(parsed_url) = url::Url::parse(url) {
+                    regex::Regex::new(pattern)
+                        .map(|re| re.is_match(parsed_url.path()))
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+            MatchCondition::Host { pattern } => {
+                if let Ok(parsed_url) = url::Url::parse(url) {
+                    parsed_url
+                        .host_str()
+                        .map(|host| {
+                            regex::Regex::new(pattern)
+                                .map(|re| re.is_match(host))
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+            MatchCondition::Port { port } => {
+                if let Ok(parsed_url) = url::Url::parse(url) {
+                    parsed_url.port().map(|p| p == *port).unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+            MatchCondition::Scheme { scheme } => {
+                if let Ok(parsed_url) = url::Url::parse(url) {
+                    parsed_url.scheme().eq_ignore_ascii_case(scheme)
+                } else {
+                    false
+                }
+            }
             MatchCondition::And { conditions } => conditions
                 .iter()
                 .all(|c| c.matches_request(url, method, headers, body, content_type)),
@@ -131,6 +302,12 @@ impl MatchCondition {
             MatchCondition::Header { name, value } => headers.iter().any(|(k, v)| {
                 k.eq_ignore_ascii_case(name) && value.as_ref().is_none_or(|expected| v == expected)
             }),
+            MatchCondition::HeaderPattern { name, pattern } => headers.iter().any(|(k, v)| {
+                k.eq_ignore_ascii_case(name)
+                    && regex::Regex::new(pattern)
+                        .map(|re| re.is_match(v))
+                        .unwrap_or(false)
+            }),
             MatchCondition::BodyPattern { pattern } => body
                 .and_then(|b| std::str::from_utf8(b).ok())
                 .map(|body_str| {
@@ -146,6 +323,34 @@ impl MatchCondition {
                         .unwrap_or(false)
                 })
                 .unwrap_or(false),
+            MatchCondition::JsonPath { path, value } => body
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+                .map(|json| {
+                    jsonpath_lib::select(&json, path)
+                        .map(|results| results.contains(&value))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false),
+            MatchCondition::JsonPathPattern { path, pattern } => body
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+                .map(|json| {
+                    if let Ok(re) = regex::Regex::new(pattern) {
+                        jsonpath_lib::select(&json, path)
+                            .map(|results| {
+                                results.iter().any(|r| {
+                                    if let Some(s) = r.as_str() {
+                                        re.is_match(s)
+                                    } else {
+                                        re.is_match(&r.to_string())
+                                    }
+                                })
+                            })
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false),
             MatchCondition::And { conditions } => conditions
                 .iter()
                 .all(|c| c.matches_response(status_code, headers, body, content_type)),
@@ -155,10 +360,19 @@ impl MatchCondition {
             MatchCondition::Not { condition } => {
                 !condition.matches_response(status_code, headers, body, content_type)
             }
-            MatchCondition::UrlPattern { .. } | MatchCondition::Method { .. } => {
-                // Not applicable to responses directly (would need request context)
-                false
-            }
+            // Not applicable to responses directly (would need request context)
+            MatchCondition::UrlPattern { .. }
+            | MatchCondition::Method { .. }
+            | MatchCondition::QueryParam { .. }
+            | MatchCondition::QueryParamPattern { .. }
+            | MatchCondition::GraphQLOperation { .. }
+            | MatchCondition::GraphQLType { .. }
+            | MatchCondition::GraphQLVariable { .. }
+            | MatchCondition::PathSegment { .. }
+            | MatchCondition::PathPattern { .. }
+            | MatchCondition::Host { .. }
+            | MatchCondition::Port { .. }
+            | MatchCondition::Scheme { .. } => false,
         }
     }
 }

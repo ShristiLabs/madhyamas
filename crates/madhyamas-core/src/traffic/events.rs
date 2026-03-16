@@ -54,16 +54,26 @@ impl From<&TrafficEntry> for TrafficEntrySnapshot {
             host: entry.request.host.clone(),
             path: entry.request.path.clone(),
             status_code: entry.response.as_ref().map(|r| r.status_code),
-            status_message: entry.response.as_ref().and_then(|r| r.status_message.clone()),
+            status_message: entry
+                .response
+                .as_ref()
+                .and_then(|r| r.status_message.clone()),
             content_type: entry.request.content_type.clone(),
             response_content_type: entry.response.as_ref().and_then(|r| r.content_type.clone()),
             duration_ms: entry.response.as_ref().map(|r| r.duration_ms),
             request_size: entry.request.body.as_ref().map(|b| b.len()).unwrap_or(0),
-            response_size: entry.response.as_ref().map(|r| r.body.as_ref().map(|b| b.len()).unwrap_or(0)),
+            response_size: entry
+                .response
+                .as_ref()
+                .map(|r| r.body.as_ref().map(|b| b.len()).unwrap_or(0)),
             timestamp: entry.timestamp.to_rfc3339(),
             modified: entry.modified,
             has_request_body: entry.request.body.is_some(),
-            has_response_body: entry.response.as_ref().map(|r| r.body.is_some()).unwrap_or(false),
+            has_response_body: entry
+                .response
+                .as_ref()
+                .map(|r| r.body.is_some())
+                .unwrap_or(false),
         }
     }
 }
@@ -73,7 +83,7 @@ impl From<&TrafficEntry> for TrafficEntrySnapshot {
 #[serde(tag = "type", content = "data")]
 pub enum WsServerMessage {
     /// Traffic event notification
-    Traffic(TrafficEvent),
+    Traffic(Box<TrafficEvent>),
     /// Initial traffic list on connection
     InitialTraffic(Vec<TrafficEntrySnapshot>),
     /// Connection established acknowledgment

@@ -58,7 +58,7 @@ pub async fn handle_ws(socket: WebSocket, traffic_store: Arc<TrafficStore>) {
                     event = event_rx.recv() => {
                         match event {
                             Ok(traffic_event) => {
-                                let msg = WsServerMessage::Traffic(traffic_event);
+                                let msg = WsServerMessage::Traffic(Box::new(traffic_event));
                                 if let Ok(json) = serde_json::to_string(&msg) {
                                     if ws_tx.send(Message::Text(json.into())).await.is_err() {
                                         debug!("Client disconnected while sending event: {}", client_id);
