@@ -154,7 +154,7 @@ function GeneralTab() {
   const { toast } = useToast();
   const [config, setConfig] = useState<RuntimeConfig>({
     proxy_port: 8888,
-    api_port: 3000,
+    api_port: 3001,
     host: "127.0.0.1",
     public_ip: "",
     intercept_https: true,
@@ -170,7 +170,7 @@ function GeneralTab() {
       .then((data) => {
         setConfig({
           proxy_port: data.proxy_port ?? 8888,
-          api_port: data.api_port ?? 3000,
+          api_port: data.api_port ?? 3001,
           host: data.host ?? "127.0.0.1",
           public_ip: data.public_ip ?? "",
           intercept_https: data.intercept_https ?? true,

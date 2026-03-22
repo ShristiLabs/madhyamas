@@ -12,7 +12,7 @@ use tracing_subscriber::FmtSubscriber;
 
 #[derive(Parser, Debug)]
 #[command(name = "madhyamas-cli")]
-#[command(author, version, about)]
+#[command(author = "Madhyamas Team", version, about, long_about = None)]
 #[command(about = "CLI tool for interacting with Madhyamas proxy server")]
 struct Args {
     /// API server URL

@@ -54,7 +54,7 @@ impl Default for ProxyConfig {
         let data_dir = get_data_dir();
         Self {
             proxy_port: 8888,
-            api_port: 3000,
+            api_port: 3001,
             host: "127.0.0.1".to_string(),
             public_ip: None,
             cert_path: data_dir.join("certs").to_string_lossy().to_string(),

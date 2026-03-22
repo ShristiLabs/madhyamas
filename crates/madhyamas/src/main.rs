@@ -14,7 +14,7 @@ use tracing_subscriber::FmtSubscriber;
 
 #[derive(Parser, Debug)]
 #[command(name = "madhyamas")]
-#[command(author, version, about)]
+#[command(author = "Madhyamas Team", version, about, long_about = None)]
 #[command(about = "HTTP/HTTPS Debugging Proxy Server with Web UI")]
 struct Args {
     /// Port for the proxy server
@@ -77,6 +77,7 @@ async fn main() -> Result<()> {
     let _ = tracing::subscriber::set_global_default(subscriber);
 
     info!("Starting Madhyamas...");
+    info!("Version: {}", env!("CARGO_PKG_VERSION"));
 
     // Parse command line arguments
     let args = Args::parse();
