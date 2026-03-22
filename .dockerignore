@@ -1,0 +1,55 @@
+# Build artifacts
+target/
+web/dist/
+web/node_modules/
+
+# Version control
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Documentation & config
+*.md
+LICENSE*
+CLAUDE.md
+
+# CI/CD
+.github/
+.claude/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Data & certs
+certs/
+*.pem
+*.key
+*.crt
+*.db
+*.db-journal
+*.log
+
+# MCP
+.mcp.json
+
+# Test & temp
+coverage/
+test-results/
+tmp/
+temp/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Packaging
+packaging/
+scripts/

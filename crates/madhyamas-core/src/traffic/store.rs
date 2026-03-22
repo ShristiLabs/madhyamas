@@ -76,6 +76,11 @@ impl TrafficStore {
     /// Create database tables
     fn create_tables(&self) -> crate::Result<()> {
         let conn = self.conn.lock();
+
+        // Enable WAL mode for better concurrent read/write performance
+        conn.execute_batch("PRAGMA journal_mode=WAL;")
+            .map_err(Error::Database)?;
+
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS sessions (

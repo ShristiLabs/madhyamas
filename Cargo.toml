@@ -27,7 +27,7 @@ hyper = { version = "1.2", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "trace", "set-header"] }
 
 # TLS
 rustls = { version = "0.23", default-features = false, features = [
@@ -83,3 +83,8 @@ reqwest = { version = "0.13", features = ["json"] }
 # Internal crates
 madhyamas-core = { path = "crates/madhyamas-core" }
 madhyamas-api = { path = "crates/madhyamas-api" }
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

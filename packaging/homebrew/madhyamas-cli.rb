@@ -3,7 +3,7 @@
 #
 # Install: brew install madhyamas/tap/madhyamas-cli
 
-class ProxyforgeCli < Formula
+class MadhyamasCli < Formula
   desc "Command-line interface for Madhyamas debugging proxy"
   homepage "https://github.com/madhyamas/madhyamas"
   version "0.1.0"
@@ -34,9 +34,6 @@ class ProxyforgeCli < Formula
   def install
     bin.install "madhyamas-cli"
 
-    # Create symlink for convenience
-    bin.install_symlink "madhyamas-cli" => "pf"
-
     # Generate shell completions
     generate_completions_from_executable(bin/"madhyamas-cli", "completion", "--shell", shells: [:bash, :zsh, :fish])
   end
@@ -47,7 +44,6 @@ class ProxyforgeCli < Formula
 
       Usage:
         madhyamas-cli <command> [options]
-        pf <command> [options]  # shorthand alias
 
       Common commands:
         madhyamas-cli traffic list     # List captured traffic

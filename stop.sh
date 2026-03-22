@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# ProxyForge Stop Script
-# This script stops the ProxyForge application and cleans up resources
+# Madhyamas Stop Script
+# This script stops the Madhyamas application and cleans up resources
 
 set -e
 
@@ -11,8 +11,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${YELLOW}ProxyForge Stop Script${NC}"
-echo "==============================="
+echo -e "${YELLOW}Madhyamas Stop Script${NC}"
+echo "================================"
 
 # Check if Docker is installed
 if ! command -v docker &> /dev/null; then
@@ -27,7 +27,7 @@ if ! docker compose ps | grep -q "Up"; then
 fi
 
 # Stop containers
-echo -e "${YELLOW}Stopping ProxyForge containers...${NC}"
+echo -e "${YELLOW}Stopping Madhyamas containers...${NC}"
 docker compose down
 
 # Optional: Remove volumes (commented out by default to preserve data)
@@ -38,7 +38,7 @@ docker compose down
 # echo -e "${YELLOW}Removing images...${NC}"
 # docker compose down --rmi all
 
-echo -e "${GREEN}✓ ProxyForge has been stopped successfully.${NC}"
+echo -e "${GREEN}✓ Madhyamas has been stopped successfully.${NC}"
 echo ""
 echo "To start again, run: ./startup.sh"
 echo "To view logs, run: docker compose logs"

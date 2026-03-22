@@ -3,7 +3,7 @@
 #
 # Install: brew install madhyamas/tap/madhyamas
 
-class Proxyforge < Formula
+class Madhyamas < Formula
   desc "Open-source HTTP/HTTPS debugging proxy with web-based UI"
   homepage "https://github.com/madhyamas/madhyamas"
   version "0.1.0"

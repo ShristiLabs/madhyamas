@@ -99,7 +99,7 @@ function App() {
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
               <span className="text-primary-foreground font-bold text-sm">
-                PF
+                M
               </span>
             </div>
             <h1 className="text-xl font-semibold">Madhyamas</h1>

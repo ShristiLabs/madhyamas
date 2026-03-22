@@ -3,7 +3,7 @@
 #
 # Install: brew install madhyamas/tap/madhyamas-mcp
 
-class ProxyforgeMcp < Formula
+class MadhyamasMcp < Formula
   desc "MCP server for Madhyamas - enables AI agents to interact with the proxy"
   homepage "https://github.com/madhyamas/madhyamas"
   version "0.1.0"

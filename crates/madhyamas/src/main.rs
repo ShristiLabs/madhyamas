@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
     let cert_manager = CertificateManager::new(&config.cert_path).await?;
 
     // Initialize traffic store
-    let traffic_store = TrafficStore::in_memory()?;
+    let traffic_store = TrafficStore::new(config.db_path.clone())?;
 
     info!("Starting proxy engine...");
     let cert_manager_for_api = cert_manager.clone();

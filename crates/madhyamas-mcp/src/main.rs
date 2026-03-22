@@ -21,6 +21,7 @@ fn main() {
         .with_max_level(level)
         .with_target(false) // Don't include module path
         .with_thread_ids(false)
+        .with_writer(std::io::stderr) // Write to stderr to avoid corrupting stdio JSON-RPC
         .finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 

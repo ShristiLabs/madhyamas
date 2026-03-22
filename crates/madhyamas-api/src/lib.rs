@@ -16,6 +16,7 @@ use madhyamas_core::{
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 /// API state shared across handlers
@@ -140,6 +141,19 @@ pub fn create_router(state: AppState) -> Router<()> {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
+        // Security headers
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::X_FRAME_OPTIONS,
+            axum::http::HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            axum::http::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::REFERRER_POLICY,
+            axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

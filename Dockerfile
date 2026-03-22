@@ -77,7 +77,7 @@ RUN mkdir -p /data/certs /data/sessions && chown -R madhyamas:madhyamas /data
 USER madhyamas
 
 # Expose ports
-EXPOSE 3001 8888 8443
+EXPOSE 3001 8888
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

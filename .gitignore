@@ -26,7 +26,7 @@ web/.turbo/
 .env.local
 .env.*.local
 
-# ProxyForge specific
+# Madhyamas specific
 certs/
 *.pem
 *.key
@@ -59,3 +59,6 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# MCP configuration (local only)
+.mcp.json

@@ -89,3 +89,15 @@
 .method-put { @apply text-blue-600 dark:text-blue-400; }
 .method-patch { @apply text-purple-600 dark:text-purple-400; }
 .method-delete { @apply text-red-600 dark:text-red-400; }
+
+/* Respect user's motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
