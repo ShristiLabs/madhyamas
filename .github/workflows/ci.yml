@@ -151,7 +151,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   # =============================================================================
-  # Cross-compile builds for all platforms (including Raspberry Pi Zero)
+  # Cross-compile builds for all platforms
   # =============================================================================
   build-binaries:
     name: Build ${{ matrix.package }} for ${{ matrix.target }}
@@ -161,15 +161,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- Madhyamas CLI (with web UI) ---
+          # --- Madhyamas (Main Server with Web UI) ---
           # Linux x86_64
-          - package: madhyamas-cli
+          - package: madhyamas
             target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
             build_web: true
           # Linux ARM64 (Pi 4/5, etc.)
-          - package: madhyamas-cli
+          - package: madhyamas
             target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
@@ -177,7 +177,7 @@ jobs:
             cross: true
             cross_arch: aarch64
           # Linux ARMv7 (Raspberry Pi 2/3/4 32-bit)
-          - package: madhyamas-cli
+          - package: madhyamas
             target: armv7-unknown-linux-gnueabihf
             os: ubuntu-latest
             archive: tar.gz
@@ -185,23 +185,59 @@ jobs:
             cross: true
             cross_arch: armv7
           # macOS Intel
-          - package: madhyamas-cli
+          - package: madhyamas
             target: x86_64-apple-darwin
             os: macos-14
             archive: tar.gz
             build_web: true
           # macOS Apple Silicon
-          - package: madhyamas-cli
+          - package: madhyamas
             target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
             build_web: true
           # Windows x64
-          - package: madhyamas-cli
+          - package: madhyamas
             target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
             build_web: true
+
+          # --- Madhyamas CLI ---
+          # Linux x86_64
+          - package: madhyamas-cli
+            target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+          # Linux ARM64 (Pi 4/5, etc.)
+          - package: madhyamas-cli
+            target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            cross: true
+            cross_arch: aarch64
+          # Linux ARMv7 (Raspberry Pi 2/3/4 32-bit)
+          - package: madhyamas-cli
+            target: armv7-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            archive: tar.gz
+            cross: true
+            cross_arch: armv7
+          # macOS Intel
+          - package: madhyamas-cli
+            target: x86_64-apple-darwin
+            os: macos-14
+            archive: tar.gz
+          # macOS Apple Silicon
+          - package: madhyamas-cli
+            target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          # Windows x64
+          - package: madhyamas-cli
+            target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
 
           # --- Madhyamas MCP ---
           - package: madhyamas-mcp
@@ -291,11 +327,8 @@ jobs:
         id: binary
         shell: bash
         run: |
-          if [ "${{ matrix.package }}" = "madhyamas-cli" ]; then
-            echo "NAME=madhyamas" >> $GITHUB_OUTPUT
-          else
-            echo "NAME=${{ matrix.package }}" >> $GITHUB_OUTPUT
-          fi
+          # Binary name matches package name for all packages
+          echo "NAME=${{ matrix.package }}" >> $GITHUB_OUTPUT
 
       - name: Package (Unix)
         if: matrix.os != 'windows-latest'
@@ -316,8 +349,12 @@ jobs:
           cd dist
           tar -czvf $ARTIFACT_NAME.tar.gz $ARTIFACT_NAME
 
-          # Generate checksum
-          sha256sum $ARTIFACT_NAME.tar.gz > $ARTIFACT_NAME.tar.gz.sha256
+          # Generate checksum (use shasum on macOS, sha256sum on Linux)
+          if command -v sha256sum &> /dev/null; then
+            sha256sum $ARTIFACT_NAME.tar.gz > $ARTIFACT_NAME.tar.gz.sha256
+          else
+            shasum -a 256 $ARTIFACT_NAME.tar.gz > $ARTIFACT_NAME.tar.gz.sha256
+          fi
 
       - name: Package (Windows)
         if: matrix.os == 'windows-latest'

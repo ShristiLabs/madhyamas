@@ -125,18 +125,25 @@ impl ApiClient {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Traffic inspection commands
+    #[command(subcommand)]
     Traffic(TrafficCommands),
     /// Mock response commands
+    #[command(subcommand)]
     Mocks(MockCommands),
     /// Breakpoint commands
+    #[command(subcommand)]
     Breakpoints(BreakpointCommands),
     /// Session management commands
+    #[command(subcommand)]
     Sessions(SessionCommands),
     /// Request replay commands
+    #[command(subcommand)]
     Replay(ReplayCommands),
     /// Configuration commands
+    #[command(subcommand)]
     Config(ConfigCommands),
     /// Capture mode commands (recording vs passthrough)
+    #[command(subcommand)]
     Capture(CaptureCommands),
 }
 

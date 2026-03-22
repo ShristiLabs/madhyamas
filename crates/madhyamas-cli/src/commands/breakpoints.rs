@@ -1,40 +1,50 @@
 //! Breakpoint commands
+
 use anyhow::Result;
 use clap::{Args, Subcommand};
-use serde_json::Value;
+use serde_json::{json, Value};
+
 use super::ApiClient;
+
 #[derive(Debug, Args)]
 pub struct BreakpointCreateArgs {
     /// URL pattern to match
     #[arg(short, long)]
-    url_pattern: String,
+    pub url_pattern: String,
+
     /// HTTP method to match
     #[arg(short, long)]
-    method: Option<String>,
+    pub method: Option<String>,
+
     /// Direction (request/response)
     #[arg(short, long)]
-    direction: Option<String>,
+    pub direction: Option<String>,
+
     /// Enable or disable
-    #[arg(short = long)]
-    enabled: Option<bool>,
+    #[arg(short, long)]
+    pub enabled: Option<bool>,
+
     /// Output as JSON
     #[arg(long)]
-    json: bool,
+    pub json: bool,
 }
+
 #[derive(Debug, Args)]
 pub struct BreakpointDeleteArgs {
     /// Breakpoint ID
-    id: String,
+    pub id: String,
 }
+
 #[derive(Debug, Subcommand)]
 pub enum BreakpointCommands {
     /// List all breakpoint rules
     List,
     /// Create a breakpoint rule
-    create(BreakpointCreateArgs),
+    Create(BreakpointCreateArgs),
     /// Delete a breakpoint rule
-    delete(BreakpointDeleteArgs),
+    Delete(BreakpointDeleteArgs),
 }
+
 impl BreakpointCommands {
     pub async fn execute(&self, api_url: String) -> Result<()> {
         match self {
@@ -43,16 +53,16 @@ impl BreakpointCommands {
                 let result = client.get("breakpoints").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
-            BreakpointCommands::create(args) => {
+            BreakpointCommands::Create(args) => {
                 let client = ApiClient::new(api_url);
                 let mut body = json!({
                     "url_pattern": args.url_pattern,
                 });
-                if let Some(m) = args.method {
-                    body["method"] = Value::String(m);
+                if let Some(ref m) = args.method {
+                    body["method"] = Value::String(m.clone());
                 }
-                if let Some(d) = args.direction {
-                    body["direction"] = Value::String(d);
+                if let Some(ref d) = args.direction {
+                    body["direction"] = Value::String(d.clone());
                 }
                 if let Some(e) = args.enabled {
                     body["enabled"] = Value::Bool(e);
@@ -61,15 +71,16 @@ impl BreakpointCommands {
                 if args.json {
                     println!("{}", serde_json::to_string_pretty(&result)?);
                 } else {
-                    let id = result.get("id").and_then(|v| v.as_str()).unwrap_or("?").unwrap_or_default();
-                    println!("Created breakpoint: {} (id: {})", id);
+                    let id = result.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                    println!("Created breakpoint with ID: {}", id);
                 }
             }
-            BreakpointCommands::delete(args) => {
+            BreakpointCommands::Delete(args) => {
                 let client = ApiClient::new(api_url);
                 let result = client.delete(&format!("breakpoints/{}", args.id)).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
         }
+        Ok(())
     }
 }
