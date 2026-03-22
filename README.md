@@ -7,12 +7,14 @@ A high-performance, cross-platform HTTP/HTTPS debugging proxy built in Rust with
 ## Features
 
 ### Core Capabilities
+
 - **HTTP/HTTPS Traffic Interception** - Capture and inspect all HTTP/HTTPS traffic in real-time
 - **TLS/SSL Certificate Generation** - Automatic on-the-fly certificate generation for HTTPS interception
 - **Traffic Inspection UI** - Modern React-based web UI for viewing and analyzing traffic
 - **Request/Response Filtering** - Filter by URL, method, status code, and more
 
 ### Traffic Manipulation
+
 - **Breakpoints** - Pause requests/responses for inspection and modification
 - **Response Mocking** - Serve custom responses instead of hitting real servers
 - **URL/Header Rewriting** - Automatically modify traffic based on rules
@@ -20,6 +22,7 @@ A high-performance, cross-platform HTTP/HTTPS debugging proxy built in Rust with
 - **Request Replay** - Re-execute captured requests with modifications
 
 ### Advanced Features
+
 - **WebSocket Traffic Capture** - Inspect WebSocket messages in real-time
 - **gRPC Support** - Debug gRPC/Protocol Buffer traffic with frame parsing
 - **JavaScript/TypeScript Scripting** - Automate traffic manipulation with scripts
@@ -27,6 +30,7 @@ A high-performance, cross-platform HTTP/HTTPS debugging proxy built in Rust with
 - **MCP Server** - AI agent integration via Model Context Protocol
 
 ### Session Management
+
 - **Session Save/Load** - Persist and restore debugging sessions
 - **HAR Export** - Export traffic in HAR format for sharing
 - **cURL Export** - Generate cURL commands for any request
@@ -34,17 +38,17 @@ A high-performance, cross-platform HTTP/HTTPS debugging proxy built in Rust with
 
 ## Comparison with Other Tools
 
-| Feature | Madhyamas | Charles Proxy | mitmproxy | Fiddler | Proxyman |
-|---------|------------|---------------|-----------|---------|----------|
-| **Open Source** | ✅ | ❌ | ✅ | ❌ | ❌ |
-| **Free** | ✅ | ❌ ($50) | ✅ | ✅ | Freemium |
-| **Cross-Platform** | ✅ | ✅ | ✅ | Windows | macOS |
-| **Web UI** | ✅ | ❌ | Limited | ❌ | ❌ |
-| **Rust-Powered** | ✅ | ❌ (Java) | ❌ (Python) | ❌ (.NET) | ❌ (Swift) |
-| **gRPC Support** | ✅ | ❌ | ✅ | ❌ | ❌ |
-| **WebSocket** | ✅ | Limited | ✅ | ✅ | ✅ |
-| **Scripting** | ✅ JS/TS | ❌ | ✅ Python | ❌ | ❌ |
-| **Plugin System** | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Feature            | Madhyamas | Charles Proxy | mitmproxy   | Fiddler   | Proxyman   |
+| ------------------ | --------- | ------------- | ----------- | --------- | ---------- |
+| **Open Source**    | ✅        | ❌            | ✅          | ❌        | ❌         |
+| **Free**           | ✅        | ❌ ($50)      | ✅          | ✅        | Freemium   |
+| **Cross-Platform** | ✅        | ✅            | ✅          | Windows   | macOS      |
+| **Web UI**         | ✅        | ❌            | Limited     | ❌        | ❌         |
+| **Rust-Powered**   | ✅        | ❌ (Java)     | ❌ (Python) | ❌ (.NET) | ❌ (Swift) |
+| **gRPC Support**   | ✅        | ❌            | ✅          | ❌        | ❌         |
+| **WebSocket**      | ✅        | Limited       | ✅          | ✅        | ✅         |
+| **Scripting**      | ✅ JS/TS  | ❌            | ✅ Python   | ❌        | ❌         |
+| **Plugin System**  | ✅        | ❌            | ✅          | ✅        | ❌         |
 
 ## Requirements
 
@@ -72,6 +76,38 @@ npm install
 ### Pre-built Binaries
 
 Download the latest release for your platform from the [Releases](https://github.com/madhyamas/madhyamas/releases) page.
+
+### Snapshot Builds
+
+Snapshot builds are automatically generated from the latest `main` branch and are available as CI artifacts. These builds include all three binaries for each supported platform.
+
+#### Available Binaries
+
+| Binary          | Description                   | Use Case                                          |
+| --------------- | ----------------------------- | ------------------------------------------------- |
+| `madhyamas`     | Main server with API + Web UI | Full debugging proxy with browser-based interface |
+| `madhyamas-cli` | Command-line interface        | Scripting, automation, and headless operation     |
+| `madhyamas-mcp` | MCP server for AI agents      | Integration with Claude and other AI assistants   |
+
+#### Platform Support
+
+| Platform                | Target                          | Architecture                              | Binaries                                                  | Install Instructions                                                       |
+| ----------------------- | ------------------------------- | ----------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------- |
+| **Linux x86_64**        | `x86_64-unknown-linux-gnu`      | Intel/AMD 64-bit                          | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas* /usr/local/bin/`        |
+| **Linux ARM64**         | `aarch64-unknown-linux-gnu`     | ARM 64-bit (Pi 4/5, AWS Graviton)         | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas* /usr/local/bin/`        |
+| **Linux ARMv7**         | `armv7-unknown-linux-gnueabihf` | ARM 32-bit (Pi 2/3/4 32-bit)              | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas* /usr/local/bin/`        |
+| **Linux ARMv6**         | `arm-unknown-linux-gnueabihf`   | ARM 32-bit (Pi Zero/Zero W)               | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas* /usr/local/bin/`        |
+| **Linux RISC-V 64**     | `riscv64gc-unknown-linux-gnu`   | RISC-V 64-bit (LicheeRV Nano, VisionFive) | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas* /usr/local/bin/`        |
+| **macOS Intel**         | `x86_64-apple-darwin`           | Intel Mac                                 | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && mv madhyamas* /usr/local/bin/`             |
+| **macOS Apple Silicon** | `aarch64-apple-darwin`          | M1/M2/M3 Mac                              | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && mv madhyamas* /usr/local/bin/`             |
+| **Windows x64**         | `x86_64-pc-windows-msvc`        | Intel/AMD 64-bit                          | `madhyamas.exe`, `madhyamas-cli.exe`, `madhyamas-mcp.exe` | Extract ZIP, add folder to `PATH` or move to `C:\Program Files\Madhyamas\` |
+
+#### Downloading Snapshot Builds
+
+1. Go to [GitHub Actions](https://github.com/ShristiLabs/madhyamas/actions/workflows/ci.yml)
+2. Click on the latest successful workflow run
+3. Download the artifact for your platform (e.g., `madhyamas-x86_64-unknown-linux-gnu`)
+4. Extract and install using the instructions above
 
 ## Usage
 
@@ -133,55 +169,62 @@ Madhyamas stores all runtime data in `~/.madhyamas/` by default:
 ## API Endpoints
 
 ### Traffic
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/traffic` | List all traffic entries |
-| GET | `/api/traffic/:id` | Get single traffic entry |
-| POST | `/api/traffic/clear` | Clear all traffic |
-| GET | `/api/traffic/count` | Get traffic count |
+
+| Method | Endpoint             | Description              |
+| ------ | -------------------- | ------------------------ |
+| GET    | `/api/traffic`       | List all traffic entries |
+| GET    | `/api/traffic/:id`   | Get single traffic entry |
+| POST   | `/api/traffic/clear` | Clear all traffic        |
+| GET    | `/api/traffic/count` | Get traffic count        |
 
 ### Sessions
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/sessions` | List all sessions |
-| POST | `/api/sessions` | Create new session |
-| GET | `/api/sessions/:id` | Get session details |
-| DELETE | `/api/sessions/:id` | Delete session |
-| GET | `/api/sessions/:id/export` | Export session |
-| POST | `/api/sessions/:id/switch` | Switch active session |
+
+| Method | Endpoint                   | Description           |
+| ------ | -------------------------- | --------------------- |
+| GET    | `/api/sessions`            | List all sessions     |
+| POST   | `/api/sessions`            | Create new session    |
+| GET    | `/api/sessions/:id`        | Get session details   |
+| DELETE | `/api/sessions/:id`        | Delete session        |
+| GET    | `/api/sessions/:id/export` | Export session        |
+| POST   | `/api/sessions/:id/switch` | Switch active session |
 
 ### Export
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/export/har` | Export traffic as HAR |
-| GET | `/api/export/curl/:id` | Export request as cURL |
+
+| Method | Endpoint               | Description            |
+| ------ | ---------------------- | ---------------------- |
+| GET    | `/api/export/har`      | Export traffic as HAR  |
+| GET    | `/api/export/curl/:id` | Export request as cURL |
 
 ### Interception
-| Method | Endpoint | Description |
-|--------|----------|-------------|
+
+| Method          | Endpoint           | Description             |
+| --------------- | ------------------ | ----------------------- |
 | GET/POST/DELETE | `/api/breakpoints` | Manage breakpoint rules |
-| GET/POST | `/api/mocks` | Manage mock rules |
-| GET/POST/DELETE | `/api/rewrites` | Manage rewrite rules |
-| GET/POST | `/api/throttle` | Manage throttling |
+| GET/POST        | `/api/mocks`       | Manage mock rules       |
+| GET/POST/DELETE | `/api/rewrites`    | Manage rewrite rules    |
+| GET/POST        | `/api/throttle`    | Manage throttling       |
 
 ### Replay
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET/POST | `/api/replay/saved` | Manage saved requests |
-| POST | `/api/replay/execute/:id` | Replay a request |
-| GET | `/api/replay/history` | View replay history |
+
+| Method   | Endpoint                  | Description           |
+| -------- | ------------------------- | --------------------- |
+| GET/POST | `/api/replay/saved`       | Manage saved requests |
+| POST     | `/api/replay/execute/:id` | Replay a request      |
+| GET      | `/api/replay/history`     | View replay history   |
 
 ### WebSocket & gRPC
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/ws-traffic/connections` | List WebSocket connections |
-| GET | `/api/grpc/connections` | List gRPC connections |
-| GET | `/api/grpc/streams` | List gRPC streams |
+
+| Method | Endpoint                      | Description                |
+| ------ | ----------------------------- | -------------------------- |
+| GET    | `/api/ws-traffic/connections` | List WebSocket connections |
+| GET    | `/api/grpc/connections`       | List gRPC connections      |
+| GET    | `/api/grpc/streams`           | List gRPC streams          |
 
 ### Real-time Updates
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/ws` | WebSocket for real-time traffic updates |
+
+| Method | Endpoint  | Description                             |
+| ------ | --------- | --------------------------------------- |
+| GET    | `/api/ws` | WebSocket for real-time traffic updates |
 
 ## MCP Server for AI Agents
 
@@ -213,30 +256,30 @@ Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/
 
 ### Available MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `madhyamas_get_traffic` | List captured traffic with optional filtering |
-| `madhyamas_get_traffic_entry` | Get full details of a specific request/response |
-| `madhyamas_search_traffic` | Search traffic by content (headers, bodies, URLs) |
-| `madhyamas_get_traffic_count` | Get total count of captured requests |
-| `madhyamas_clear_traffic` | Clear all captured traffic |
-| `madhyamas_list_mocks` | List all mock rules |
-| `madhyamas_create_mock` | Create a mock response rule |
-| `madhyamas_delete_mock` | Delete a mock rule |
-| `madhyamas_toggle_mock` | Enable/disable a mock rule |
-| `madhyamas_list_breakpoints` | List all breakpoint rules |
-| `madhyamas_create_breakpoint` | Create a breakpoint to pause traffic |
-| `madhyamas_delete_breakpoint` | Delete a breakpoint rule |
-| `madhyamas_replay_request` | Replay a captured request |
-| `madhyamas_save_request` | Save a request for later replay |
-| `madhyamas_list_saved_requests` | List all saved requests |
-| `madhyamas_list_sessions` | List all debugging sessions |
-| `madhyamas_create_session` | Create a new session |
-| `madhyamas_export_session` | Export a session as HAR |
-| `madhyamas_import_session` | Import a session from HAR |
-| `madhyamas_switch_session` | Switch the active session |
-| `madhyamas_export_curl` | Export a request as a cURL command |
-| `madhyamas_get_config` | Get current proxy configuration |
+| Tool                            | Description                                       |
+| ------------------------------- | ------------------------------------------------- |
+| `madhyamas_get_traffic`         | List captured traffic with optional filtering     |
+| `madhyamas_get_traffic_entry`   | Get full details of a specific request/response   |
+| `madhyamas_search_traffic`      | Search traffic by content (headers, bodies, URLs) |
+| `madhyamas_get_traffic_count`   | Get total count of captured requests              |
+| `madhyamas_clear_traffic`       | Clear all captured traffic                        |
+| `madhyamas_list_mocks`          | List all mock rules                               |
+| `madhyamas_create_mock`         | Create a mock response rule                       |
+| `madhyamas_delete_mock`         | Delete a mock rule                                |
+| `madhyamas_toggle_mock`         | Enable/disable a mock rule                        |
+| `madhyamas_list_breakpoints`    | List all breakpoint rules                         |
+| `madhyamas_create_breakpoint`   | Create a breakpoint to pause traffic              |
+| `madhyamas_delete_breakpoint`   | Delete a breakpoint rule                          |
+| `madhyamas_replay_request`      | Replay a captured request                         |
+| `madhyamas_save_request`        | Save a request for later replay                   |
+| `madhyamas_list_saved_requests` | List all saved requests                           |
+| `madhyamas_list_sessions`       | List all debugging sessions                       |
+| `madhyamas_create_session`      | Create a new session                              |
+| `madhyamas_export_session`      | Export a session as HAR                           |
+| `madhyamas_import_session`      | Import a session from HAR                         |
+| `madhyamas_switch_session`      | Switch the active session                         |
+| `madhyamas_export_curl`         | Export a request as a cURL command                |
+| `madhyamas_get_config`          | Get current proxy configuration                   |
 
 ### Example Usage with AI Agents
 
@@ -249,7 +292,8 @@ Once configured, AI agents can use Madhyamas to:
 - **Export for sharing**: "Export the last 50 requests as HAR format"
 
 ### CLI for AI Agents
-   Madhyamas also provides a comprehensive CLI for AI agents that prefer shell commands:
+
+Madhyamas also provides a comprehensive CLI for AI agents that prefer shell commands:
 
 ```bash
 # View captured traffic
@@ -277,7 +321,7 @@ madhyamas session switch <id>
 madhyamas session export <id> --format har
 ```
 
-   All commands support `--json` flag for machine-readable output.
+All commands support `--json` flag for machine-readable output.
 
 ## Project Structure
 
@@ -298,6 +342,7 @@ madhyamas/
 ## Technology Stack
 
 ### Backend (Rust)
+
 - **axum** - Web framework
 - **hyper** - HTTP server/client
 - **tokio** - Async runtime
@@ -307,6 +352,7 @@ madhyamas/
 - **clap** - CLI framework
 
 ### Frontend (React)
+
 - **React 18** - UI framework
 - **TypeScript** - Type safety
 - **Vite** - Build tool

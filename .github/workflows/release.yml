@@ -38,6 +38,20 @@ jobs:
             build_web: true
             cross: true
             cross_arch: armv7
+          - package: madhyamas
+            target: arm-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            archive: tar.gz
+            build_web: true
+            cross: true
+            cross_arch: armv6
+          - package: madhyamas
+            target: riscv64gc-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            build_web: true
+            cross: true
+            cross_arch: riscv64
           # Madhyamas Main - macOS
           - package: madhyamas
             target: x86_64-apple-darwin
@@ -75,6 +89,20 @@ jobs:
             build_web: false
             cross: true
             cross_arch: armv7
+          - package: madhyamas-cli
+            target: arm-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            archive: tar.gz
+            build_web: false
+            cross: true
+            cross_arch: armv6
+          - package: madhyamas-cli
+            target: riscv64gc-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            build_web: false
+            cross: true
+            cross_arch: riscv64
           # Madhyamas CLI - macOS
           - package: madhyamas-cli
             target: x86_64-apple-darwin
@@ -112,6 +140,20 @@ jobs:
             build_web: false
             cross: true
             cross_arch: armv7
+          - package: madhyamas-mcp
+            target: arm-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            archive: tar.gz
+            build_web: false
+            cross: true
+            cross_arch: armv6
+          - package: madhyamas-mcp
+            target: riscv64gc-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            build_web: false
+            cross: true
+            cross_arch: riscv64
           # Madhyamas MCP - macOS
           - package: madhyamas-mcp
             target: x86_64-apple-darwin
@@ -145,6 +187,12 @@ jobs:
           if [ "${{ matrix.cross_arch }}" = "armv7" ]; then
             sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
             echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+          elif [ "${{ matrix.cross_arch }}" = "armv6" ]; then
+            sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+            echo "CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+          elif [ "${{ matrix.cross_arch }}" = "riscv64" ]; then
+            sudo apt-get install -y gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
+            echo "CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER=riscv64-linux-gnu-gcc" >> $GITHUB_ENV
           else
             sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
