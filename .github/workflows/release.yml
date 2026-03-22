@@ -31,6 +31,13 @@ jobs:
             archive: tar.gz
             build_web: true
             cross: true
+          - package: madhyamas
+            target: armv6-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            archive: tar.gz
+            build_web: true
+            cross: true
+            cross_arch: arm
           # Madhyamas Main - macOS
           - package: madhyamas
             target: x86_64-apple-darwin
@@ -61,6 +68,13 @@ jobs:
             archive: tar.gz
             build_web: false
             cross: true
+          - package: madhyamas-cli
+            target: armv6-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            archive: tar.gz
+            build_web: false
+            cross: true
+            cross_arch: arm
           # Madhyamas CLI - macOS
           - package: madhyamas-cli
             target: x86_64-apple-darwin
@@ -91,6 +105,13 @@ jobs:
             archive: tar.gz
             build_web: false
             cross: true
+          - package: madhyamas-mcp
+            target: armv6-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            archive: tar.gz
+            build_web: false
+            cross: true
+            cross_arch: arm
           # Madhyamas MCP - macOS
           - package: madhyamas-mcp
             target: x86_64-apple-darwin
@@ -121,8 +142,13 @@ jobs:
         if: matrix.cross
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          if [ "${{ matrix.cross_arch }}" = "arm" ]; then
+            sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+            echo "CARGO_TARGET_ARMV6_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+          else
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          fi
 
       - name: Cache cargo registry
         uses: actions/cache@v5
@@ -449,6 +475,7 @@ jobs:
             |----------|----------|
             | Linux x64 | `madhyamas-v${{ steps.version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz` |
             | Linux ARM64 | `madhyamas-v${{ steps.version.outputs.VERSION }}-aarch64-unknown-linux-gnu.tar.gz` |
+            | Linux ARM6 (Pi Zero) | `madhyamas-v${{ steps.version.outputs.VERSION }}-armv6-unknown-linux-gnueabihf.tar.gz` |
             | macOS Intel | `madhyamas-v${{ steps.version.outputs.VERSION }}-x86_64-apple-darwin.tar.gz` |
             | macOS Apple Silicon | `madhyamas-v${{ steps.version.outputs.VERSION }}-aarch64-apple-darwin.tar.gz` |
             | Windows x64 | `madhyamas-v${{ steps.version.outputs.VERSION }}-x86_64-pc-windows-msvc.zip` |
@@ -458,6 +485,8 @@ jobs:
             | Platform | Download |
             |----------|----------|
             | Linux x64 | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz` |
+            | Linux ARM64 | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-aarch64-unknown-linux-gnu.tar.gz` |
+            | Linux ARM6 (Pi Zero) | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-armv6-unknown-linux-gnueabihf.tar.gz` |
             | macOS Intel | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-x86_64-apple-darwin.tar.gz` |
             | macOS Apple Silicon | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-aarch64-apple-darwin.tar.gz` |
             | Windows x64 | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-x86_64-pc-windows-msvc.zip` |
@@ -466,6 +495,8 @@ jobs:
             | Platform | Download |
             |----------|----------|
             | Linux x64 | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz` |
+            | Linux ARM64 | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-aarch64-unknown-linux-gnu.tar.gz` |
+            | Linux ARM6 (Pi Zero) | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-armv6-unknown-linux-gnueabihf.tar.gz` |
             | macOS Intel | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-x86_64-apple-darwin.tar.gz` |
             | macOS Apple Silicon | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-aarch64-apple-darwin.tar.gz` |
             | Windows x64 | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-x86_64-pc-windows-msvc.zip` |
