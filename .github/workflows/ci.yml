@@ -161,15 +161,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- Madhyamas Main (with web UI) ---
+          # --- Madhyamas CLI (with web UI) ---
           # Linux x86_64
-          - package: madhyamas
+          - package: madhyamas-cli
             target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
             build_web: true
           # Linux ARM64 (Pi 4/5, etc.)
-          - package: madhyamas
+          - package: madhyamas-cli
             target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
@@ -177,7 +177,7 @@ jobs:
             cross: true
             cross_arch: aarch64
           # Linux ARM6 (Raspberry Pi Zero)
-          - package: madhyamas
+          - package: madhyamas-cli
             target: armv6-unknown-linux-gnueabihf
             os: ubuntu-latest
             archive: tar.gz
@@ -185,53 +185,23 @@ jobs:
             cross: true
             cross_arch: arm
           # macOS Intel
-          - package: madhyamas
+          - package: madhyamas-cli
             target: x86_64-apple-darwin
             os: macos-13
             archive: tar.gz
             build_web: true
           # macOS Apple Silicon
-          - package: madhyamas
+          - package: madhyamas-cli
             target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
             build_web: true
           # Windows x64
-          - package: madhyamas
+          - package: madhyamas-cli
             target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
             build_web: true
-
-          # --- Madhyamas CLI ---
-          - package: madhyamas-cli
-            target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            archive: tar.gz
-          - package: madhyamas-cli
-            target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            archive: tar.gz
-            cross: true
-            cross_arch: aarch64
-          - package: madhyamas-cli
-            target: armv6-unknown-linux-gnueabihf
-            os: ubuntu-latest
-            archive: tar.gz
-            cross: true
-            cross_arch: arm
-          - package: madhyamas-cli
-            target: x86_64-apple-darwin
-            os: macos-13
-            archive: tar.gz
-          - package: madhyamas-cli
-            target: aarch64-apple-darwin
-            os: macos-latest
-            archive: tar.gz
-          - package: madhyamas-cli
-            target: x86_64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
 
           # --- Madhyamas MCP ---
           - package: madhyamas-mcp
@@ -321,7 +291,7 @@ jobs:
         id: binary
         shell: bash
         run: |
-          if [ "${{ matrix.package }}" = "madhyamas" ]; then
+          if [ "${{ matrix.package }}" = "madhyamas-cli" ]; then
             echo "NAME=madhyamas" >> $GITHUB_OUTPUT
           else
             echo "NAME=${{ matrix.package }}" >> $GITHUB_OUTPUT
