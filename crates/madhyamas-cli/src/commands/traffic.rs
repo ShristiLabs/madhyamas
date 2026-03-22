@@ -105,7 +105,9 @@ impl TrafficCommands {
             }
             TrafficCommands::Search(args) => {
                 let client = ApiClient::new(api_url);
-                let result = client.get(&format!("traffic/search?q={}", args.query)).await?;
+                let result = client
+                    .get(&format!("traffic/search?q={}", args.query))
+                    .await?;
                 if args.json {
                     println!("{}", serde_json::to_string_pretty(&result)?);
                 } else {
@@ -145,13 +147,22 @@ fn print_traffic_list(result: &Value) {
             } else {
                 url.to_string()
             };
-            println!("{:<36} {:<8} {:<6} {:<50}", id, method, status, url_truncated);
+            println!(
+                "{:<36} {:<8} {:<6} {:<50}",
+                id, method, status, url_truncated
+            );
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(result).unwrap_or_default()
+        );
     }
 }
 
 fn print_traffic_detail(result: &Value) {
-    println!("{}", serde_json::to_string_pretty(result).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(result).unwrap_or_default()
+    );
 }

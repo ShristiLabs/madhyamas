@@ -16,7 +16,12 @@ use tracing_subscriber::FmtSubscriber;
 #[command(about = "CLI tool for interacting with Madhyamas proxy server")]
 struct Args {
     /// API server URL
-    #[arg(short, long, default_value = "http://127.0.0.1:3001", env = "MADHYAMAS_API_URL")]
+    #[arg(
+        short,
+        long,
+        default_value = "http://127.0.0.1:3001",
+        env = "MADHYAMAS_API_URL"
+    )]
     api_url: String,
 
     /// Enable verbose logging

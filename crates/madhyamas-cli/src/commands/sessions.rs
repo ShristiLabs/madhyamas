@@ -109,13 +109,12 @@ impl SessionCommands {
             SessionCommands::Export(args) => {
                 let client = ApiClient::new(api_url);
                 let result = client
-                    .get(&format!("sessions/{}/export?format={}", args.id, args.format))
+                    .get(&format!(
+                        "sessions/{}/export?format={}",
+                        args.id, args.format
+                    ))
                     .await?;
-                if args.json {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                }
+                println!("{}", serde_json::to_string_pretty(&result)?);
             }
         }
         Ok(())

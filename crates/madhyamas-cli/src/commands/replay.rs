@@ -125,7 +125,10 @@ impl ReplayCommands {
             ReplayCommands::Export(args) => {
                 let client = ApiClient::new(api_url);
                 let result = client
-                    .get(&format!("traffic/{}/export?format={}", args.id, args.format))
+                    .get(&format!(
+                        "traffic/{}/export?format={}",
+                        args.id, args.format
+                    ))
                     .await?;
                 if let Some(export) = result.get("export").and_then(|v| v.as_str()) {
                     println!("{}", export);
@@ -167,7 +170,10 @@ fn print_saved_requests(result: &Value) {
             println!("{:<36} {:<10} {:<50}", id, method, url_truncated);
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(result).unwrap_or_default()
+        );
     }
 }
 
@@ -177,16 +183,25 @@ fn print_replay_history(result: &Value) {
             println!("No replay history found.");
             return;
         }
-        println!("{:<36} {:<10} {:<6} {:<20}", "ID", "METHOD", "STATUS", "TIMESTAMP");
+        println!(
+            "{:<36} {:<10} {:<6} {:<20}",
+            "ID", "METHOD", "STATUS", "TIMESTAMP"
+        );
         println!("{}", "-".repeat(80));
         for entry in history {
             let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or("-");
             let method = entry.get("method").and_then(|v| v.as_str()).unwrap_or("-");
             let status = entry.get("status").and_then(|v| v.as_u64()).unwrap_or(0);
-            let timestamp = entry.get("timestamp").and_then(|v| v.as_str()).unwrap_or("-");
+            let timestamp = entry
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("-");
             println!("{:<36} {:<10} {:<6} {:<20}", id, method, status, timestamp);
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(result).unwrap_or_default()
+        );
     }
 }
