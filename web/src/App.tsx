@@ -86,7 +86,7 @@ function App() {
           setProxyAddress(`${host}:${port}`);
         }
       } catch (e) {
-        console.log("Failed to fetch proxy config:", e);
+        // ignore
       }
     };
     fetchProxyConfig();

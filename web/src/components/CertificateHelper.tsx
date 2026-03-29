@@ -93,8 +93,6 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
           const config = await response.json();
           proxyPort = config.proxy_port || 8888;
           apiPort = config.api_port || 3001;
-          console.log("Backend returned IP:", config.host, "API port:", apiPort);
-
           // Backend now returns detected private IP, so we can use it directly
           if (config.host && isUsableIP(config.host)) {
             setProxyConfig({
@@ -106,7 +104,7 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
           }
         }
       } catch (e) {
-        console.log("API config not available:", e);
+        // API config not available
       }
 
       // Try WebRTC to detect local IP
@@ -123,19 +121,12 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
           pc.onicecandidate = (ice) => {
             if (!ice || !ice.candidate) {
               // When gathering is complete, pick the best IP
-              console.log("WebRTC: All detected IPs:", detectedIPs);
               if (detectedIPs.length > 0) {
                 // Prioritize private IPs over public IPs
                 const privateIP = detectedIPs.find((ip) => isPrivateIP(ip));
                 const selectedIP = privateIP || detectedIPs[0];
-                console.log(
-                  "WebRTC: Selected IP:",
-                  selectedIP,
-                  privateIP ? "(private)" : "(public/fallback)",
-                );
                 resolve(selectedIP);
               } else {
-                console.log("WebRTC: No IPs detected");
                 resolve(null);
               }
               return;
@@ -146,11 +137,6 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
             if (ipMatch) {
               const ip = ipMatch[0];
               if (isUsableIP(ip) && !detectedIPs.includes(ip)) {
-                console.log(
-                  "WebRTC: Found IP:",
-                  ip,
-                  isPrivateIP(ip) ? "(private)" : "(public)",
-                );
                 detectedIPs.push(ip);
               }
             }
@@ -159,19 +145,12 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
           // Timeout after 2 seconds (faster since we're only checking local)
           setTimeout(() => {
             pc.close();
-            console.log("WebRTC: Timeout reached, detected IPs:", detectedIPs);
             if (detectedIPs.length > 0) {
               // Prioritize private IPs over public IPs
               const privateIP = detectedIPs.find((ip) => isPrivateIP(ip));
               const selectedIP = privateIP || detectedIPs[0];
-              console.log(
-                "WebRTC: Selected IP:",
-                selectedIP,
-                privateIP ? "(private)" : "(public/fallback)",
-              );
               resolve(selectedIP);
             } else {
-              console.log("WebRTC: No IPs detected after timeout");
               resolve(null);
             }
           }, 2000);
