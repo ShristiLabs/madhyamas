@@ -68,9 +68,6 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     }
 
     if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-      console.warn(
-        `[WebSocket] Max reconnect attempts (${maxReconnectAttempts}) reached`
-      );
       setConnectionInfo((prev) => ({
         ...prev,
         state: "disconnected",
@@ -85,10 +82,6 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       Math.pow(2, reconnectAttemptsRef.current);
     const jitter = Math.random() * 1000;
     const delay = Math.min(baseDelay + jitter, MAX_RECONNECT_INTERVAL);
-
-    console.log(
-      `[WebSocket] Scheduling reconnect in ${Math.round(delay)}ms (attempt ${reconnectAttemptsRef.current + 1}/${maxReconnectAttempts})`
-    );
 
     setConnectionInfo((prev) => ({
       ...prev,
@@ -123,7 +116,6 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log("[WebSocket] Connected");
         reconnectAttemptsRef.current = 0;
         setConnectionInfo((prev) => ({
           ...prev,
@@ -163,9 +155,6 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       };
 
       ws.onclose = (event) => {
-        console.log(
-          `[WebSocket] Closed (code: ${event.code}, reason: ${event.reason || "none"})`
-        );
         wsRef.current = null;
 
         setConnectionInfo((prev) => ({
@@ -219,7 +208,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
     } else {
-      console.warn("[WebSocket] Cannot send message, not connected");
+      // Not connected
     }
   }, []);
 

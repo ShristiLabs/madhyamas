@@ -92,7 +92,7 @@ export function useTrafficWebSocket(
         }
 
         case "Connected":
-          console.log("[TrafficWS] Connected with client ID:", message.data.client_id);
+          // Connected with client ID
           break;
 
         case "Error":
@@ -108,12 +108,10 @@ export function useTrafficWebSocket(
   );
 
   const handleConnect = useCallback((clientId: string) => {
-    console.log("[TrafficWS] Connection established:", clientId);
     setIsLoading(true); // Will be set to false when InitialTraffic arrives
   }, []);
 
   const handleDisconnect = useCallback(() => {
-    console.log("[TrafficWS] Disconnected");
     // Keep existing traffic data on disconnect
   }, []);
 

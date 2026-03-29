@@ -85,7 +85,7 @@ function App() {
           const port = config.proxy_port || 8888;
           setProxyAddress(`${host}:${port}`);
         }
-      } catch (e) {
+      } catch {
         // ignore
       }
     };

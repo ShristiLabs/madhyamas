@@ -103,7 +103,7 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
             return;
           }
         }
-      } catch (e) {
+      } catch {
         // API config not available
       }
 

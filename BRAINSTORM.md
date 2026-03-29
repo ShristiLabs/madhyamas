@@ -287,3 +287,251 @@ Despite the issues, several subsystems are exceptionally well-designed:
 18. Implement proper JWT with `jsonwebtoken` crate
 19. Create config file support (`config.toml`)
 20. Add batch API endpoints for bulk operations
+
+
+---
+
+## 🔄 Fresh Analysis — Round 15 (2026-03-29 08:17)
+
+> Deep-dive into: **plugin system** (manager, registry, hooks, types), **scripting runtime** (execution, API, templates), **replay engine** internals, **proxy engine** builder pattern & connection handling, **session management** edge cases, **gRPC interceptor** data structures, **WebSocket manager** search/filter logic, **TLS certificate management** security, and **performance monitoring** alerting gaps.
+
+---
+
+## 🔴 Critical / High-Impact
+
+### 621. ProxyEngine Builder Methods Use `Arc::get_mut().unwrap()` — Guaranteed Panic
+**Area:** `crates/madhyamas-core/src/proxy/engine.rs` — `with_mock_manager()`, `with_rewrite_manager()`, `with_breakpoint_manager()`, `with_throttle_manager()`, `with_ws_manager()`
+All five builder methods take `self: Arc<Self>`, call `Arc::get_mut(&mut self).unwrap()`, and mutate a field. `Arc::get_mut()` returns `None` if there are other `Arc` references. Since `ProxyEngine::new()` wraps in `Arc`, you can chain at most ONE `with_*` call before it panics.
+**Fix:** Use interior mutability (`RwLock<Option<...>>` or `OnceCell`) per field, or use a non-Arc builder struct that returns `Arc<Self>` only at the end.
+
+### 622. Plugin Registry `refresh()` Is a No-Op — Remote Plugin Installation Is Fake
+**Area:** `crates/madhyamas-core/src/plugin/registry.rs`
+`refresh()` fetches `_url` into a discarded variable, clears cache, calls `add_builtin_plugins()` (3 hardcoded plugins with empty download URLs), and returns `Ok(())`. Never contacts any remote server. `registry.madhyamas.dev` doesn't exist.
+**Fix:** Either implement real HTTP registry fetching, or mark methods as `unimplemented!()`.
+
+### 623. Script `execute()` Returns Fake Success — Silent Data Loss
+**Area:** `crates/madhyamas-core/src/scripting/runtime.rs`
+Fetches script into `_script` (unused), returns `ScriptResult { success: true, ... }` with `duration_ms: 0`. Records fake "execution" in history. Users think scripts are running.
+**Fix:** Return `ScriptResult { success: false, error: Some("No JS runtime integrated") }` instead.
+
+### 624. CA Private Key Stored Unencrypted with 0644 Permissions
+**Area:** `crates/madhyamas-core/src/tls/certificate.rs`
+CA key written to `~/.madhyamas/madhyamas-ca-key.pem` via `fs::write()` with default 0644 permissions. Any local user can read it and generate trusted certs for any domain.
+**Fix:** Set permissions to 0600 after writing. Consider passphrase encryption.
+
+### 625. gRPC Frame Search Is O(n) Linear Scan Over ALL Frames
+**Area:** `crates/madhyamas-core/src/grpc/interceptor.rs` — `get_stream_frames()`
+Iterates all frames (max 10,000) filtering by `stream_id`. `get_frames()` is worse: full scan + multiple stream lookups + retain.
+**Fix:** Index by stream_id using `HashMap<String, Vec<usize>>` alongside the flat Vec.
+
+---
+
+## 🟠 Important / Medium-Impact
+
+### 626. Plugin Dependency Check Ignores Version Constraints
+**Area:** `crates/madhyamas-core/src/plugin/manager.rs` — `check_dependencies()`
+Only checks `plugins.contains_key(dep_id)`, never compares required vs actual version. A plugin requiring `foo >= 2.0.0` loads next to `foo 0.1.0`.
+**Fix:** Parse versions with `semver` crate and validate constraints.
+
+### 627. Plugin System Discovers Manifests But Never Loads Code
+**Area:** `crates/madhyamas-core/src/plugin/manager.rs` — `load_plugin()`
+Reads TOML/JSON manifest, stores Plugin struct. Never loads `.so`/`.dll`/`.wasm`, never executes init code. Entire system is a manifest database.
+**Fix:** Add WASM validation (`wasmtime`) or dynamic library loading (`libloading`).
+
+### 628. No Script Syntax Validation on Registration
+**Area:** `crates/madhyamas-core/src/scripting/runtime.rs`
+Scripts stored as raw strings with zero validation. Invalid JS can be stored and "enabled" silently.
+**Fix:** Add `validate()` with basic syntax check. When integrating JS engine, use parse-only mode.
+
+### 629. ScriptConfig Limits Never Enforced
+**Area:** `crates/madhyamas-core/src/scripting/runtime.rs`
+`timeout_ms: 5000`, `max_memory_bytes: 10MB`, `allow_network: false`, `allow_fs: false` — all defined, none enforced.
+**Fix:** Enforce via JS engine sandbox API when integrated. Document as "planned" until then.
+
+### 630. Replay Engine 64KB Buffer Silently Truncates Large Responses
+**Area:** `crates/madhyamas-core/src/replay.rs`
+`vec![0u8; 65536]` + single `read()` — responses >64KB are silently discarded. No Content-Length check, no chunked encoding, no read loop.
+**Fix:** Use `reqwest` for replay requests (already a dependency) or add a read-until-close loop.
+
+### 631. Replay Doesn't Follow Redirects
+**Area:** `crates/madhyamas-core/src/replay.rs`
+3xx responses returned as-is. Users see redirect instead of final destination.
+**Fix:** Add `follow_redirects` option to `RequestModifications`.
+
+### 632. Session Import Discards All Response Data
+**Area:** `crates/madhyamas-core/src/session.rs` — `import_session()`
+Iterates entries, calls `store_request()` only — never `store_response()`. Exported request/response pairs lose responses on import.
+**Fix:** Add `store_response()` call after `store_request()`. One-line fix.
+
+### 633. `is_grpc_path()` Rejects Valid Services Without Dots
+**Area:** `crates/madhyamas-core/src/grpc/interceptor.rs`
+Requires `parts[0].contains('.')`. Services like `/myservice/MyMethod` are misclassified as non-gRPC.
+**Fix:** Relax to `parts.len() == 2 && !parts[0].is_empty()`. Rely on content-type header instead.
+
+### 634. gRPC Compression Defined but No Decompression Code
+**Area:** `crates/madhyamas-core/src/grpc/types.rs` + `frame.rs`
+`GrpcCompression` enum (None/Gzip/Deflate/Snappy) and `compressed` flag exist. No decompression — compressed frames will fail protobuf decoding.
+**Fix:** Add gzip decompression via `flate2` in `parse_frame()`.
+
+### 635. WebSocket Search Ignores Binary Messages
+**Area:** `crates/madhyamas-core/src/websocket.rs` — `get_messages()`
+Search checks `msg.payload.text` only, returns false for binary messages (text=None).
+**Fix:** Also search hex/base64-encoded `raw` bytes.
+
+### 636. Certificate Cache Has No Size Limit or TTL
+**Area:** `crates/madhyamas-core/src/tls/certificate.rs`
+Every hostname gets cached cert+key (~2-4KB each). Never evicted. 100K hosts = 200-400MB.
+**Fix:** Add LRU cache with configurable max size (e.g., 10K entries) and TTL (e.g., 24h).
+
+### 637. PerformanceMonitor Replaces Alerts Each Check — No History
+**Area:** `crates/madhyamas-core/src/performance/monitor.rs`
+`check_metrics()` creates new Vec, replaces old alerts. Previous alerts discarded. `cooldown_period_secs` never checked.
+**Fix:** Append instead of replace. Deduplicate by message. Implement cooldown.
+
+### 638. Plugin Search Path Uses Literal `~` — Won't Expand
+**Area:** `crates/madhyamas-core/src/plugin/manager.rs` — `new()`
+`PathBuf::from("~/.madhyamas/plugins")` — Rust doesn't expand `~`. Path treated as literal `./~` directory.
+**Fix:** Use `dirs::home_dir()` or `shellexpand::tilde()`.
+
+---
+
+## 🟡 Nice-to-Have / Enhancement
+
+### 639. Script API Documents `context.data` Inter-Hook Communication — Not Implemented
+**Area:** `crates/madhyamas-core/src/scripting/api.rs`
+Docs show sharing data between `onRequest` and `onResponse` via `context.data`. `execute_hook()` creates fresh context per call — no sharing.
+**Fix:** Share context by request_id across hook executions when implementing real runtime.
+
+### 640. Script Templates Require ES6+ — Document Minimum Engine Version
+**Area:** `crates/madhyamas-core/src/scripting/runtime.rs` — `ScriptTemplates`
+All 5 templates use template literals, `const`/`let`. If JS engine is ES5-only, templates won't work.
+**Fix:** Document required ECMAScript version. `boa_engine` supports ES2020+ so fine if using that.
+
+### 641. Replay History Has No Size Limit
+**Area:** `crates/madhyamas-core/src/replay.rs`
+Every replay appends to `RwLock<Vec<ReplayResult>>`. No max size, no TTL, no auto-clear.
+**Fix:** Add `max_history` with FIFO eviction (same pattern as WsManager).
+
+### 642. Session Export Version "1.0" — No Migration Path
+**Area:** `crates/madhyamas-core/src/session.rs`
+`import_session()` ignores `version` field. Format changes will break old exports.
+**Fix:** Check version on import, apply migration logic for known versions.
+
+### 643. GrpcStream.message_type Always Unary — Never Auto-Detected
+**Area:** `crates/madhyamas-core/src/grpc/types.rs`
+Always initialized to `Unary`. Should detect from HTTP/2 headers or frame counting.
+**Fix:** Detect server streaming from `te: trailers`, client streaming from multiple request frames.
+
+### 644. WebSocket Frame Parser Doesn't Handle Fragmented Messages
+**Area:** `crates/madhyamas-core/src/websocket.rs` — `WsFrameParser`
+No reassembly for FIN=0 + continuation frames. Large messages split into separate entries.
+**Fix:** Add per-connection fragmentation state machine.
+
+### 645. No WebSocket Ping/Pong Auto-Reply
+**Area:** `crates/madhyamas-core/src/proxy/engine.rs`
+`tokio::io::copy()` is a raw byte pipe. No Ping/Pong handling — connections may time out.
+**Fix:** Use `tungstenite` for proper WebSocket protocol handling.
+
+### 646. HealthCheck Struct Has No Actual Checking Logic
+**Area:** `crates/madhyamas-core/src/performance/monitor.rs`
+Returns `healthy: true, uptime_secs: 0, memory_usage_mb: 0` always. No real system queries.
+**Fix:** Query MemoryManager, proxy engine connection count, process uptime.
+
+### 647. PluginContext Clones Full Request/Response Bodies
+**Area:** `crates/madhyamas-core/src/plugin/hooks.rs`
+`body: Option<Vec<u8>>` cloned for each plugin. Multiple plugins = multiple body clones.
+**Fix:** Use `Arc<Vec<u8>>` for body sharing, or truncate to first 64KB.
+
+---
+
+## 🔵 Architecture / Long-Term
+
+### 648. Plugin + Scripting Systems Are Parallel — Should Unify
+Both intercept traffic at hook points with separate enums (`PluginHook` 10 variants, `ScriptHook` 7), separate contexts, separate results. Proxy would call both per request.
+**Fix:** Single "extension" trait with `on_request()`, `on_response()`. Priority field for ordering.
+
+### 649. Use `reqwest` for Upstream Connections — Eliminates 1000+ Lines
+Engine manually implements TCP, TLS, HTTP/1.1 parsing (~1000 lines). Replay duplicates ~300 lines. Same bugs in both. `reqwest` already a dependency.
+**Fix:** Use `reqwest::Client` for upstream (proxy→server). Only downstream needs raw TCP.
+
+### 650. HTTP/2 ALPN Needed to Unlock gRPC Pipeline
+gRPC module (frame parsing, protobuf decode, stream tracking) is well-built but dead code — proxy only speaks HTTP/1.1.
+**Fix:** `reqwest` gives HTTP/2 upstream for free. Use `hyper`+`h2` for downstream ALPN.
+
+### 651. Common `Persistable` Trait for All In-Memory Managers
+`ReplayManager`, `WsManager`, `GrpcManager`, plugin state — all use `RwLock<Vec/Map>` with no persistence. Pattern repeated 4x.
+**Fix:** Define `Persistable` trait with `save()`, `load()`, `clear()`, `size()`.
+
+---
+
+## 🟢 Positive Observations (Round 15)
+
+### 652. Plugin Manifest Design Is Comprehensive
+Version constraints, dependency declaration, settings schema with 9 field types (including Color, Url, Json), `enabled_by_default`. Well-designed for auto-generating UI config panels.
+
+### 653. Plugin Result Has Rich Middleware Semantics
+Continue/Stop/Modify/Respond pattern with `respond()` convenience and `error()` that correctly stops the chain.
+
+### 654. Script Templates Cover 5 Common Use Cases
+Log Requests, Add CORS, Block Domains, Modify Headers, Mock API — well-commented, modern JS, serve as documentation-by-example.
+
+### 655. gRPC Protobuf Decoder Handles All 5 Wire Types
+Varint, Fixed64, LengthDelimited, Fixed32, Group — with smart UTF-8→nested→base64 fallback for length-delimited. Varint has overflow protection.
+
+### 656. gRPC Filter Supports Multi-Dimensional Querying
+Service, method, path pattern, status code, direction, full-text search — all composable with offset/limit pagination.
+
+### 657. WebSocket Manager Has Proper FIFO Eviction
+`max_messages: 10000` with accurate per-connection byte counting and `clear_closed_connections()`.
+
+### 658. Certificate Generation Uses Modern ECDSA P-256
+Proper CA flags (`Unconstrained`), leaf certs include both `ServerAuth` and `ClientAuth` EKU.
+
+### 659. Replay RequestModifications Has 8 Unit Tests
+Covers URL, method, header add/remove, body, and combined modifications. Clean apply logic.
+
+### 660. MemoryManager Uses Lock-Free Atomics
+All 4 counters use `AtomicU64` with `Ordering::SeqCst`. Zero lock contention on hot path. GC config behind `RwLock`.
+
+---
+
+## 📋 Quick Wins (Round 15)
+
+| # | Idea | Effort |
+|---|------|--------|
+| 661 | Fix tilde expansion in plugin search path (#638) | 5 min |
+| 662 | Fix session import to also store responses (#632) | 10 min |
+| 663 | Set CA key file permissions to 0600 (#624) | 10 min |
+| 664 | Fix script execute() to return error not fake success (#623) | 5 min |
+| 665 | Relax `is_grpc_path()` dot requirement (#633) | 5 min |
+| 666 | Fix plugin dependency version checking (#626) | 20 min |
+| 667 | Add cert cache size limit (#636) | 15 min |
+| 668 | Fix PerformanceMonitor to append alerts (#637) | 10 min |
+| 669 | Add SessionExport version check on import (#642) | 15 min |
+| 670 | Add `max_history` to ReplayManager (#641) | 10 min |
+
+---
+
+## 🎯 Priority Recommendations (After Round 15)
+
+### Immediate
+1. **Fix script execute() to return error** (#664) — 5 min, prevents silent data loss
+2. **Fix session import to store responses** (#662) — 10 min, one-line fix
+3. **Fix tilde in plugin search path** (#661) — 5 min, plugin discovery broken everywhere
+4. **Set CA key file permissions to 0600** (#663) — 10 min, security hardening
+
+### This Week
+5. **Refactor ProxyEngine builders** — avoid `Arc::get_mut` panic (#621)
+6. **Fix plugin dependency version checking** (#666)
+7. **Add cert cache size limit** (#667)
+8. **Use `reqwest` for replay upstream** (#630) — fixes truncation + dedup
+
+### Next 2 Weeks
+9. **Unify plugin + scripting hook systems** (#648)
+10. **Use `reqwest` for proxy engine upstream** (#649) — eliminates 1000+ lines
+11. **Add gzip decompression for gRPC frames** (#634)
+12. **Implement WebSocket frame reassembly** (#644)
+
+---
+
+*Round 15 complete. 40 new observations (#621–#660). Appended to BRAINSTORM.md.*
