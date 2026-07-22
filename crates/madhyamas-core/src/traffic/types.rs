@@ -86,7 +86,7 @@ pub struct RequestData {
 }
 
 /// Response data structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ResponseData {
     /// HTTP status code
     pub status_code: u16,

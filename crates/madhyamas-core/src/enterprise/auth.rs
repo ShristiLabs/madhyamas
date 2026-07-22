@@ -87,7 +87,7 @@ impl ApiKey {
     pub fn generate(user_id: &str, name: &str) -> Self {
         let id = uuid::Uuid::new_v4().to_string();
         let key = format!(
-            "pf_{}",
+            "mad_{}",
             uuid::Uuid::new_v4().simple().to_string().replace('-', "")
         );
         let now = chrono::Utc::now().timestamp();

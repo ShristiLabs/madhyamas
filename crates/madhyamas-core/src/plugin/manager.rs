@@ -24,12 +24,16 @@ pub struct PluginManager {
 
 impl PluginManager {
     pub fn new() -> Self {
+        let home_plugin_dir = dirs::home_dir()
+            .map(|h| h.join(".madhyamas/plugins"))
+            .unwrap_or_else(|| PathBuf::from("~/.madhyamas/plugins"));
+
         Self {
             plugins: RwLock::new(HashMap::new()),
             stats: RwLock::new(HashMap::new()),
             plugin_dirs: vec![
                 PathBuf::from("./plugins"),
-                PathBuf::from("~/.madhyamas/plugins"),
+                home_plugin_dir,
             ],
             enabled: RwLock::new(true),
         }

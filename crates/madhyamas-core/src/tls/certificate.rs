@@ -61,6 +61,18 @@ impl CertificateManager {
                     .await
                     .map_err(|e| Error::Certificate(format!("Failed to write CA key: {}", e)))?;
 
+                // Set CA key permissions to 0600 (owner read/write only)
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let perms = std::fs::Permissions::from_mode(0o600);
+                    tokio::fs::set_permissions(&ca_key_path, perms)
+                        .await
+                        .map_err(|e| {
+                            Error::Certificate(format!("Failed to set CA key permissions: {}", e))
+                        })?;
+                }
+
                 (cert_pem, key_pem, key_pair, params)
             };
 

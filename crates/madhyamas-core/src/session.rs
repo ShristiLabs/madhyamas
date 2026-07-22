@@ -144,6 +144,7 @@ impl SessionManager {
             let mut entry_with_session = entry;
             entry_with_session.session_id = session.id.clone();
             self.traffic_store.store_request(&entry_with_session)?;
+            self.traffic_store.store_response(&entry_with_session.id, &entry_with_session.response.unwrap_or_default())?;
         }
 
         Ok(session)

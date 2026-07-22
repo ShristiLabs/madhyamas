@@ -75,6 +75,17 @@ impl McpServer {
     fn handle_request(&self, request: JsonRpcRequest) -> JsonRpcResponse {
         debug!("Handling method: {}", request.method);
 
+        // Handle notifications (no response expected)
+        if request.id.is_null() {
+            debug!("Received notification: {}", request.method);
+            return JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id: None,
+                result: None,
+                error: None,
+            };
+        }
+
         match request.method.as_str() {
             "initialize" => self.handle_initialize(request),
             "tools/list" => self.handle_list_tools(request),

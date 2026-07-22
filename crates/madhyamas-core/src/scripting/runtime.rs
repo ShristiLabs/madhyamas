@@ -194,8 +194,8 @@ impl ScriptRuntime {
         let execution = ScriptExecution {
             script_id: script_id.to_string(),
             duration_ms: 0,
-            success: true,
-            error: None,
+            success: false,
+            error: Some("No JS runtime integrated".to_string()),
             console: Vec::new(),
             timestamp: chrono::Utc::now(),
         };
@@ -208,7 +208,7 @@ impl ScriptRuntime {
             modified: false,
             continue_: true,
             response: None,
-            error: None,
+            error: Some("No JS runtime integrated".to_string()),
             console: vec![
                 "Script execution placeholder - integrate JS runtime for full support".to_string(),
             ],
