@@ -31,10 +31,7 @@ impl PluginManager {
         Self {
             plugins: RwLock::new(HashMap::new()),
             stats: RwLock::new(HashMap::new()),
-            plugin_dirs: vec![
-                PathBuf::from("./plugins"),
-                home_plugin_dir,
-            ],
+            plugin_dirs: vec![PathBuf::from("./plugins"), home_plugin_dir],
             enabled: RwLock::new(true),
         }
     }
