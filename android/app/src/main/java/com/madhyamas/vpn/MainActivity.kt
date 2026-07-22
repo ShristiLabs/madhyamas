@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.madhyamas.vpn.config.ProxyConfig
 import com.madhyamas.vpn.vpn.CertInstallActivity
@@ -37,11 +38,9 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.StartActivityForResult()
         ) { result ->
             if (result.resultCode == RESULT_OK) {
-                viewModelStore.let {
-                    // Re-fetch the ViewModel and start VPN
-                    val vm = viewModel<MainViewModel>(this)
-                    vm.startVpnAfterPermission()
-                }
+                // Re-fetch the ViewModel and start VPN
+                ViewModelProvider(this@MainActivity).get(MainViewModel::class.java)
+                    .startVpnAfterPermission()
             }
         }
 

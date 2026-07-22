@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b0e14" />
+  <title>Madhyamas — Open Source HTTP/HTTPS Debugging Proxy</title>
+  <meta name="description" content="A high-performance, cross-platform HTTP/HTTPS debugging proxy built in Rust with a modern web UI. The free, open-source alternative to Charles Proxy and Fiddler." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ===================== NAV ===================== -->
+  <header class="nav" id="nav">
+    <div class="container nav__inner">
+      <a href="#top" class="brand" aria-label="Madhyamas home">
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" width="28" height="28"><rect width="32" height="32" rx="7" fill="currentColor"/><path d="M9 22V10l7 8 7-8v12" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="brand__name">Madhyamas</span>
+      </a>
+
+      <nav class="nav__links" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#inspect">Inspection</a>
+        <a href="#manipulate">Manipulation</a>
+        <a href="#compare">Compare</a>
+        <a href="#ai">AI Agents</a>
+        <a href="#install">Install</a>
+      </nav>
+
+      <div class="nav__actions">
+        <a class="btn btn--ghost" href="https://github.com/ShristiLabs/madhyamas" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.8c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 4.7 18 5 18 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
+          <span>GitHub</span>
+        </a>
+        <a class="btn btn--primary" href="#install">Get Started</a>
+        <button class="nav__toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+    <div class="nav__mobile" id="navMobile" hidden>
+      <a href="#features">Features</a>
+      <a href="#inspect">Inspection</a>
+      <a href="#manipulate">Manipulation</a>
+      <a href="#compare">Compare</a>
+      <a href="#ai">AI Agents</a>
+      <a href="#install">Install</a>
+      <a class="btn btn--primary" href="https://github.com/ShristiLabs/madhyamas" target="_blank" rel="noopener">View on GitHub</a>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- ===================== HERO ===================== -->
+    <section class="hero">
+      <div class="hero__bg" aria-hidden="true">
+        <div class="hero__glow hero__glow--1"></div>
+        <div class="hero__glow hero__glow--2"></div>
+        <div class="hero__grid"></div>
+      </div>
+      <div class="container hero__inner">
+        <div class="hero__content">
+          <span class="pill">
+            <span class="pill__dot"></span> Open Source &middot; Rust-powered &middot; MIT / Apache-2.0
+          </span>
+          <h1 class="hero__title">
+            See every byte.<br />
+            <span class="grad">Debug any HTTP traffic.</span>
+          </h1>
+          <p class="hero__lead">
+            Madhyamas is a high-performance, cross-platform HTTP/HTTPS debugging proxy
+            with a modern web UI. The free, open-source alternative to Charles Proxy and Fiddler.
+          </p>
+          <div class="hero__cta">
+            <a class="btn btn--primary btn--lg" href="#install">
+              Install in minutes
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            <a class="btn btn--ghost btn--lg" href="https://github.com/ShristiLabs/madhyamas" target="_blank" rel="noopener">
+              View on GitHub
+            </a>
+          </div>
+          <ul class="hero__stats">
+            <li><strong>Rust</strong><span>Memory-safe core</span></li>
+            <li><strong>Web UI</strong><span>Browser-based</span></li>
+            <li><strong>8 platforms</strong><span>Linux &middot; macOS &middot; Windows &middot; ARM</span></li>
+          </ul>
+        </div>
+
+        <!-- Terminal mockup -->
+        <div class="terminal" aria-hidden="true">
+          <div class="terminal__bar">
+            <span class="terminal__dot terminal__dot--r"></span>
+            <span class="terminal__dot terminal__dot--y"></span>
+            <span class="terminal__dot terminal__dot--g"></span>
+            <span class="terminal__title">madhyamas — traffic</span>
+          </div>
+          <div class="terminal__body">
+<pre><span class="t-dim">$</span> madhyamas
+<span class="t-ok">✓</span> Proxy listening on <span class="t-blue">:8888</span>
+<span class="t-ok">✓</span> Web UI at <span class="t-blue">http://localhost:3001</span>
+<span class="t-ok">✓</span> CA cert ready for HTTPS interception
+
+<span class="t-dim">#  method  status  host              path              ms</span>
+<span class="t-num">1</span>  GET     <span class="t-green">200</span>    api.example.com   /v1/users         <span class="t-dim">42</span>
+<span class="t-num">2</span>  POST    <span class="t-green">201</span>    api.example.com   /v1/orders        <span class="t-dim">118</span>
+<span class="t-num">3</span>  GET     <span class="t-red">502</span>    pinned.app        /api/checkout     <span class="t-dim">--</span>
+<span class="t-num">4</span>  PUT     <span class="t-green">204</span>    cdn.example.com   /assets/img.png   <span class="t-dim">9</span>
+<span class="t-num">5</span>  GET     <span class="t-yellow">304</span>    api.example.com   /v1/users         <span class="t-dim">12</span>
+
+<span class="t-dim">→ Live capture running · WebSocket streaming</span></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== TRUST BAR ===================== -->
+    <section class="trust">
+      <div class="container trust__inner">
+        <span class="trust__label">Built with</span>
+        <div class="trust__logos">
+          <span>Rust</span><span>axum</span><span>hyper</span><span>tokio</span><span>rustls</span><span>React</span><span>TypeScript</span><span>Vite</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== FEATURES ===================== -->
+    <section class="section" id="features">
+      <div class="container">
+        <header class="section__head">
+          <span class="eyebrow">Core capabilities</span>
+          <h2>Everything you need to inspect traffic</h2>
+          <p class="section__sub">A complete debugging toolkit that captures, inspects, and manipulates HTTP, HTTPS, WebSocket, and gRPC traffic in real time.</p>
+        </header>
+
+        <div class="grid grid--3">
+          <article class="card">
+            <div class="card__icon card__icon--blue">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>HTTP/HTTPS Interception</h3>
+            <p>Capture and inspect all HTTP/HTTPS traffic in real time with automatic on-the-fly TLS certificate generation.</p>
+          </article>
+
+          <article class="card">
+            <div class="card__icon card__icon--cyan">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18M8 21h8" stroke-linecap="round"/></svg>
+            </div>
+            <h3>Modern Web UI</h3>
+            <p>A React-based interface with real-time WebSocket streaming — no polling, no refresh, just live traffic.</p>
+          </article>
+
+          <article class="card">
+            <div class="card__icon card__icon--violet">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round"/><circle cx="19" cy="18" r="2.5"/></svg>
+            </div>
+            <h3>Smart Filtering</h3>
+            <p>Filter by URL, method, status, host, content type, duration, headers, and cookies to find anything fast.</p>
+          </article>
+
+          <article class="card">
+            <div class="card__icon card__icon--green">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v6m0 8v6m10-10h-6M8 12H2" stroke-linecap="round"/><circle cx="12" cy="12" r="3"/></svg>
+            </div>
+            <h3>HTTP/2 Upstream</h3>
+            <p>Full HTTP/2 support for upstream connections with ALPN negotiation out of the box.</p>
+          </article>
+
+          <article class="card">
+            <div class="card__icon card__icon--amber">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9" stroke-linecap="round"/><path d="M21 4v5h-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>Request Replay</h3>
+            <p>Re-execute captured requests with modifications. Save and replay without retyping a thing.</p>
+          </article>
+
+          <article class="card">
+            <div class="card__icon card__icon--pink">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v6H4zM4 14h16v6H4z" stroke-linejoin="round"/><circle cx="8" cy="7" r="1" fill="currentColor"/><circle cx="8" cy="17" r="1" fill="currentColor"/></svg>
+            </div>
+            <h3>Session Management</h3>
+            <p>Save, load, and share debugging sessions. Export to HAR, import previous captures, switch contexts instantly.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== INSPECTION ===================== -->
+    <section class="section section--alt" id="inspect">
+      <div class="container">
+        <header class="section__head">
+          <span class="eyebrow">Traffic inspection</span>
+          <h2>Read bodies like a pro</h2>
+          <p class="section__sub">Syntax-highlighted JSON, image previews, decompression, and powerful query languages built in.</p>
+        </header>
+
+        <div class="split">
+          <div class="split__media" aria-hidden="true">
+            <div class="codecard">
+              <div class="codecard__tabs">
+                <span class="codecard__tab codecard__tab--active">Tree</span>
+                <span class="codecard__tab">Code</span>
+                <span class="codecard__chip">JSONPath</span>
+              </div>
+              <pre class="codecard__body"><span class="c-key">{</span>
+  <span class="c-prop">"store"</span>: {
+    <span class="c-prop">"book"</span>: [
+      { <span class="c-prop">"title"</span>: <span class="c-str">"Say Nothing"</span>, <span class="c-prop">"price"</span>: <span class="c-num">8.95</span> },
+      { <span class="c-prop">"title"</span>: <span class="c-str">"The Pragmatic Programmer"</span>, <span class="c-prop">"price"</span>: <span class="c-num">29.99</span> }
+    ]
+  }
+<span class="c-key">}</span>
+
+<span class="c-dim">// $.store.book[*].title</span>
+<span class="c-str">→ ["Say Nothing", "The Pragmatic Programmer"]</span></pre>
+            </div>
+          </div>
+          <ul class="featurelist">
+            <li>
+              <span class="featurelist__icon">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7" stroke-linecap="round"/></svg>
+              </span>
+              <div>
+                <h4>Syntax-highlighted JSON viewer</h4>
+                <p>Prism.js-powered highlighting with collapsible Tree and Code views, plus prettify / minify toggle.</p>
+              </div>
+            </li>
+            <li>
+              <span class="featurelist__icon">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4a7 7 0 1 1 0 14 7 7 0 0 1 0-14zm0 3v8m-4-4h8" stroke-linecap="round"/></svg>
+              </span>
+              <div>
+                <h4>JSONPath &amp; JMESPath queries</h4>
+                <p>Filter and extract JSON data with expressions like <code>$.store.book[*].title</code>.</p>
+              </div>
+            </li>
+            <li>
+              <span class="featurelist__icon">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+              <div>
+                <h4>Image preview</h4>
+                <p>Automatic rendering for PNG, JPEG, GIF, WebP, SVG, ICO, BMP, AVIF, and TIFF responses with download.</p>
+              </div>
+            </li>
+            <li>
+              <span class="featurelist__icon">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10" stroke-linecap="round"/></svg>
+              </span>
+              <div>
+                <h4>Decompression &amp; decoding</h4>
+                <p>Toggle gzip / deflate / brotli decompression on demand. Automatic base64 decoding of binary bodies.</p>
+              </div>
+            </li>
+            <li>
+              <span class="featurelist__icon">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-linejoin="round"/></svg>
+              </span>
+              <div>
+                <h4>Copy as cURL / HTTPie / fetch / wget</h4>
+                <p>Export any request as a ready-to-paste command-line command in your favorite tool.</p>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== MANIPULATION ===================== -->
+    <section class="section" id="manipulate">
+      <div class="container">
+        <header class="section__head">
+          <span class="eyebrow">Traffic manipulation</span>
+          <h2>Don't just watch — take control</h2>
+          <p class="section__sub">Pause, mock, rewrite, throttle, and replay traffic to reproduce any scenario.</p>
+        </header>
+
+        <div class="grid grid--4">
+          <article class="mini">
+            <div class="mini__icon mini__icon--blue">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13" stroke-linejoin="round"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            </div>
+            <h4>Breakpoints</h4>
+            <p>Pause requests or responses for inspection and modification before forwarding.</p>
+          </article>
+          <article class="mini">
+            <div class="mini__icon mini__icon--green">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16v10H4z" stroke-linejoin="round"/><path d="M8 12h8" stroke-linecap="round"/></svg>
+            </div>
+            <h4>Response Mocking</h4>
+            <p>Serve custom responses instead of hitting real servers. Collections, recording, import &amp; export.</p>
+          </article>
+          <article class="mini">
+            <div class="mini__icon mini__icon--violet">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h6M14 7h6M4 17h6M14 17h6" stroke-linecap="round"/><path d="M10 7l4 10" stroke-linecap="round"/></svg>
+            </div>
+            <h4>URL / Header Rewriting</h4>
+            <p>Automatically modify traffic based on rules — redirect, replace, inject headers.</p>
+          </article>
+          <article class="mini">
+            <div class="mini__icon mini__icon--amber">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 8 5M21 12a9 9 0 0 1-9 9 9 9 0 0 1-8-5" stroke-linecap="round"/><path d="M16 8h5V3M8 16H3v5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h4>Bandwidth Throttling</h4>
+            <p>Simulate slow networks with 3G, 4G, and DSL presets to test under real conditions.</p>
+          </article>
+        </div>
+
+        <div class="callout">
+          <div class="callout__icon">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div>
+            <h4>SSL/TLS error visibility</h4>
+            <p>Failed TLS handshakes (e.g. apps with certificate pinning) are recorded as 502 entries with a clear explanation of the cause — so nothing disappears silently.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== ADVANCED ===================== -->
+    <section class="section section--alt" id="advanced">
+      <div class="container">
+        <header class="section__head">
+          <span class="eyebrow">Advanced &amp; experimental</span>
+          <h2>Beyond plain HTTP</h2>
+          <p class="section__sub">WebSocket capture, gRPC debugging, scripting, and a plugin system to extend Madhyamas your way.</p>
+        </header>
+        <div class="grid grid--3">
+          <article class="card card--ghost">
+            <div class="card__icon card__icon--cyan">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12c2-4 4-4 6 0s4 4 6 0 4-4 6 0" stroke-linecap="round"/></svg>
+            </div>
+            <h3>WebSocket Capture</h3>
+            <p>Inspect WebSocket messages in real time alongside your HTTP traffic.</p>
+          </article>
+          <article class="card card--ghost">
+            <div class="card__icon card__icon--violet">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>gRPC Support <span class="tag tag--beta">Experimental</span></h3>
+            <p>Debug gRPC / Protocol Buffer traffic with frame parsing and stream inspection.</p>
+          </article>
+          <article class="card card--ghost">
+            <div class="card__icon card__icon--amber">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="m8 6-6 6 6 6M16 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>JS/TS Scripting <span class="tag tag--beta">Experimental</span></h3>
+            <p>Automate traffic manipulation with JavaScript and TypeScript scripts.</p>
+          </article>
+          <article class="card card--ghost">
+            <div class="card__icon card__icon--green">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 3 7v6c0 5 3.8 8.5 9 9 5.2-.5 9-4 9-9V7l-9-5z" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>Plugin System <span class="tag tag--beta">Experimental</span></h3>
+            <p>Extend functionality with custom Rust plugins. Enable, disable, and reload at runtime.</p>
+          </article>
+          <article class="card card--ghost">
+            <div class="card__icon card__icon--pink">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18" stroke-linecap="round"/><circle cx="12" cy="12" r="9"/></svg>
+            </div>
+            <h3>Enterprise Features <span class="tag tag--beta">Experimental</span></h3>
+            <p>Authentication, user management, RBAC, audit logging, and an onboarding wizard.</p>
+          </article>
+          <article class="card card--ghost">
+            <div class="card__icon card__icon--blue">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H4zM8 20h8M12 16v4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>Android VPN Companion</h3>
+            <p>A no-root Android app uses VpnService to transparently route device traffic to the proxy.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== AI AGENTS ===================== -->
+    <section class="section" id="ai">
+      <div class="container">
+        <div class="ai">
+          <div class="ai__content">
+            <span class="eyebrow">AI agent integration</span>
+            <h2>Debug with your AI assistant</h2>
+            <p class="section__sub">
+              Madhyamas ships with a built-in MCP (Model Context Protocol) server. Let AI agents like Claude
+              inspect traffic, create mocks, replay requests, and export sessions — directly from your conversation.
+            </p>
+            <ul class="checklist">
+              <li><span class="check"></span> List, search, and inspect captured traffic</li>
+              <li><span class="check"></span> Create and toggle mock responses</li>
+              <li><span class="check"></span> Replay requests with modifications</li>
+              <li><span class="check"></span> Export sessions as HAR or cURL</li>
+              <li><span class="check"></span> Full CLI with <code>--json</code> for machine-readable output</li>
+            </ul>
+            <a class="btn btn--primary" href="https://github.com/ShristiLabs/madhyamas#mcp-server-for-ai-agents" target="_blank" rel="noopener">Read MCP docs</a>
+          </div>
+          <div class="ai__media" aria-hidden="true">
+            <div class="chat">
+              <div class="chat__msg chat__msg--user">Show me all failed requests to /api/users in the last 10 minutes</div>
+              <div class="chat__msg chat__msg--ai">
+                <span class="chat__who">Claude</span>
+                Found 3 failed requests to <code>/api/users</code>:
+                <ul>
+                  <li><span class="t-red">502</span> — cert pinning failure</li>
+                  <li><span class="t-red">500</span> — upstream timeout (8.2s)</li>
+                  <li><span class="t-red">401</span> — expired token</li>
+                </ul>
+                Want me to mock a valid token and replay them?
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== COMPARISON ===================== -->
+    <section class="section section--alt" id="compare">
+      <div class="container">
+        <header class="section__head">
+          <span class="eyebrow">How it compares</span>
+          <h2>Why Madhyamas?</h2>
+          <p class="section__sub">Open source, free, cross-platform, Rust-powered, and built for the modern web.</p>
+        </header>
+
+        <div class="tablewrap">
+          <table class="compare">
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th class="compare__hl">Madhyamas</th>
+                <th>Charles</th>
+                <th>mitmproxy</th>
+                <th>Fiddler</th>
+                <th>Proxyman</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Open Source</td><td class="compare__hl"><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+              <tr><td>Free</td><td class="compare__hl"><span class="yes">Yes</span></td><td><span class="no">$50</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="meh">Freemium</span></td></tr>
+              <tr><td>Cross-platform</td><td class="compare__hl"><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="meh">Windows</span></td><td><span class="meh">macOS</span></td></tr>
+              <tr><td>Web UI</td><td class="compare__hl"><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="meh">Limited</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+              <tr><td>Rust-powered</td><td class="compare__hl"><span class="yes">Yes</span></td><td><span class="no">Java</span></td><td><span class="no">Python</span></td><td><span class="no">.NET</span></td><td><span class="no">Swift</span></td></tr>
+              <tr><td>gRPC</td><td class="compare__hl"><span class="meh">Exp.</span></td><td><span class="no">No</span></td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+              <tr><td>WebSocket</td><td class="compare__hl"><span class="yes">Yes</span></td><td><span class="meh">Limited</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td></tr>
+              <tr><td>Scripting</td><td class="compare__hl"><span class="meh">JS/TS</span></td><td><span class="no">No</span></td><td><span class="yes">Python</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+              <tr><td>JSON Query</td><td class="compare__hl"><span class="yes">JSONPath + JMESPath</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+              <tr><td>MCP / AI Agent</td><td class="compare__hl"><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== INSTALL ===================== -->
+    <section class="section" id="install">
+      <div class="container">
+        <header class="section__head">
+          <span class="eyebrow">Get started</span>
+          <h2>Install in minutes</h2>
+          <p class="section__sub">A single unified binary includes the proxy, web UI, MCP server, and CLI. No runtime dependencies.</p>
+        </header>
+
+        <div class="install">
+          <div class="install__col">
+            <h3 class="install__title">From source</h3>
+            <div class="terminal terminal--sm">
+              <div class="terminal__bar"><span class="terminal__title">build</span></div>
+              <pre class="terminal__body"><span class="t-dim">#</span> Clone &amp; build
+git clone https://github.com/ShristiLabs/madhyamas.git
+cd madhyamas
+cargo build --release
+
+<span class="t-dim">#</span> Run the proxy + web UI
+./target/release/madhyamas</pre>
+            </div>
+          </div>
+
+          <div class="install__col">
+            <h3 class="install__title">Pre-built binaries</h3>
+            <p class="install__text">Download the latest release for your platform from the Releases page. Available for:</p>
+            <div class="platforms">
+              <span class="platform">Linux x86_64</span>
+              <span class="platform">Linux ARM64</span>
+              <span class="platform">Linux ARMv7</span>
+              <span class="platform">Linux ARMv6</span>
+              <span class="platform">Linux RISC-V</span>
+              <span class="platform">macOS Intel</span>
+              <span class="platform">macOS Apple Silicon</span>
+              <span class="platform">Windows x64</span>
+            </div>
+            <a class="btn btn--ghost" href="https://github.com/ShristiLabs/madhyamas/releases" target="_blank" rel="noopener">Download releases</a>
+          </div>
+
+          <div class="install__col">
+            <h3 class="install__title">Subcommands</h3>
+            <div class="terminal terminal--sm">
+              <div class="terminal__bar"><span class="terminal__title">usage</span></div>
+              <pre class="terminal__body">madhyamas              <span class="t-dim"># proxy + web UI</span>
+madhyamas serve        <span class="t-dim"># same as above</span>
+madhyamas mcp          <span class="t-dim"># MCP server (stdio)</span>
+madhyamas traffic list <span class="t-dim"># CLI command</span>
+madhyamas --help       <span class="t-dim"># all commands</span></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="quickstart">
+          <h3>Quick start</h3>
+          <ol>
+            <li>Run <code>madhyamas</code> — proxy on <code>:8888</code>, web UI on <code>:3001</code></li>
+            <li>Point your browser or app proxy to <code>localhost:8888</code></li>
+            <li>Install the CA cert from <code>~/.madhyamas/certs/madhyamas-ca.pem</code> for HTTPS</li>
+            <li>Open <code>http://localhost:3001</code> and start debugging</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== CTA ===================== -->
+    <section class="cta">
+      <div class="container cta__inner">
+        <h2>Start debugging smarter today</h2>
+        <p>Free, open source, and built to last. Star the repo and join the community.</p>
+        <div class="cta__btns">
+          <a class="btn btn--primary btn--lg" href="https://github.com/ShristiLabs/madhyamas" target="_blank" rel="noopener">Star on GitHub</a>
+          <a class="btn btn--ghost btn--lg" href="https://github.com/ShristiLabs/madhyamas/issues" target="_blank" rel="noopener">Report an issue</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== FOOTER ===================== -->
+  <footer class="footer">
+    <div class="container footer__inner">
+      <div class="footer__brand">
+        <a href="#top" class="brand">
+          <span class="brand__mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="24" height="24"><rect width="32" height="32" rx="7" fill="currentColor"/><path d="M9 22V10l7 8 7-8v12" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <span class="brand__name">Madhyamas</span>
+        </a>
+        <p class="footer__tag">Open source HTTP/HTTPS debugging proxy, powered by Rust.</p>
+      </div>
+      <div class="footer__cols">
+        <div class="footer__col">
+          <h5>Product</h5>
+          <a href="#features">Features</a>
+          <a href="#inspect">Inspection</a>
+          <a href="#manipulate">Manipulation</a>
+          <a href="#ai">AI Agents</a>
+        </div>
+        <div class="footer__col">
+          <h5>Resources</h5>
+          <a href="https://github.com/ShristiLabs/madhyamas#readme" target="_blank" rel="noopener">Documentation</a>
+          <a href="https://github.com/ShristiLabs/madhyamas/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="#install">Install</a>
+          <a href="#compare">Compare</a>
+        </div>
+        <div class="footer__col">
+          <h5>Community</h5>
+          <a href="https://github.com/ShristiLabs/madhyamas" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/ShristiLabs/madhyamas/issues" target="_blank" rel="noopener">Issues</a>
+          <a href="https://github.com/ShristiLabs/madhyamas/discussions" target="_blank" rel="noopener">Discussions</a>
+        </div>
+      </div>
+    </div>
+    <div class="container footer__bottom">
+      <span>Dual-licensed under MIT OR Apache-2.0.</span>
+      <span>&copy; <span id="year"></span> Madhyamas contributors.</span>
+    </div>
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

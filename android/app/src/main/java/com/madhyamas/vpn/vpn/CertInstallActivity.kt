@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.security.KeyChain
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -15,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -92,10 +92,11 @@ class CertInstallActivity : ComponentActivity() {
     }
 
     private fun launchCertInstaller(certBytes: ByteArray) {
-        val intent = Intent(KeyChain.ACTION_INSTALL).apply {
-            putExtra(KeyChain.EXTRA_CERTIFICATE, certBytes)
-            // The certificate name shown in the install dialog
-            putExtra(Intent.EXTRA_TITLE, "Madhyamas CA Certificate")
+        // Use the credentials install intent. The action string and extra keys
+        // are not exposed as public constants on KeyChain, so they are hardcoded.
+        val intent = Intent("android.credentials.INSTALL").apply {
+            putExtra("name", "Madhyamas CA Certificate")
+            putExtra("CERT", certBytes)
         }
         startActivity(intent)
     }
