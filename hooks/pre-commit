@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Pre-commit hook: run cargo fmt --check and clippy before committing.
+# Stash unstaged changes so we only lint what's being committed.
+#
+# Install with:  ./hooks/install.sh
+
+set -euo pipefail
+
+# Only run for Rust changes; skip otherwise
+STAGED_RUST=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.rs$' || true)
+STAGED_WEB=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^web/(\.(eslintrc|prettierrc)|package\.json|tsconfig)' || true)
+
+if [ -z "$STAGED_RUST" ] && [ -z "$STAGED_WEB" ]; then
+  echo "pre-commit: no Rust or frontend config changes, skipping checks."
+  exit 0
+fi
+
+# Stash any unstaged changes (including untracked) so checks run on staged tree
+STASHED=0
+if ! git diff --quiet; then
+  git stash push --keep-index --include-untracked --message "pre-commit-hook" >/dev/null 2>&1
+  STASHED=1
+fi
+
+cleanup() {
+  if [ "$STASHED" -eq 1 ]; then
+    git stash pop >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+# ---------------------------------------------------------------------------
+# Rust: formatting check
+# ---------------------------------------------------------------------------
+if [ -n "$STAGED_RUST" ]; then
+  echo "pre-commit: checking Rust formatting (cargo fmt --check)..."
+  if ! cargo fmt --all -- --check 2>&1; then
+    echo ""
+    echo "pre-commit: FAIL — Rust formatting issues detected."
+    echo "  Fix with:  cargo fmt --all"
+    echo "  Then re-stage and commit again."
+    exit 1
+  fi
+  echo "pre-commit: Rust formatting OK."
+
+  # -------------------------------------------------------------------------
+  # Rust: clippy (fast check, deny warnings)
+  # -------------------------------------------------------------------------
+  echo "pre-commit: running clippy (this may take a moment)..."
+  if ! cargo clippy --all-targets --all-features -- -D warnings 2>&1; then
+    echo ""
+    echo "pre-commit: FAIL — clippy reported issues."
+    echo "  Fix with:  cargo clippy --all-targets --all-features -- -D warnings"
+    echo "  Then re-stage and commit again."
+    exit 1
+  fi
+  echo "pre-commit: clippy OK."
+fi
+
+# ---------------------------------------------------------------------------
+# Frontend: lint (if web config/source changed)
+# ---------------------------------------------------------------------------
+WEB_DIR="$(git rev-parse --show-toplevel)/web"
+if [ -n "$STAGED_WEB" ] && [ -f "$WEB_DIR/package.json" ]; then
+  echo "pre-commit: running frontend lint..."
+  if (cd "$WEB_DIR" && npm run lint -- --max-warnings 0 2>&1); then
+    echo "pre-commit: frontend lint OK."
+  else
+    echo ""
+    echo "pre-commit: FAIL — frontend lint issues detected."
+    echo "  Fix with:  cd web && npm run lint -- --fix"
+    exit 1
+  fi
+fi
+
+echo "pre-commit: all checks passed."
+exit 0

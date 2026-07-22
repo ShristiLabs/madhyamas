@@ -484,6 +484,26 @@ The web UI is embedded into the Rust binary at compile time via `rust-embed`. Fo
 3. The backend serves the web UI at `http://localhost:3001`
 4. For production builds, always build the web UI first (`cd web && npm run build`), then rebuild the Rust binary
 
+### Git Hooks (Pre-commit Checks)
+
+A pre-commit hook is provided to catch formatting and clippy issues before they reach CI. To install:
+
+```bash
+./hooks/install.sh
+```
+
+This installs a `pre-commit` hook that runs:
+
+- **`cargo fmt --all -- --check`** — fails if any Rust file is not formatted
+- **`cargo clippy --all-targets --all-features -- -D warnings`** — fails on any clippy warning
+- **`npm run lint`** — fails on frontend lint issues (when web files are changed)
+
+The hook only runs when `.rs` files or frontend config files are staged. To bypass temporarily:
+
+```bash
+git commit --no-verify
+```
+
 ## License
 
 Dual-licensed under MIT OR Apache-2.0.
