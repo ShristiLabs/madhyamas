@@ -95,8 +95,8 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Build (ci-release profile)
-        run: cargo build --verbose --profile ci-release
+      - name: Build (debug profile — fast compilation for checks)
+        run: cargo build --verbose
 
       - name: Install nextest
         uses: taiki-e/install-action@v2
