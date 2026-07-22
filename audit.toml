@@ -1,0 +1,10 @@
+# cargo-audit configuration
+# https://rustsec.org/advisories/
+
+[advisories]
+# Ignore unmaintained crate warnings — these are informational, not
+# security vulnerabilities. We track them but don't fail CI.
+ignore = [
+    "RUSTSEC-2026-0173", # proc-macro-error2 is unmaintained
+    "RUSTSEC-2024-0436", # paste is unmaintained (transitive)
+]

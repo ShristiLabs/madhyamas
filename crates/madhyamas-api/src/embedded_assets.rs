@@ -30,10 +30,8 @@ pub fn serve_embedded(path: &str) -> Option<Response<Body>> {
         None => {
             // SPA fallback: serve index.html for non-asset routes
             if !path.starts_with("assets/") && !path.starts_with("favicon") && !path.contains('.') {
-                match WebAssets::get("index.html") {
-                    Some(f) => (f, "index.html"),
-                    None => return None,
-                }
+                let f = WebAssets::get("index.html")?;
+                (f, "index.html")
             } else {
                 return None;
             }
