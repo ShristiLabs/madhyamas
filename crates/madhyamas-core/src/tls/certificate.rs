@@ -23,10 +23,21 @@ pub struct CertificateManager {
     ca_key_pair: KeyPair,
     /// CA certificate params for creating issuer
     ca_params: CertificateParams,
-    /// Cached leaf certificates by hostname
-    cache: RwLock<HashMap<String, GeneratedCert>>,
+    /// Cached leaf certificates by hostname (with creation timestamp)
+    cache: RwLock<HashMap<String, CachedCert>>,
     /// Path to store certificates
     cert_path: String,
+    /// Maximum cache entries (LRU eviction)
+    max_cache_size: usize,
+    /// Cache TTL in seconds
+    cache_ttl_secs: u64,
+}
+
+/// A cached certificate with its creation timestamp
+#[derive(Clone)]
+struct CachedCert {
+    cert: GeneratedCert,
+    created_at: std::time::Instant,
 }
 
 impl CertificateManager {
@@ -83,6 +94,8 @@ impl CertificateManager {
             ca_params,
             cache: RwLock::new(HashMap::new()),
             cert_path: cert_path.to_string(),
+            max_cache_size: 10_000,
+            cache_ttl_secs: 24 * 60 * 60, // 24 hours
         }))
     }
 
@@ -150,13 +163,19 @@ impl CertificateManager {
         &self.ca_cert_pem
     }
 
-    /// Generate a leaf certificate for a specific hostname
+    /// Generate a leaf certificate for a specific hostname.
+    ///
+    /// Uses an LRU-style cache with a configurable max size (default 10K entries)
+    /// and TTL (default 24h). Expired entries are evicted on access.
     pub fn generate_cert_for_host(&self, hostname: &str) -> crate::Result<GeneratedCert> {
-        // Check cache first
+        // Check cache first (with TTL check)
         {
             let cache = self.cache.read();
-            if let Some(cert) = cache.get(hostname) {
-                return Ok(cert.clone());
+            if let Some(entry) = cache.get(hostname) {
+                let age = entry.created_at.elapsed().as_secs();
+                if age < self.cache_ttl_secs {
+                    return Ok(entry.cert.clone());
+                }
             }
         }
 
@@ -199,10 +218,34 @@ impl CertificateManager {
             private_key: key_pair.serialize_pem().into_bytes(),
         };
 
-        // Cache the certificate
+        // Cache the certificate with eviction
         {
             let mut cache = self.cache.write();
-            cache.insert(hostname.to_string(), generated.clone());
+
+            // Evict expired entries
+            let ttl = self.cache_ttl_secs;
+            cache.retain(|_, v| v.created_at.elapsed().as_secs() < ttl);
+
+            // If still over max size, evict oldest entries
+            if cache.len() >= self.max_cache_size {
+                let to_remove: Vec<String> = cache
+                    .iter()
+                    .min_by_key(|(_, v)| v.created_at)
+                    .map(|(k, _)| k.clone())
+                    .into_iter()
+                    .collect();
+                for key in to_remove {
+                    cache.remove(&key);
+                }
+            }
+
+            cache.insert(
+                hostname.to_string(),
+                CachedCert {
+                    cert: generated.clone(),
+                    created_at: std::time::Instant::now(),
+                },
+            );
         }
 
         Ok(generated)

@@ -8,33 +8,63 @@ A high-performance, cross-platform HTTP/HTTPS debugging proxy built in Rust with
 
 ### Core Capabilities
 
-- **HTTP/HTTPS Traffic Interception** - Capture and inspect all HTTP/HTTPS traffic in real-time
-- **TLS/SSL Certificate Generation** - Automatic on-the-fly certificate generation for HTTPS interception
-- **Traffic Inspection UI** - Modern React-based web UI for viewing and analyzing traffic
-- **Request/Response Filtering** - Filter by URL, method, status code, and more
+- **HTTP/HTTPS Traffic Interception** — Capture and inspect all HTTP/HTTPS traffic in real-time
+- **TLS/SSL Certificate Generation** — Automatic on-the-fly certificate generation for HTTPS interception
+- **Traffic Inspection UI** — Modern React-based web UI for viewing and analyzing traffic
+- **Request/Response Filtering** — Filter by URL, method, status code, host, content type, duration, headers, and cookies
+- **Real-time WebSocket Updates** — Live traffic streaming via WebSocket (no polling required)
+- **HTTP/2 Upstream Support** — Full HTTP/2 support for upstream connections with ALPN negotiation
+
+### Traffic Inspection
+
+- **Syntax-Highlighted JSON Viewer** — Prism.js-powered syntax highlighting for JSON bodies with Code and Tree views
+- **JSON Prettify/Minify** — Toggle between prettified (2-space indent) and minified JSON output
+- **JSONPath Queries** — Filter and extract JSON data using JSONPath expressions (e.g., `$.store.book[*].title`)
+- **JMESPath Queries** — Query JSON data using JMESPath expressions (e.g., `store.book[*].title`)
+- **Image Preview** — Automatic image rendering for image responses (PNG, JPEG, GIF, WebP, SVG, ICO, BMP, AVIF, TIFF) with download support
+- **Compression Toggle** — Decompress gzip/deflate/brotli response bodies on demand with a toggle button
+- **Base64 Body Decoding** — Automatic decoding of base64-prefixed binary bodies
+- **Request/Response Size Tracking** — Accurate size computation (headers + body) displayed in traffic list and detail views
+- **Body Search** — Full-text search within request and response bodies
+- **Copy as cURL/HTTPie/fetch/wget** — Export any request as a command-line command
 
 ### Traffic Manipulation
 
-- **Breakpoints** - Pause requests/responses for inspection and modification
-- **Response Mocking** - Serve custom responses instead of hitting real servers
-- **URL/Header Rewriting** - Automatically modify traffic based on rules
-- **Bandwidth Throttling** - Simulate slow network conditions (3G, 4G, DSL presets)
-- **Request Replay** - Re-execute captured requests with modifications
+- **Breakpoints** — Pause requests/responses for inspection and modification before forwarding
+- **Response Mocking** — Serve custom responses instead of hitting real servers; supports collections, recording, import/export
+- **URL/Header Rewriting** — Automatically modify traffic based on rules
+- **Bandwidth Throttling** — Simulate slow network conditions (3G, 4G, DSL presets)
+- **Request Replay** — Re-execute captured requests with modifications
+
+### SSL/TLS Error Visibility
+
+- **Failed TLS Handshake Recording** — CONNECT requests that fail TLS handshake (e.g., Android apps with certificate pinning) are recorded as 502 traffic entries so they're visible in the UI, with a clear error message explaining the cause
 
 ### Advanced Features
 
-- **WebSocket Traffic Capture** - Inspect WebSocket messages in real-time
-- **gRPC Support** - Debug gRPC/Protocol Buffer traffic with frame parsing
-- **JavaScript/TypeScript Scripting** - Automate traffic manipulation with scripts
-- **Plugin System** - Extend functionality with custom Rust plugins
-- **MCP Server** - AI agent integration via Model Context Protocol
+- **WebSocket Traffic Capture** — Inspect WebSocket messages in real-time
+- **gRPC Support** _(Experimental)_ — Debug gRPC/Protocol Buffer traffic with frame parsing
+- **JavaScript/TypeScript Scripting** _(Experimental)_ — Automate traffic manipulation with scripts
+- **Plugin System** _(Experimental)_ — Extend functionality with custom Rust plugins
+- **MCP Server** — AI agent integration via Model Context Protocol
+
+> **Note:** Features marked Experimental have partial implementations and may be incomplete.
 
 ### Session Management
 
-- **Session Save/Load** - Persist and restore debugging sessions
-- **HAR Export** - Export traffic in HAR format for sharing
-- **cURL Export** - Generate cURL commands for any request
-- **Persistence Layer** - SQLite-based traffic storage
+- **Session Save/Load** — Persist and restore debugging sessions
+- **HAR Export** — Export traffic in HAR format for sharing
+- **Session Import** — Import previously exported sessions
+- **cURL Export** — Generate cURL commands for any request
+- **Persistence Layer** — SQLite-based traffic storage with configurable retention
+
+### Security & Configuration
+
+- **Configurable Rate Limiting** — Opt-in API rate limiting (disabled by default) with configurable requests/sec and burst size
+- **CORS Protection** — Safe-origin CORS policy for the web UI
+- **Security Headers** — X-Frame-Options, X-Content-Type-Options, Referrer-Policy headers
+- **Request Body Size Limit** — 10MB limit to prevent OOM from large payloads
+- **Enterprise Features** _(Experimental)_ — Authentication, user management, RBAC, audit logging, onboarding wizard
 
 ## Comparison with Other Tools
 
@@ -45,14 +75,17 @@ A high-performance, cross-platform HTTP/HTTPS debugging proxy built in Rust with
 | **Cross-Platform** | ✅        | ✅            | ✅          | Windows   | macOS      |
 | **Web UI**         | ✅        | ❌            | Limited     | ❌        | ❌         |
 | **Rust-Powered**   | ✅        | ❌ (Java)     | ❌ (Python) | ❌ (.NET) | ❌ (Swift) |
-| **gRPC Support**   | ✅        | ❌            | ✅          | ❌        | ❌         |
+| **gRPC Support**   | ✅ (Experimental) | ❌            | ✅          | ❌        | ❌         |
 | **WebSocket**      | ✅        | Limited       | ✅          | ✅        | ✅         |
-| **Scripting**      | ✅ JS/TS  | ❌            | ✅ Python   | ❌        | ❌         |
-| **Plugin System**  | ✅        | ❌            | ✅          | ✅        | ❌         |
+| **Scripting**      | ✅ JS/TS (Experimental) | ❌            | ✅ Python   | ❌        | ❌         |
+| **Plugin System**  | ✅ (Experimental) | ❌            | ✅          | ✅        | ❌         |
+| **JSON Query**     | ✅ JSONPath + JMESPath | ❌            | ❌          | ❌        | ❌         |
+| **Image Preview**  | ✅        | ✅            | ❌          | ✅        | ✅         |
+| **MCP/AI Agent**   | ✅        | ❌            | ❌          | ❌        | ❌         |
 
 ## Requirements
 
-- **Rust** 1.75+ (for building from source)
+- **Rust** 1.88+ (for building from source)
 - **Node.js** 18+ (for web UI development)
 - **Cargo** (comes with Rust)
 
@@ -65,12 +98,13 @@ A high-performance, cross-platform HTTP/HTTPS debugging proxy built in Rust with
 git clone https://github.com/madhyamas/madhyamas.git
 cd madhyamas
 
-# Build the backend
+# Build the backend (includes embedded web UI)
 cargo build --release
 
-# Install web UI dependencies
+# Or build web UI separately for development
 cd web
 npm install
+npm run build
 ```
 
 ### Pre-built Binaries
@@ -145,9 +179,27 @@ Options:
   -m, --max-requests <NUM>    Maximum requests to keep in memory [default: 10000]
   -v, --verbose               Enable verbose logging
       --no-https              Disable HTTPS interception
+      --rate-limit            Enable API rate limiting (disabled by default)
+      --rate-limit-rps <NUM>  Rate limit: max requests per second per peer IP [default: 600]
+      --rate-limit-burst <N>  Rate limit: burst size [default: 1000]
   -h, --help                  Print help
   -V, --version               Print version
 ```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `RUST_LOG` | Logging level (trace/debug/info/warn/error) | `info` |
+| `MADHYAMAS_HOST` | Bind host | `127.0.0.1` |
+| `MADHYAMAS_API_PORT` | API port | `3001` |
+| `MADHYAMAS_PROXY_PORT` | Proxy port | `8888` |
+| `MADHYAMAS_PUBLIC_IP` | Public IP shown to users for remote access | — |
+| `MADHYAMAS_API_URL` | API URL for CLI/MCP modes | `http://127.0.0.1:3001` |
+| `MADHYAMAS_WEB_DIR` | Override web asset directory (dev only) | — |
+| `MADHYAMAS_RATE_LIMIT` | Enable API rate limiting | `false` |
+| `MADHYAMAS_RATE_LIMIT_RPS` | Rate limit requests per second | `600` |
+| `MADHYAMAS_RATE_LIMIT_BURST` | Rate limit burst size | `1000` |
 
 ### Data Directory
 
@@ -174,6 +226,15 @@ Madhyamas stores all runtime data in `~/.madhyamas/` by default:
 
 3. Open the web UI: `http://localhost:3001`
 
+### Mobile Device Setup (Android/iOS)
+
+1. Connect your mobile device to the same network as the machine running Madhyamas
+2. Configure the device's Wi-Fi proxy to use the machine's IP and port 8888
+3. Install the CA certificate on the device:
+   - **Android**: Settings → Security → Install certificate → CA certificate → select `madhyamas-ca.pem`
+   - **iOS**: Download the certificate via Safari, then Settings → Profile Downloaded → Install, then Settings → General → About → Certificate Trust Settings → enable trust
+4. Note: Some Android apps use certificate pinning and will reject the proxy's CA. Failed TLS handshakes from these apps will appear in the traffic panel as 502 entries with an explanatory error message.
+
 ## API Endpoints
 
 ### Traffic
@@ -195,6 +256,7 @@ Madhyamas stores all runtime data in `~/.madhyamas/` by default:
 | DELETE | `/api/sessions/:id`        | Delete session        |
 | GET    | `/api/sessions/:id/export` | Export session        |
 | POST   | `/api/sessions/:id/switch` | Switch active session |
+| POST   | `/api/sessions/import`     | Import session        |
 
 ### Export
 
@@ -227,6 +289,16 @@ Madhyamas stores all runtime data in `~/.madhyamas/` by default:
 | GET    | `/api/ws-traffic/connections` | List WebSocket connections |
 | GET    | `/api/grpc/connections`       | List gRPC connections      |
 | GET    | `/api/grpc/streams`           | List gRPC streams          |
+
+### Configuration & Capture
+
+| Method | Endpoint              | Description                  |
+| ------ | --------------------- | ---------------------------- |
+| GET    | `/api/config`         | Get proxy configuration      |
+| PATCH  | `/api/config`         | Update proxy configuration   |
+| GET    | `/api/capture`        | Get capture status           |
+| POST   | `/api/capture/toggle` | Toggle traffic capture       |
+| GET    | `/api/cert/ca`        | Download CA certificate      |
 
 ### Real-time Updates
 
@@ -350,6 +422,8 @@ madhyamas/
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── src/
+├── docs/                      # Documentation
+├── docker/                    # Docker setup
 └── README.md
 ```
 
@@ -357,23 +431,29 @@ madhyamas/
 
 ### Backend (Rust)
 
-- **axum** - Web framework
-- **hyper** - HTTP server/client
-- **tokio** - Async runtime
-- **rustls** - TLS implementation
-- **rcgen** - Certificate generation
-- **rusqlite** - SQLite storage
-- **clap** - CLI framework
+- **axum** — Web framework
+- **hyper** — HTTP server/client
+- **tokio** — Async runtime
+- **rustls** — TLS implementation
+- **rcgen** — Certificate generation
+- **rusqlite** — SQLite storage
+- **clap** — CLI framework
+- **reqwest** — HTTP client for upstream requests (gzip/deflate/brotli support)
+- **tower-governor** — Rate limiting (opt-in)
 
 ### Frontend (React)
 
-- **React 18** - UI framework
-- **TypeScript** - Type safety
-- **Vite** - Build tool
-- **Tailwind CSS** - Styling
-- **shadcn/ui** - UI components
-- **TanStack Query** - Data fetching
-- **Zustand** - State management
+- **React 18** — UI framework
+- **TypeScript** — Type safety
+- **Vite** — Build tool
+- **Tailwind CSS** — Styling
+- **shadcn/ui** — UI components
+- **TanStack Query** — Data fetching
+- **Zustand** — State management
+- **Prism.js** — Syntax highlighting for JSON viewer
+- **react-json-view-lite** — Collapsible JSON tree view
+- **jsonpath-plus** — JSONPath query engine
+- **jmespath** — JMESPath query engine
 
 ## Development
 
@@ -386,7 +466,23 @@ cargo run -- --verbose
 
 # Build web UI for production
 cd web && npm run build
+
+# Build the full binary (embeds web UI)
+cargo build --release
+
+# Lint
+cargo clippy --all-targets --all-features
+cargo fmt --all
 ```
+
+### Development Workflow
+
+The web UI is embedded into the Rust binary at compile time via `rust-embed`. For development:
+
+1. Run the web UI dev server: `cd web && npm run dev`
+2. Run the Rust backend: `cargo run -- --verbose`
+3. The backend serves the web UI at `http://localhost:3001`
+4. For production builds, always build the web UI first (`cd web && npm run build`), then rebuild the Rust binary
 
 ## License
 

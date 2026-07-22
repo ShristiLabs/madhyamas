@@ -75,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced `startup.sh` with `--clean` flag for fresh builds
 - Certificate helper UI improvements for easier mobile device onboarding
 
-## [0.1.0] - 2024-XX-XX
+## [0.1.0] - 2025-01-15
 
 ### Added
 

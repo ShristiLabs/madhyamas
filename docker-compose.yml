@@ -65,8 +65,20 @@ services:
       - host
 
   # MCP Server for AI assistant integration (Windsurf, Claude, etc.)
-  # Note: MCP uses stdio transport, so this service is mainly for building the binary
-  # For Windsurf integration, run madhyamas-mcp locally or use docker exec
+  #
+  # IMPORTANT LIMITATION: MCP uses stdio transport, which requires direct access to
+  # the process's stdin/stdout. Docker containers isolate stdio, so this service
+  # CANNOT be used directly by AI assistants running on the host.
+  #
+  # This service exists primarily for:
+  #   1. Building the binary inside Docker (use `docker compose run --rm madhyamas-mcp madhyamas mcp`)
+  #   2. Testing the MCP server via `docker exec -i madhyamas-mcp madhyamas mcp`
+  #
+  # For real AI assistant integration (Windsurf, Claude Desktop, etc.):
+  #   - Run `madhyamas mcp` locally on the host, OR
+  #   - Extract the binary: `docker cp madhyamas-mcp:/usr/local/bin/madhyamas ./madhyamas`
+  #     then run `./madhyamas mcp` locally
+  #   - See docs/MCP-INTEGRATION.md for setup instructions
   madhyamas-mcp:
     build:
       context: .
@@ -102,7 +114,7 @@ services:
     volumes:
       - madhyamas_data:/data
       - ./crates:/app/crates:ro
-      - ./web:/app/web:ro
+      - ./web:/app/web
     environment:
       - RUST_LOG=debug
       - MADHYAMAS_LOG_LEVEL=debug

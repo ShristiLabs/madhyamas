@@ -11,11 +11,18 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::sync::Arc;
 
-use madhyamas_api::create_router;
+use madhyamas_api::{create_router, RateLimitConfig};
 use madhyamas_core::{
-    BreakpointManager, CertificateManager, GrpcManager, MockManager, PluginManager, ProxyConfig,
-    ProxyEngine, RewriteManager, ScriptRuntime, ThrottleManager, TrafficStore,
+    BreakpointManager, CertificateManager, ExtensionManager, InterceptStore, MemoryManager,
+    MetricsCollector, MockManager, Persistable, PerformanceMonitor, ProxyConfig, ProxyEngine,
+    RewriteManager, ThrottleManager, TrafficStore,
 };
+#[cfg(feature = "grpc")]
+use madhyamas_core::GrpcManager;
+#[cfg(feature = "plugins")]
+use madhyamas_core::{PluginExtension, PluginManager};
+#[cfg(feature = "scripting")]
+use madhyamas_core::{ScriptExtension, ScriptRuntime};
 
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -36,15 +43,32 @@ struct Args {
 
     // ── Proxy server options (used when no subcommand or `serve`) ──
     /// Port for the proxy server
-    #[arg(short, long, default_value = "8888", global = true)]
+    #[arg(
+        short,
+        long,
+        env = "MADHYAMAS_PROXY_PORT",
+        default_value = "8888",
+        global = true
+    )]
     proxy_port: u16,
 
     /// Port for the web UI API
-    #[arg(short, long, default_value = "3001", global = true)]
+    #[arg(
+        short,
+        long,
+        env = "MADHYAMAS_API_PORT",
+        default_value = "3001",
+        global = true
+    )]
     api_port: u16,
 
     /// Host to bind to
-    #[arg(long, default_value = "127.0.0.1", global = true)]
+    #[arg(
+        long,
+        env = "MADHYAMAS_HOST",
+        default_value = "127.0.0.1",
+        global = true
+    )]
     host: String,
 
     /// Public IP address to show to users (optional)
@@ -52,28 +76,59 @@ struct Args {
     public_ip: Option<String>,
 
     /// Certificate storage path (defaults to ~/.madhyamas/certs)
-    #[arg(long, global = true)]
+    #[arg(long, env = "MADHYAMAS_CERT_PATH", global = true)]
     cert_path: Option<String>,
 
     /// Database path for traffic storage (defaults to ~/.madhyamas/traffic.db)
-    #[arg(long, global = true)]
+    #[arg(long, env = "MADHYAMAS_DB_PATH", global = true)]
     db_path: Option<String>,
 
     /// Log file path (defaults to ~/.madhyamas/logs)
-    #[arg(long, global = true)]
+    #[arg(long, env = "MADHYAMAS_LOG_PATH", global = true)]
     log_path: Option<String>,
 
     /// Enable verbose logging
-    #[arg(short, long, global = true)]
+    #[arg(short, long, env = "MADHYAMAS_VERBOSE", global = true)]
     verbose: bool,
 
     /// Maximum requests to keep in memory
-    #[arg(long, default_value = "10000", global = true)]
+    #[arg(
+        long,
+        env = "MADHYAMAS_MAX_REQUESTS",
+        default_value = "10000",
+        global = true
+    )]
     max_requests: usize,
 
     /// Disable HTTPS interception
-    #[arg(long, global = true)]
+    #[arg(long, env = "MADHYAMAS_NO_HTTPS", global = true)]
     no_https: bool,
+
+    /// Enable API rate limiting (disabled by default).
+    ///
+    /// When enabled, the API server limits requests per peer IP to
+    /// --rate-limit-rps per second with a burst of --rate-limit-burst.
+    /// Useful when exposing the API to a less-trusted network.
+    #[arg(long, env = "MADHYAMAS_RATE_LIMIT", global = true)]
+    rate_limit: bool,
+
+    /// Rate limit: max requests per second per peer IP (only with --rate-limit).
+    #[arg(
+        long,
+        env = "MADHYAMAS_RATE_LIMIT_RPS",
+        default_value = "600",
+        global = true
+    )]
+    rate_limit_rps: u32,
+
+    /// Rate limit: burst size (only with --rate-limit).
+    #[arg(
+        long,
+        env = "MADHYAMAS_RATE_LIMIT_BURST",
+        default_value = "1000",
+        global = true
+    )]
+    rate_limit_burst: u32,
 }
 
 #[derive(Subcommand, Debug)]
@@ -198,17 +253,70 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     let traffic_store = TrafficStore::new(config.db_path.clone())?;
     traffic_store.set_max_body_size(config.max_body_size);
 
+    // Initialize intercept rule persistence store (SQLite). Rules are
+    // loaded on startup and saved whenever they change via the API.
+    let intercept_db_path = std::path::Path::new(&config.db_path)
+        .with_file_name("intercept.db");
+    let intercept_store = InterceptStore::new(&intercept_db_path)?;
+
     info!("Starting proxy engine...");
     let cert_manager_for_api = cert_manager.clone();
 
-    // Create shared intercept managers
-    let mock_manager = Arc::new(MockManager::new());
-    let rewrite_manager = Arc::new(RewriteManager::new());
-    let breakpoint_manager = Arc::new(BreakpointManager::new(100));
-    let throttle_manager = Arc::new(ThrottleManager::new());
+    // Create shared intercept managers, wired to the persistence store.
+    // Each manager loads its persisted rules on construction.
+    let mock_manager = Arc::new({
+        let m = MockManager::new().with_store(intercept_store.clone());
+        if let Err(e) = m.load() {
+            tracing::warn!("Failed to load mock rules from store: {}", e);
+        }
+        m
+    });
+    let rewrite_manager = Arc::new({
+        let m = RewriteManager::new().with_store(intercept_store.clone());
+        if let Err(e) = m.load() {
+            tracing::warn!("Failed to load rewrite rules from store: {}", e);
+        }
+        m
+    });
+    let breakpoint_manager = Arc::new({
+        let m = BreakpointManager::new(100).with_store(intercept_store.clone());
+        if let Err(e) = m.load() {
+            tracing::warn!("Failed to load breakpoint rules from store: {}", e);
+        }
+        m
+    });
+    let throttle_manager = Arc::new({
+        let m = ThrottleManager::new().with_store(intercept_store.clone());
+        if let Err(e) = m.load() {
+            tracing::warn!("Failed to load throttle profile from store: {}", e);
+        }
+        m
+    });
+    #[cfg(feature = "grpc")]
     let grpc_manager = Arc::new(GrpcManager::default());
+    #[cfg(feature = "scripting")]
     let script_runtime = Arc::new(ScriptRuntime::default());
+    #[cfg(feature = "plugins")]
     let plugin_manager = Arc::new(PluginManager::default());
+
+    // Build the unified extension manager. Script and plugin runtimes are
+    // registered as adapters so the pipeline can invoke them through a
+    // single trait-object dispatch with priority ordering.
+    let extension_manager = {
+        let mgr = ExtensionManager::new();
+        #[cfg(feature = "scripting")]
+        mgr.register(Arc::new(ScriptExtension::new(script_runtime.clone())));
+        #[cfg(feature = "plugins")]
+        mgr.register(Arc::new(PluginExtension::new(plugin_manager.clone())));
+        Arc::new(mgr)
+    };
+
+    // Create performance modules: metrics collection, memory management,
+    // and a background performance monitor that emits alerts when thresholds
+    // are exceeded.
+    let metrics_collector = Arc::new(MetricsCollector::new());
+    let memory_manager = Arc::new(MemoryManager::new());
+    let performance_monitor = Arc::new(PerformanceMonitor::new());
 
     let proxy_engine = ProxyEngine::new(config.clone(), cert_manager, traffic_store.clone())
         .await?
@@ -216,9 +324,16 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         .with_rewrite_manager(rewrite_manager.clone())
         .with_breakpoint_manager(breakpoint_manager.clone())
         .with_throttle_manager(throttle_manager.clone())
-        .with_grpc_manager(grpc_manager.clone())
-        .with_script_runtime(script_runtime.clone())
-        .with_plugin_manager(plugin_manager.clone());
+        .with_extension_manager(extension_manager)
+        .with_metrics_collector(metrics_collector)
+        .with_memory_manager(memory_manager)
+        .with_performance_monitor(performance_monitor);
+    #[cfg(feature = "grpc")]
+    let proxy_engine = proxy_engine.with_grpc_manager(grpc_manager.clone());
+    #[cfg(feature = "scripting")]
+    let proxy_engine = proxy_engine.with_script_runtime(script_runtime.clone());
+    #[cfg(feature = "plugins")]
+    let proxy_engine = proxy_engine.with_plugin_manager(plugin_manager.clone());
 
     let proxy_engine_clone = proxy_engine.clone();
     let proxy_task = tokio::spawn(async move {
@@ -229,16 +344,25 @@ async fn run_proxy_server(args: Args) -> Result<()> {
 
     let api_state = madhyamas_api::AppState::new(traffic_store.clone())
         .with_cert_manager(cert_manager_for_api)
-        .with_proxy_config(Arc::new(config.clone()))
+        .with_proxy_config(Arc::new(parking_lot::RwLock::new(config.clone())))
         .with_mock_manager(mock_manager)
         .with_rewrite_manager(rewrite_manager)
         .with_breakpoint_manager(breakpoint_manager)
-        .with_throttle_manager(throttle_manager)
-        .with_grpc_manager(grpc_manager)
-        .with_script_runtime(script_runtime)
-        .with_plugin_manager(plugin_manager);
+        .with_throttle_manager(throttle_manager);
+    #[cfg(feature = "grpc")]
+    let api_state = api_state.with_grpc_manager(grpc_manager);
+    #[cfg(feature = "scripting")]
+    let api_state = api_state.with_script_runtime(script_runtime);
+    #[cfg(feature = "plugins")]
+    let api_state = api_state.with_plugin_manager(plugin_manager);
 
-    let app = create_router(api_state);
+    let rate_limit_config = if args.rate_limit {
+        RateLimitConfig::enabled(args.rate_limit_rps, args.rate_limit_burst)
+    } else {
+        RateLimitConfig::disabled()
+    };
+
+    let app = create_router(api_state, rate_limit_config);
 
     let api_addr = config.api_addr();
     info!("Starting API server on {}", api_addr);
@@ -261,9 +385,44 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     info!("Other modes:");
     info!("  MCP server:  madhyamas mcp");
     info!("  CLI:         madhyamas traffic list  (or mocks/breakpoints/sessions/...)");
+    info!("");
+    info!("Press Ctrl+C to shut down gracefully.");
 
-    drop(proxy_task);
+    // Graceful shutdown: wait for SIGINT/SIGTERM, then drain the API server
+    // and abort the proxy task so in-flight work is not abandoned abruptly.
+    let shutdown = async move {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::warn!("signal handler error: {e}");
+            return;
+        }
+        info!("Shutdown signal received, draining connections...");
+    };
 
-    axum::serve(listener, app).await?;
+    let api_handle = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown);
+
+    // Run both tasks concurrently. When the API server completes its graceful
+    // shutdown, abort the proxy task.
+    tokio::select! {
+        res = api_handle => {
+            if let Err(e) = res {
+                tracing::error!("API server error: {e}");
+            }
+        }
+        _ = proxy_task => {
+            tracing::warn!("Proxy task exited unexpectedly");
+        }
+    }
+
+    info!("Shutting down proxy engine...");
+    // Best-effort: give the proxy a moment to close active connections.
+    // ProxyEngine::start() owns the TCP listener; dropping the engine handle
+    // closes the listener. The Arc is released when this function returns.
+    drop(proxy_engine);
+
+    info!("Madhyamas stopped. Goodbye!");
     Ok(())
 }

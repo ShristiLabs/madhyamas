@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
 
 jobs:
   # =============================================================================
@@ -68,6 +67,8 @@ jobs:
         run: cargo build --verbose
 
       - name: Run tests
+        env:
+          RUST_BACKTRACE: 1
         run: cargo test --verbose
 
   # =============================================================================
@@ -125,8 +126,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo-audit (pre-built binary)
+        run: cargo binstall cargo-audit --no-confirm
 
       - name: Run security audit
         run: cargo audit

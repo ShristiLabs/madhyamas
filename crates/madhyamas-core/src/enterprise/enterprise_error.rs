@@ -8,8 +8,8 @@ pub enum EnterpriseError {
     #[error("Authentication failed: {message}")]
     AuthFailed { message: String },
 
-    #[error("Token expired: {token}")]
-    TokenExpired { token: String },
+    #[error("Token expired")]
+    TokenExpired,
 
     #[error("JWT creation failed: {message}")]
     JwtError { message: String },

@@ -142,8 +142,9 @@ pub async fn get_sessions(State(state): State<Arc<AppState>>) -> impl IntoRespon
 }
 
 /// Create a new session
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateSessionRequest {
+    #[validate(length(min = 1, max = 255))]
     pub name: Option<String>,
 }
 
@@ -151,6 +152,9 @@ pub async fn create_session(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateSessionRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     match state.traffic_store.create_session(req.name.as_deref()) {
         Ok(session) => Json(session).into_response(),
         Err(e) => (
@@ -165,23 +169,43 @@ pub async fn create_session(
 
 /// Get a specific session
 pub async fn get_session(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    Json(serde_json::json!({
-        "id": id,
-        "name": "Session",
-        "created_at": chrono::Utc::now().to_rfc3339(),
-        "updated_at": chrono::Utc::now().to_rfc3339()
-    }))
+    match state.session_manager.get_session(&id) {
+        Ok(Some(session)) => Json(session).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Session not found".to_string(),
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
+    }
 }
 
 /// Delete a session
 pub async fn delete_session(
-    State(_state): State<Arc<AppState>>,
-    Path(_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
 ) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
+    match state.session_manager.delete_session(&id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
+    }
 }
 
 /// Export session as HAR
@@ -264,7 +288,7 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse
     let config = state
         .proxy_config
         .as_ref()
-        .map(|c| c.as_ref().clone())
+        .map(|c| c.read().clone())
         .unwrap_or_else(ProxyConfig::default);
 
     // Determine which IP to display:
@@ -310,12 +334,14 @@ pub async fn toggle_capture(State(state): State<Arc<AppState>>) -> impl IntoResp
 }
 
 /// Request body for updating runtime configuration
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct PatchConfigRequest {
     pub intercept_https: Option<bool>,
+    #[validate(range(min = 0, max = 1_000_000))]
     pub max_requests: Option<usize>,
     pub verbose: Option<bool>,
     pub public_ip: Option<serde_json::Value>,
+    #[validate(range(min = 0, max = 1_073_741_824))]
     pub max_body_size: Option<usize>,
 }
 
@@ -324,17 +350,19 @@ pub async fn patch_config(
     State(state): State<Arc<AppState>>,
     Json(req): Json<PatchConfigRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     let Some(proxy_config) = state.proxy_config.as_ref() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({ "error": "Runtime config not available" })),
-        );
+        )
+            .into_response();
     };
 
-    // Clone, mutate, and re-expose the updated values as a JSON response.
-    // Note: Arc<ProxyConfig> is immutable at runtime; these values are returned
-    // to the client for display. Full mutation would require a RwLock wrapper.
-    let mut config = proxy_config.as_ref().clone();
+    // Acquire write lock and mutate the live config in place.
+    let mut config = proxy_config.write();
 
     if let Some(v) = req.intercept_https {
         config.intercept_https = v;
@@ -354,19 +382,19 @@ pub async fn patch_config(
         state.traffic_store.set_max_body_size(v);
     }
 
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "proxy_port": config.proxy_port,
-            "api_port": config.api_port,
-            "host": config.host,
-            "public_ip": config.public_ip,
-            "intercept_https": config.intercept_https,
-            "max_requests": config.max_requests,
-            "max_body_size": config.max_body_size,
-            "verbose": config.verbose
-        })),
-    )
+    // Snapshot the updated config for the response (still holding the lock).
+    let resp = serde_json::json!({
+        "proxy_port": config.proxy_port,
+        "api_port": config.api_port,
+        "host": config.host,
+        "public_ip": config.public_ip,
+        "intercept_https": config.intercept_https,
+        "max_requests": config.max_requests,
+        "max_body_size": config.max_body_size,
+        "verbose": config.verbose
+    });
+
+    (StatusCode::OK, Json(resp)).into_response()
 }
 
 /// WebSocket handler
@@ -571,8 +599,9 @@ pub async fn export_all_rules(State(state): State<Arc<AppState>>) -> impl IntoRe
 }
 
 /// Import all rules
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct ImportRulesRequest {
+    #[validate(length(min = 1))]
     pub data: String,
 }
 
@@ -580,6 +609,9 @@ pub async fn import_all_rules(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ImportRulesRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     match &state.intercept_store {
         Some(store) => match store.import_all(&req.data) {
             Ok(()) => Json(serde_json::json!({ "success": true })).into_response(),
@@ -602,7 +634,23 @@ pub async fn import_all_rules(
 }
 
 /// Save all rules from managers to store
-pub async fn save_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn save_all_rules(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    // CSRF protection: require a custom header that browsers won't send
+    // in a cross-origin simple request. This prevents arbitrary websites
+    // from triggering a save-all-rules via a form POST.
+    if headers.get("x-madhyamas-confirm").is_none() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Missing X-Madhyamas-Confirm header".to_string(),
+            }),
+        )
+            .into_response();
+    }
+
     match &state.intercept_store {
         Some(store) => {
             // Save mock rules

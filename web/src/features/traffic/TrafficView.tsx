@@ -30,6 +30,7 @@ import type { TrafficEntry } from "@/types/traffic"
 import type { ActiveFilter } from "@/types/filters"
 import { applyFilters } from "@/types/filters"
 import { cn } from "@/lib/utils"
+import { apiPostVoid, apiGet } from "@/lib/api/client"
 
 const STORAGE_KEY_LIST_WIDTH = "madhyamas-next-list-width"
 const DEFAULT_LIST_WIDTH = 40
@@ -94,8 +95,7 @@ export function TrafficView() {
         if (!confirm(`Clear ${selectedIds.size} selected ${selectedIds.size === 1 ? "entry" : "entries"}?`)) return
         try {
           const ids = Array.from(selectedIds).join(",")
-          const response = await fetch(`/api/traffic/clear?ids=${encodeURIComponent(ids)}`, { method: "POST" })
-          if (!response.ok) throw new Error("Failed to clear selected traffic")
+          await apiPostVoid(`/traffic/clear?ids=${encodeURIComponent(ids)}`)
           setSelectedIds(new Set())
           if (selectedIds.has(selectedId || "")) setSelectedId(null)
           refetch()
@@ -124,14 +124,12 @@ export function TrafficView() {
   const handleExportHar = useCallback(
     async (exportAll: boolean) => {
       try {
-        let url = "/api/export/har"
+        let path = "/export/har"
         if (!exportAll && selectedIds.size > 0) {
           const ids = Array.from(selectedIds).join(",")
-          url = `/api/export/har?ids=${encodeURIComponent(ids)}`
+          path = `/export/har?ids=${encodeURIComponent(ids)}`
         }
-        const response = await fetch(url)
-        if (!response.ok) throw new Error("Failed to export HAR")
-        const har = await response.json()
+        const har = await apiGet<unknown>(path)
         const blob = new Blob([JSON.stringify(har, null, 2)], { type: "application/json" })
         const blobUrl = URL.createObjectURL(blob)
         const a = document.createElement("a")

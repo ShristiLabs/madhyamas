@@ -20,6 +20,7 @@ import {
   Shield,
   Key,
 } from 'lucide-react'
+import { apiGetRaw } from '@/lib/api/client'
 
 interface InstructionStep {
   title: string
@@ -100,10 +101,7 @@ export function CertificatePanel() {
 
   const handleDownload = async () => {
     try {
-      const response = await fetch('/api/cert/ca')
-      if (!response.ok) {
-        throw new Error('Failed to download certificate')
-      }
+      const response = await apiGetRaw('/cert/ca')
       const blob = await response.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')

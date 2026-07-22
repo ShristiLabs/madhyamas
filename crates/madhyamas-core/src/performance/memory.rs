@@ -170,6 +170,28 @@ impl MemoryManager {
             0
         }
     }
+
+    /// Check current memory pressure and return a recommendation for the
+    /// caller. This is the main entry point used by the proxy engine/pipeline
+    /// to enforce memory limits on each request or periodically.
+    ///
+    /// When [`MemoryPressure::Cleanup`] is returned, the caller should run a
+    /// garbage-collection pass (e.g. prune old traffic entries) and then call
+    /// [`MemoryManager::gc_completed`] with the amount freed.
+    pub fn check_memory(&self) -> MemoryPressure {
+        if !self.is_under_pressure() {
+            return MemoryPressure::Normal;
+        }
+
+        let threshold = self.calculate_cleanup_threshold();
+        if threshold > 0 {
+            MemoryPressure::Cleanup {
+                target_bytes: threshold,
+            }
+        } else {
+            MemoryPressure::Pressure
+        }
+    }
 }
 
 /// Garbage collection configuration
@@ -234,6 +256,19 @@ impl MemoryStats {
             format!("{} B", bytes)
         }
     }
+}
+
+/// Recommendation returned by [`MemoryManager::check_memory`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MemoryPressure {
+    /// Memory usage is within normal limits.
+    Normal,
+    /// Memory pressure is elevated (>80% of limit) but no specific cleanup
+    /// target is required yet.
+    Pressure,
+    /// Memory is over the configured limit and a cleanup pass should free at
+    /// least `target_bytes` worth of data.
+    Cleanup { target_bytes: u64 },
 }
 
 #[cfg(test)]

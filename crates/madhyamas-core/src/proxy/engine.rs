@@ -1,19 +1,31 @@
 //! Main proxy engine
+//!
+//! This module is focused on connection management: accepting TCP connections,
+//! performing TLS handshakes, and detecting WebSocket upgrades. The shared
+//! HTTP request/response processing logic (rewrites, mocks, breakpoints,
+//! traffic recording, upstream forwarding) lives in [`crate::proxy::pipeline`].
 
 use crate::config::ProxyConfig;
-use crate::grpc::{is_grpc_content_type, is_grpc_path, parse_frame, GrpcDirection, GrpcManager};
-use crate::intercept::{
-    BreakpointDecision, BreakpointManager, MockManager, RewriteManager, ThrottleManager,
-};
-use crate::plugin::{PluginContext, PluginHook, PluginManager};
-use crate::scripting::{ScriptContext, ScriptHook, ScriptRuntime};
+use crate::extension::ExtensionManager;
+#[cfg(feature = "grpc")]
+use crate::grpc::GrpcManager;
+use crate::intercept::{BreakpointManager, MockManager, RewriteManager, ThrottleManager};
+use crate::performance::{MemoryManager, MetricsCollector, PerformanceMonitor};
+#[cfg(feature = "plugins")]
+use crate::plugin::PluginManager;
+use crate::proxy::pipeline::{Pipeline, RequestOutcome};
+#[cfg(feature = "scripting")]
+use crate::scripting::ScriptRuntime;
 use crate::tls::CertificateManager;
-use crate::traffic::{RequestData, ResponseData, TrafficEntry, TrafficStore};
-use crate::websocket::{is_websocket_upgrade, WsDirection, WsManager, WsMessageType, WsPayload};
+use crate::traffic::{RequestData, TrafficEntry, TrafficStore};
+use crate::websocket::{
+    is_websocket_upgrade, WsDirection, WsFrameParser, WsManager, WsMessageType, WsPayload,
+};
 use crate::Error;
 use parking_lot::RwLock;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
@@ -24,18 +36,29 @@ pub struct ProxyEngine {
     config: ProxyConfig,
     cert_manager: Arc<CertificateManager>,
     traffic_store: Arc<TrafficStore>,
-    mock_manager: Option<Arc<MockManager>>,
-    rewrite_manager: Option<Arc<RewriteManager>>,
-    breakpoint_manager: Option<Arc<BreakpointManager>>,
-    throttle_manager: Option<Arc<ThrottleManager>>,
+    mock_manager: OnceLock<Arc<MockManager>>,
+    rewrite_manager: OnceLock<Arc<RewriteManager>>,
+    breakpoint_manager: OnceLock<Arc<BreakpointManager>>,
+    throttle_manager: OnceLock<Arc<ThrottleManager>>,
     /// WebSocket traffic manager
-    ws_manager: Option<Arc<WsManager>>,
+    ws_manager: OnceLock<Arc<WsManager>>,
     /// gRPC traffic manager
-    grpc_manager: Option<Arc<GrpcManager>>,
+    #[cfg(feature = "grpc")]
+    grpc_manager: OnceLock<Arc<GrpcManager>>,
     /// JavaScript scripting runtime
-    script_runtime: Option<Arc<ScriptRuntime>>,
+    #[cfg(feature = "scripting")]
+    script_runtime: OnceLock<Arc<ScriptRuntime>>,
     /// Plugin manager
-    plugin_manager: Option<Arc<PluginManager>>,
+    #[cfg(feature = "plugins")]
+    plugin_manager: OnceLock<Arc<PluginManager>>,
+    /// Unified extension manager (wraps scripting + plugins)
+    extension_manager: OnceLock<Arc<ExtensionManager>>,
+    /// Metrics collector (request/response counts, latency histogram, etc.)
+    metrics_collector: OnceLock<Arc<MetricsCollector>>,
+    /// Memory manager (tracks traffic memory usage and GC pressure)
+    memory_manager: OnceLock<Arc<MemoryManager>>,
+    /// Performance monitor (background health checks and alerting)
+    performance_monitor: OnceLock<Arc<PerformanceMonitor>>,
     /// Channel to broadcast traffic updates to WebSocket clients
     traffic_tx: broadcast::Sender<TrafficEntry>,
     /// Whether the proxy is running
@@ -55,89 +78,160 @@ impl ProxyEngine {
             config,
             cert_manager,
             traffic_store,
-            mock_manager: None,
-            rewrite_manager: None,
-            breakpoint_manager: None,
-            throttle_manager: None,
-            ws_manager: None,
-            grpc_manager: None,
-            script_runtime: None,
-            plugin_manager: None,
+            mock_manager: OnceLock::new(),
+            rewrite_manager: OnceLock::new(),
+            breakpoint_manager: OnceLock::new(),
+            throttle_manager: OnceLock::new(),
+            ws_manager: OnceLock::new(),
+            #[cfg(feature = "grpc")]
+            grpc_manager: OnceLock::new(),
+            #[cfg(feature = "scripting")]
+            script_runtime: OnceLock::new(),
+            #[cfg(feature = "plugins")]
+            plugin_manager: OnceLock::new(),
+            extension_manager: OnceLock::new(),
+            metrics_collector: OnceLock::new(),
+            memory_manager: OnceLock::new(),
+            performance_monitor: OnceLock::new(),
             traffic_tx,
             running: RwLock::new(false),
         }))
     }
 
-    /// Check if a request should be excluded from traffic capture
-    /// Excludes Madhyamas's own API requests to prevent feedback loops
-    fn should_exclude_from_capture(&self, request: &RequestData) -> bool {
-        let api_port = self.config.api_port;
-
-        // Check if request is to Madhyamas's own API
-        if let Some(host) = request.headers.get("Host").or(request.headers.get("host")) {
-            // Match patterns like "localhost:3001", "127.0.0.1:3001", "10.0.0.37:3001"
-            if host.ends_with(&format!(":{}", api_port)) {
-                return true;
-            }
-        }
-
-        // Also check the URL directly
-        if request.url.contains(&format!(":{}/api/", api_port)) {
-            return true;
-        }
-
-        false
+    /// Build a [`Pipeline`] borrowing the shared engine state for processing
+    /// one or more requests on a connection.
+    fn pipeline(&self) -> Pipeline<'_> {
+        Pipeline::new(
+            &self.config,
+            &self.traffic_store,
+            &self.traffic_tx,
+            self.mock_manager.get(),
+            self.rewrite_manager.get(),
+            self.breakpoint_manager.get(),
+            self.throttle_manager.get(),
+            #[cfg(feature = "grpc")]
+            self.grpc_manager.get(),
+            #[cfg(feature = "scripting")]
+            self.script_runtime.get(),
+            #[cfg(feature = "plugins")]
+            self.plugin_manager.get(),
+            self.extension_manager.get(),
+            self.metrics_collector.get(),
+            self.memory_manager.get(),
+        )
     }
 
     /// Set the mock manager
-    pub fn with_mock_manager(mut self: Arc<Self>, manager: Arc<MockManager>) -> Arc<Self> {
-        Arc::get_mut(&mut self).unwrap().mock_manager = Some(manager);
+    pub fn with_mock_manager(self: Arc<Self>, manager: Arc<MockManager>) -> Arc<Self> {
+        let _ = self.mock_manager.set(manager);
         self
     }
 
     /// Set the rewrite manager
-    pub fn with_rewrite_manager(mut self: Arc<Self>, manager: Arc<RewriteManager>) -> Arc<Self> {
-        Arc::get_mut(&mut self).unwrap().rewrite_manager = Some(manager);
+    pub fn with_rewrite_manager(self: Arc<Self>, manager: Arc<RewriteManager>) -> Arc<Self> {
+        let _ = self.rewrite_manager.set(manager);
         self
     }
 
     /// Set the breakpoint manager
-    pub fn with_breakpoint_manager(
-        mut self: Arc<Self>,
-        manager: Arc<BreakpointManager>,
-    ) -> Arc<Self> {
-        Arc::get_mut(&mut self).unwrap().breakpoint_manager = Some(manager);
+    pub fn with_breakpoint_manager(self: Arc<Self>, manager: Arc<BreakpointManager>) -> Arc<Self> {
+        let _ = self.breakpoint_manager.set(manager);
         self
     }
 
     /// Set the throttle manager
-    pub fn with_throttle_manager(mut self: Arc<Self>, manager: Arc<ThrottleManager>) -> Arc<Self> {
-        Arc::get_mut(&mut self).unwrap().throttle_manager = Some(manager);
+    pub fn with_throttle_manager(self: Arc<Self>, manager: Arc<ThrottleManager>) -> Arc<Self> {
+        let _ = self.throttle_manager.set(manager);
         self
     }
 
     /// Set the WebSocket manager
-    pub fn with_ws_manager(mut self: Arc<Self>, manager: Arc<WsManager>) -> Arc<Self> {
-        Arc::get_mut(&mut self).unwrap().ws_manager = Some(manager);
+    pub fn with_ws_manager(self: Arc<Self>, manager: Arc<WsManager>) -> Arc<Self> {
+        let _ = self.ws_manager.set(manager);
         self
     }
 
     /// Set the gRPC manager
-    pub fn with_grpc_manager(mut self: Arc<Self>, manager: Arc<GrpcManager>) -> Arc<Self> {
-        Arc::get_mut(&mut self).unwrap().grpc_manager = Some(manager);
+    #[cfg(feature = "grpc")]
+    pub fn with_grpc_manager(self: Arc<Self>, manager: Arc<GrpcManager>) -> Arc<Self> {
+        let _ = self.grpc_manager.set(manager);
         self
     }
 
     /// Set the script runtime
-    pub fn with_script_runtime(mut self: Arc<Self>, runtime: Arc<ScriptRuntime>) -> Arc<Self> {
-        Arc::get_mut(&mut self).unwrap().script_runtime = Some(runtime);
+    #[cfg(feature = "scripting")]
+    pub fn with_script_runtime(self: Arc<Self>, runtime: Arc<ScriptRuntime>) -> Arc<Self> {
+        let _ = self.script_runtime.set(runtime);
         self
     }
 
     /// Set the plugin manager
-    pub fn with_plugin_manager(mut self: Arc<Self>, manager: Arc<PluginManager>) -> Arc<Self> {
-        Arc::get_mut(&mut self).unwrap().plugin_manager = Some(manager);
+    #[cfg(feature = "plugins")]
+    pub fn with_plugin_manager(self: Arc<Self>, manager: Arc<PluginManager>) -> Arc<Self> {
+        let _ = self.plugin_manager.set(manager);
         self
+    }
+
+    /// Set the unified extension manager.
+    pub fn with_extension_manager(self: Arc<Self>, manager: Arc<ExtensionManager>) -> Arc<Self> {
+        let _ = self.extension_manager.set(manager);
+        self
+    }
+
+    /// Set the metrics collector.
+    ///
+    /// When attached, the pipeline records every request/response (and
+    /// WebSocket open/close) so that `MetricsCollector::snapshot()` reflects
+    /// live traffic.
+    pub fn with_metrics_collector(self: Arc<Self>, collector: Arc<MetricsCollector>) -> Arc<Self> {
+        let _ = self.metrics_collector.set(collector);
+        self
+    }
+
+    /// Set the memory manager.
+    ///
+    /// When attached, the pipeline checks memory pressure on each request and
+    /// the performance monitor includes memory usage in its alerts.
+    pub fn with_memory_manager(self: Arc<Self>, manager: Arc<MemoryManager>) -> Arc<Self> {
+        let _ = self.memory_manager.set(manager);
+        self
+    }
+
+    /// Set the performance monitor and start its background monitoring task.
+    ///
+    /// The monitor periodically inspects the metrics collector and memory
+    /// manager (when attached) and emits alerts when thresholds are exceeded.
+    /// The task runs until the monitor is dropped.
+    pub fn with_performance_monitor(
+        self: Arc<Self>,
+        monitor: Arc<PerformanceMonitor>,
+    ) -> Arc<Self> {
+        // Start the background monitoring task if both the metrics collector
+        // and memory manager are already attached. Otherwise the monitor will
+        // simply not have data to inspect until they are attached (in which
+        // case the caller should call `monitor.start_monitoring` manually).
+        if let (Some(metrics), Some(memory)) =
+            (self.metrics_collector.get(), self.memory_manager.get())
+        {
+            monitor.start_monitoring(metrics.clone(), memory.clone(), Duration::from_secs(30));
+        }
+        let _ = self.performance_monitor.set(monitor);
+        self
+    }
+
+    /// Get the metrics collector, if attached.
+    pub fn metrics_collector(&self) -> Option<&Arc<MetricsCollector>> {
+        self.metrics_collector.get()
+    }
+
+    /// Get the memory manager, if attached.
+    pub fn memory_manager(&self) -> Option<&Arc<MemoryManager>> {
+        self.memory_manager.get()
+    }
+
+    /// Get the performance monitor, if attached.
+    pub fn performance_monitor(&self) -> Option<&Arc<PerformanceMonitor>> {
+        self.performance_monitor.get()
     }
 
     /// Start the proxy server
@@ -163,8 +257,15 @@ impl ProxyEngine {
 
             let engine = self.clone();
             tokio::spawn(async move {
+                // Track active connections for metrics.
+                if let Some(metrics) = engine.metrics_collector.get() {
+                    metrics.connection_opened();
+                }
                 if let Err(e) = engine.handle_connection(client_socket).await {
                     debug!("Connection error from {}: {}", client_addr, e);
+                }
+                if let Some(metrics) = engine.metrics_collector.get() {
+                    metrics.connection_closed();
                 }
             });
         }
@@ -249,19 +350,127 @@ impl ProxyEngine {
         let response = "HTTP/1.1 200 Connection Established\r\n\r\n";
         client_socket.write_all(response.as_bytes()).await?;
 
-        // Perform TLS handshake with client
+        // Perform TLS handshake with client.
+        //
+        // If the handshake fails (e.g. the client doesn't trust our CA
+        // certificate — common with Android apps that use certificate
+        // pinning or don't have the CA installed), we record a traffic
+        // entry with a 502 error so the failed attempt is visible in the
+        // web UI. Without this, the request would be completely invisible.
         let tls_config = self.create_tls_server_config(&cert)?;
         let acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
-        let mut tls_stream = acceptor
-            .accept(client_socket)
-            .await
-            .map_err(|e| Error::Tls(format!("TLS handshake failed: {}", e)))?;
+        let mut tls_stream = match acceptor.accept(client_socket).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(
+                    "TLS handshake failed for {}:{} — the client likely does \
+                     not trust the proxy CA certificate (common with Android \
+                     apps using cert pinning). Error: {}",
+                    host, port, e
+                );
+
+                // Record a traffic entry so the failed attempt is visible.
+                let session_id = self.traffic_store.current_session_id();
+                let entry = TrafficEntry::new(
+                    &session_id,
+                    RequestData {
+                        method: crate::traffic::HttpMethod::Connect,
+                        url: format!("https://{}:{}/", host, port),
+                        host: host.to_string(),
+                        path: "/".to_string(),
+                        headers: std::collections::HashMap::new(),
+                        body: None,
+                        content_type: None,
+                    },
+                );
+                let _ = self.traffic_store.store_request(&entry);
+                let _ = self.traffic_store.store_response(
+                    &entry.id,
+                    &crate::traffic::ResponseData {
+                        status_code: 502,
+                        status_message: Some("Bad Gateway".to_string()),
+                        headers: std::collections::HashMap::new(),
+                        body: Some(
+                            format!(
+                                "TLS handshake failed: the client does not \
+                                 trust the proxy CA certificate. Error: {}",
+                                e
+                            )
+                            .into_bytes(),
+                        ),
+                        content_type: Some("text/plain".to_string()),
+                        duration_ms: 0,
+                    },
+                );
+                let _ = self.traffic_tx.send(entry);
+
+                return Err(Error::Tls(format!("TLS handshake failed: {}", e)));
+            }
+        };
+
+        // Inspect the ALPN protocol negotiated during the handshake. We
+        // advertise only `http/1.1` (see [`Self::create_tls_server_config`])
+        // because the proxy does not yet implement HTTP/2 frame parsing on
+        // the downstream side. If a client somehow negotiates `h2` (e.g. an
+        // older cached session), we log a warning and still attempt the
+        // HTTP/1.1 request loop.
+        let negotiated_alpn = tls_stream
+            .get_ref()
+            .1
+            .alpn_protocol()
+            .and_then(|p| std::str::from_utf8(p).ok())
+            .map(|s| s.to_string());
+
+        match negotiated_alpn.as_deref() {
+            Some("h2") => {
+                // This should not happen since we only advertise http/1.1,
+                // but handle it gracefully if it does.
+                warn!(
+                    "HTTP/2 (h2) negotiated via ALPN for {}:{}, but the proxy \
+                     only supports HTTP/1.1 downstream. Falling back to \
+                     HTTP/1.1 handling — this connection may fail.",
+                    host, port
+                );
+            }
+            Some("http/1.1") => {
+                debug!("ALPN negotiated http/1.1 for {}:{}", host, port);
+            }
+            other => {
+                debug!(
+                    "ALPN negotiation result for {}:{}: {:?} (no protocol or unknown)",
+                    host, port, other
+                );
+            }
+        }
 
         // Now we can intercept the actual HTTP request over TLS
         self.handle_tls_request(&mut tls_stream, host, port).await
     }
 
-    /// Create TLS server config with the generated certificate
+    /// Create TLS server config with the generated certificate.
+    ///
+    /// The config advertises **only** `http/1.1` via ALPN.
+    ///
+    /// # Why not `h2`?
+    ///
+    /// The proxy does not yet implement HTTP/2 frame parsing on the
+    /// downstream (client-facing) side. If we advertise `h2` and a client
+    /// negotiates it (which modern Android/Chrome clients will, since they
+    /// prefer HTTP/2), the proxy receives HTTP/2 frames but tries to parse
+    /// them as HTTP/1.1 — producing binary garbage in the request line and
+    /// causing 502 Bad Gateway errors for every HTTPS site.
+    ///
+    /// By advertising only `http/1.1`, ALPN-aware clients are forced to use
+    /// HTTP/1.1 when talking to the proxy. The proxy can still use HTTP/2 on
+    /// the **upstream** side (via `reqwest`, which handles ALPN natively), so
+    /// performance is not impacted — only the client→proxy leg is HTTP/1.1.
+    ///
+    /// TODO(h2-downstream): integrate the `h2` crate to parse HTTP/2 frames
+    /// and multiplex streams on the client-facing side. Once that lands,
+    /// re-enable `h2` in the ALPN list (preferably **after** `http/1.1` so
+    /// the fallback is automatic). This is required for the gRPC interception
+    /// module ([`crate::grpc`]) to be fully functional, since gRPC mandates
+    /// HTTP/2.
     fn create_tls_server_config(
         &self,
         cert: &crate::tls::GeneratedCert,
@@ -274,10 +483,15 @@ impl ProxyEngine {
             .map_err(|e| Error::Tls(format!("Failed to parse private key: {}", e)))?
             .ok_or_else(|| Error::Tls("No private key found".into()))?;
 
-        let config = rustls::ServerConfig::builder()
+        let mut config = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert_chain, private_key)
             .map_err(|e| Error::Tls(format!("Failed to create TLS config: {}", e)))?;
+
+        // Advertise ONLY http/1.1. Advertising h2 here causes clients to
+        // negotiate HTTP/2, but the proxy can't parse HTTP/2 frames yet,
+        // resulting in binary garbage and 502 errors for all HTTPS sites.
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
         Ok(Arc::new(config))
     }
@@ -290,6 +504,7 @@ impl ProxyEngine {
         port: u16,
     ) -> crate::Result<()> {
         let mut buf = vec![0u8; 65536];
+        let pipeline = self.pipeline();
 
         loop {
             // Read the next HTTP request from the TLS stream
@@ -305,7 +520,7 @@ impl ProxyEngine {
                 }
             };
 
-            let mut request_data = match self.parse_http_request(&buf[..n], host, port) {
+            let mut request_data = match pipeline.parse_http_request(&buf[..n], host, port) {
                 Ok(data) => data,
                 Err(e) => {
                     debug!("Failed to parse request on keep-alive connection: {}", e);
@@ -318,7 +533,7 @@ impl ProxyEngine {
             // cause the upstream to wait forever and time out.
             {
                 let headers = request_data.headers.clone();
-                request_data.body = self
+                request_data.body = pipeline
                     .read_full_request_body(tls_stream, request_data.body.take(), &headers)
                     .await?;
             }
@@ -338,232 +553,15 @@ impl ProxyEngine {
                 .map(|v| v.eq_ignore_ascii_case("close"))
                 .unwrap_or(false);
 
-            // Apply rewrite rules to request
-            if let Some(ref rewrite_manager) = self.rewrite_manager {
-                rewrite_manager.rewrite_request(&mut request_data);
-            }
+            // Process the request through the shared pipeline (rewrites,
+            // hooks, mocks, breakpoints, upstream forwarding, recording).
+            let outcome = pipeline
+                .process_request(&mut request_data, tls_stream)
+                .await?;
 
-            // Run script and plugin request hooks
-            self.run_request_hooks(&request_data);
-
-            // Detect and record gRPC traffic
-            let grpc_stream = self.detect_and_record_grpc_request(&request_data);
-
-            // Check for mock response
-            let mut handled = false;
-            if let Some(ref mock_manager) = self.mock_manager {
-                if let Some(mock) = mock_manager.find_matching_mock(&request_data) {
-                    debug!("Mock matched: {} for {}", mock.name, request_data.url);
-
-                    if let Some(ref throttle_manager) = self.throttle_manager {
-                        throttle_manager.apply_latency().await;
-                    }
-
-                    let response = self.build_mock_response(&mock.response()).await;
-
-                    let session_id = self.traffic_store.current_session_id();
-                    let entry = TrafficEntry::new(&session_id, request_data.clone());
-                    self.traffic_store.store_request(&entry)?;
-                    self.traffic_store.store_response(&entry.id, &response)?;
-                    let _ = self.traffic_tx.send(entry);
-
-                    let response_bytes = self.build_response_bytes(&response);
-                    tls_stream.write_all(&response_bytes).await?;
-
-                    info!(
-                        "{} {} -> {} (mocked)",
-                        request_data.method, request_data.url, response.status_code
-                    );
-                    handled = true;
-                }
-            }
-
-            if !handled {
-                // Check for breakpoint on request
-                if let Some(ref breakpoint_manager) = self.breakpoint_manager {
-                    if let Some(rule) = breakpoint_manager.check_request(&request_data) {
-                        debug!("Breakpoint hit: {} for {}", rule.name, request_data.url);
-
-                        let session_id = self.traffic_store.current_session_id();
-                        let entry = TrafficEntry::new(&session_id, request_data.clone());
-                        let entry_id = entry.id.clone();
-
-                        let decision = breakpoint_manager
-                            .pause_and_wait(
-                                entry_id,
-                                crate::intercept::InterceptDirection::Request,
-                                request_data.clone(),
-                                None,
-                                rule.id.clone(),
-                            )
-                            .await;
-
-                        match decision {
-                            BreakpointDecision::Abort => {
-                                warn!("Request aborted by breakpoint: {}", request_data.url);
-                                return Ok(());
-                            }
-                            BreakpointDecision::Continue => {}
-                            BreakpointDecision::Modify { modifications } => {
-                                BreakpointManager::apply_request_modifications(
-                                    &mut request_data,
-                                    &modifications,
-                                );
-                            }
-                            BreakpointDecision::Respond {
-                                status_code,
-                                headers,
-                                body,
-                            } => {
-                                let response = ResponseData {
-                                    status_code,
-                                    status_message: None,
-                                    headers,
-                                    body: body.map(|b| b.into_bytes()),
-                                    content_type: Some("application/json".to_string()),
-                                    duration_ms: 0,
-                                };
-
-                                let session_id = self.traffic_store.current_session_id();
-                                let entry = TrafficEntry::new(&session_id, request_data.clone());
-                                self.traffic_store.store_request(&entry)?;
-                                self.traffic_store.store_response(&entry.id, &response)?;
-                                let _ = self.traffic_tx.send(entry);
-
-                                let response_bytes = self.build_response_bytes(&response);
-                                tls_stream.write_all(&response_bytes).await?;
-
-                                info!(
-                                    "{} {} -> {} (breakpoint response)",
-                                    request_data.method, request_data.url, status_code
-                                );
-                                handled = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if !handled {
-                // Skip storing Madhyamas's own API requests to prevent feedback loops
-                let should_capture = !self.should_exclude_from_capture(&request_data);
-
-                // Store the request (if not excluded)
-                let session_id = self.traffic_store.current_session_id();
-                let entry = TrafficEntry::new(&session_id, request_data.clone());
-                if should_capture {
-                    self.traffic_store.store_request(&entry)?;
-                    // Broadcast to WebSocket clients
-                    let _ = self.traffic_tx.send(entry.clone());
-                }
-
-                // Apply throttle latency if enabled
-                if let Some(ref throttle_manager) = self.throttle_manager {
-                    throttle_manager.apply_latency().await;
-                }
-
-                // Forward to upstream server
-                let start = std::time::Instant::now();
-
-                match self.forward_https_request(&request_data, tls_stream).await {
-                    Ok(mut response) => {
-                        let duration_ms = start.elapsed().as_millis() as u64;
-                        response.duration_ms = duration_ms;
-
-                        // Apply rewrite rules to response
-                        if let Some(ref rewrite_manager) = self.rewrite_manager {
-                            rewrite_manager.rewrite_response(&request_data, &mut response);
-                        }
-
-                        // Run script and plugin response hooks
-                        self.run_response_hooks(&request_data, &response);
-
-                        // Record gRPC response frames
-                        self.record_grpc_response(&request_data, &response, grpc_stream.as_ref());
-
-                        // Check for breakpoint on response
-                        if let Some(ref breakpoint_manager) = self.breakpoint_manager {
-                            if let Some(rule) =
-                                breakpoint_manager.check_response(&request_data, &response)
-                            {
-                                debug!(
-                                    "Breakpoint hit on response: {} for {}",
-                                    rule.name, request_data.url
-                                );
-
-                                let decision = breakpoint_manager
-                                    .pause_and_wait(
-                                        entry.id.clone(),
-                                        crate::intercept::InterceptDirection::Response,
-                                        request_data.clone(),
-                                        Some(response.clone()),
-                                        rule.id.clone(),
-                                    )
-                                    .await;
-
-                                match decision {
-                                    BreakpointDecision::Abort => {
-                                        warn!(
-                                            "Response aborted by breakpoint: {}",
-                                            request_data.url
-                                        );
-                                        return Ok(());
-                                    }
-                                    BreakpointDecision::Continue => {}
-                                    BreakpointDecision::Modify { modifications } => {
-                                        BreakpointManager::apply_response_modifications(
-                                            &mut response,
-                                            &modifications,
-                                        );
-                                    }
-                                    BreakpointDecision::Respond { .. } => {}
-                                }
-                            }
-                        }
-
-                        // Store the response (if not excluded)
-                        if should_capture {
-                            self.traffic_store.store_response(&entry.id, &response)?;
-                        }
-
-                        // Record as mock if recording is enabled
-                        if let Some(ref mock_manager) = self.mock_manager {
-                            if mock_manager.is_recording() {
-                                mock_manager.record_from_traffic(
-                                    &request_data,
-                                    response.status_code,
-                                    response.headers.clone(),
-                                    response.body.clone(),
-                                );
-                                debug!("Recorded mock for: {}", request_data.url);
-                            }
-                        }
-
-                        info!(
-                            "{} {} -> {} ({}ms)",
-                            request_data.method,
-                            request_data.url,
-                            response.status_code,
-                            duration_ms
-                        );
-                    }
-                    Err(e) => {
-                        warn!("Failed to forward request to {}: {}", request_data.url, e);
-                        // Store error response so request doesn't remain in "pending" state
-                        if should_capture {
-                            let error_response = ResponseData {
-                                status_code: 502,
-                                status_message: Some("Bad Gateway".to_string()),
-                                headers: std::collections::HashMap::new(),
-                                body: Some(format!("Proxy error: {}", e).into_bytes()),
-                                content_type: Some("text/plain".to_string()),
-                                duration_ms: start.elapsed().as_millis() as u64,
-                            };
-                            self.traffic_store
-                                .store_response(&entry.id, &error_response)?;
-                        }
-                    }
-                }
+            // A breakpoint abort terminates the keep-alive loop
+            if outcome == RequestOutcome::Aborted {
+                return Ok(());
             }
 
             // If the client sent Connection: close, stop the keep-alive loop
@@ -601,8 +599,10 @@ impl ProxyEngine {
 
         info!("HTTP {} {}", method, url);
 
+        let pipeline = self.pipeline();
+
         // Create request data
-        let mut request_data = self.parse_http_request(initial_data, host, port)?;
+        let mut request_data = pipeline.parse_http_request(initial_data, host, port)?;
 
         // Read the full request body from the client. The initial read in
         // handle_connection may not have captured the entire body (especially
@@ -610,7 +610,7 @@ impl ProxyEngine {
         // wait forever for the remaining bytes and time out.
         {
             let headers = request_data.headers.clone();
-            request_data.body = self
+            request_data.body = pipeline
                 .read_full_request_body(&mut client_socket, request_data.body.take(), &headers)
                 .await?;
         }
@@ -622,752 +622,13 @@ impl ProxyEngine {
                 .await;
         }
 
-        // Apply rewrite rules to request
-        if let Some(ref rewrite_manager) = self.rewrite_manager {
-            rewrite_manager.rewrite_request(&mut request_data);
-        }
-
-        // Run script and plugin request hooks
-        self.run_request_hooks(&request_data);
-
-        // Detect and record gRPC traffic
-        let grpc_stream = self.detect_and_record_grpc_request(&request_data);
-
-        // Check for mock response
-        if let Some(ref mock_manager) = self.mock_manager {
-            if let Some(mock) = mock_manager.find_matching_mock(&request_data) {
-                debug!("Mock matched: {} for {}", mock.name, request_data.url);
-
-                // Apply throttle latency if enabled
-                if let Some(ref throttle_manager) = self.throttle_manager {
-                    throttle_manager.apply_latency().await;
-                }
-
-                // Build mock response
-                let response = self.build_mock_response(&mock.response()).await;
-
-                // Store the request
-                let session_id = self.traffic_store.current_session_id();
-                let entry = TrafficEntry::new(&session_id, request_data.clone());
-                self.traffic_store.store_request(&entry)?;
-                self.traffic_store.store_response(&entry.id, &response)?;
-                let _ = self.traffic_tx.send(entry);
-
-                // Send response to client
-                let response_bytes = self.build_response_bytes(&response);
-                client_socket.write_all(&response_bytes).await?;
-
-                info!(
-                    "{} {} -> {} (mocked)",
-                    request_data.method, request_data.url, response.status_code
-                );
-                return Ok(());
-            }
-        }
-
-        // Check for breakpoint on request
-        if let Some(ref breakpoint_manager) = self.breakpoint_manager {
-            if let Some(rule) = breakpoint_manager.check_request(&request_data) {
-                debug!("Breakpoint hit: {} for {}", rule.name, request_data.url);
-
-                let session_id = self.traffic_store.current_session_id();
-                let entry = TrafficEntry::new(&session_id, request_data.clone());
-                let entry_id = entry.id.clone();
-
-                let decision = breakpoint_manager
-                    .pause_and_wait(
-                        entry_id,
-                        crate::intercept::InterceptDirection::Request,
-                        request_data.clone(),
-                        None,
-                        rule.id.clone(),
-                    )
-                    .await;
-
-                match decision {
-                    BreakpointDecision::Abort => {
-                        warn!("Request aborted by breakpoint: {}", request_data.url);
-                        return Ok(());
-                    }
-                    BreakpointDecision::Continue => {}
-                    BreakpointDecision::Modify { modifications } => {
-                        BreakpointManager::apply_request_modifications(
-                            &mut request_data,
-                            &modifications,
-                        );
-                    }
-                    BreakpointDecision::Respond {
-                        status_code,
-                        headers,
-                        body,
-                    } => {
-                        let response = ResponseData {
-                            status_code,
-                            status_message: None,
-                            headers,
-                            body: body.map(|b| b.into_bytes()),
-                            content_type: Some("application/json".to_string()),
-                            duration_ms: 0,
-                        };
-
-                        let session_id = self.traffic_store.current_session_id();
-                        let entry = TrafficEntry::new(&session_id, request_data.clone());
-                        self.traffic_store.store_request(&entry)?;
-                        self.traffic_store.store_response(&entry.id, &response)?;
-                        let _ = self.traffic_tx.send(entry);
-
-                        let response_bytes = self.build_response_bytes(&response);
-                        client_socket.write_all(&response_bytes).await?;
-
-                        info!(
-                            "{} {} -> {} (breakpoint response)",
-                            request_data.method, request_data.url, status_code
-                        );
-                        return Ok(());
-                    }
-                }
-            }
-        }
-
-        // Skip storing Madhyamas's own API requests to prevent feedback loops
-        let should_capture = !self.should_exclude_from_capture(&request_data);
-
-        // Store the request (if not excluded)
-        let session_id = self.traffic_store.current_session_id();
-        let entry = TrafficEntry::new(&session_id, request_data.clone());
-        if should_capture {
-            self.traffic_store.store_request(&entry)?;
-            // Broadcast to WebSocket clients
-            let _ = self.traffic_tx.send(entry.clone());
-        }
-
-        // Apply throttle latency if enabled
-        if let Some(ref throttle_manager) = self.throttle_manager {
-            throttle_manager.apply_latency().await;
-        }
-
-        // Forward to upstream
-        let start = std::time::Instant::now();
-
-        match self
-            .forward_http_request(&request_data, &mut client_socket)
-            .await
-        {
-            Ok(mut response) => {
-                let duration_ms = start.elapsed().as_millis() as u64;
-                response.duration_ms = duration_ms;
-
-                // Apply rewrite rules to response
-                if let Some(ref rewrite_manager) = self.rewrite_manager {
-                    rewrite_manager.rewrite_response(&request_data, &mut response);
-                }
-
-                // Run script and plugin response hooks
-                self.run_response_hooks(&request_data, &response);
-
-                // Record gRPC response frames
-                self.record_grpc_response(&request_data, &response, grpc_stream.as_ref());
-
-                // Check for breakpoint on response
-                if let Some(ref breakpoint_manager) = self.breakpoint_manager {
-                    if let Some(rule) = breakpoint_manager.check_response(&request_data, &response)
-                    {
-                        debug!(
-                            "Breakpoint hit on response: {} for {}",
-                            rule.name, request_data.url
-                        );
-
-                        let decision = breakpoint_manager
-                            .pause_and_wait(
-                                entry.id.clone(),
-                                crate::intercept::InterceptDirection::Response,
-                                request_data.clone(),
-                                Some(response.clone()),
-                                rule.id.clone(),
-                            )
-                            .await;
-
-                        match decision {
-                            BreakpointDecision::Abort => {
-                                warn!("Response aborted by breakpoint: {}", request_data.url);
-                                return Ok(());
-                            }
-                            BreakpointDecision::Continue => {}
-                            BreakpointDecision::Modify { modifications } => {
-                                BreakpointManager::apply_response_modifications(
-                                    &mut response,
-                                    &modifications,
-                                );
-                            }
-                            BreakpointDecision::Respond { .. } => {
-                                // Already have the response, just continue
-                            }
-                        }
-                    }
-                }
-
-                if should_capture {
-                    self.traffic_store.store_response(&entry.id, &response)?;
-                }
-
-                // Record as mock if recording is enabled
-                if let Some(ref mock_manager) = self.mock_manager {
-                    if mock_manager.is_recording() {
-                        mock_manager.record_from_traffic(
-                            &request_data,
-                            response.status_code,
-                            response.headers.clone(),
-                            response.body.clone(),
-                        );
-                        debug!("Recorded mock for: {}", request_data.url);
-                    }
-                }
-
-                info!(
-                    "{} {} -> {} ({}ms)",
-                    request_data.method, request_data.url, response.status_code, duration_ms
-                );
-            }
-            Err(e) => {
-                warn!("Failed to forward HTTP request: {}", e);
-                // Store error response so request doesn't remain in "pending" state
-                if should_capture {
-                    let error_response = ResponseData {
-                        status_code: 502,
-                        status_message: Some("Bad Gateway".to_string()),
-                        headers: std::collections::HashMap::new(),
-                        body: Some(format!("Proxy error: {}", e).into_bytes()),
-                        content_type: Some("text/plain".to_string()),
-                        duration_ms: start.elapsed().as_millis() as u64,
-                    };
-                    self.traffic_store
-                        .store_response(&entry.id, &error_response)?;
-                }
-            }
-        }
+        // Process the request through the shared pipeline (rewrites, hooks,
+        // mocks, breakpoints, upstream forwarding, recording).
+        pipeline
+            .process_request(&mut request_data, &mut client_socket)
+            .await?;
 
         Ok(())
-    }
-
-    /// Parse HTTP request from bytes
-    fn parse_http_request(&self, data: &[u8], host: &str, port: u16) -> crate::Result<RequestData> {
-        let request_str = String::from_utf8_lossy(data);
-        let mut lines = request_str.lines();
-
-        // Parse request line
-        let request_line = lines.next().unwrap_or("");
-        let parts: Vec<&str> = request_line.split_whitespace().collect();
-
-        if parts.len() < 3 {
-            return Err(Error::Proxy("Invalid request line".into()));
-        }
-
-        let method = parts[0];
-        let path = parts[1];
-
-        // Parse headers
-        let mut headers = std::collections::HashMap::new();
-        let mut content_length = 0;
-        let mut content_type = None;
-
-        for line in lines {
-            if line.is_empty() {
-                break;
-            }
-            if let Some((key, value)) = line.split_once(':') {
-                let key = key.trim().to_string();
-                let value = value.trim().to_string();
-
-                if key.eq_ignore_ascii_case("content-length") {
-                    content_length = value.parse().unwrap_or(0);
-                } else if key.eq_ignore_ascii_case("content-type") {
-                    content_type = Some(value.clone());
-                }
-
-                headers.insert(key, value);
-            }
-        }
-
-        // Detect chunked transfer encoding
-        let is_chunked = headers.iter().any(|(k, v)| {
-            k.eq_ignore_ascii_case("transfer-encoding") && v.eq_ignore_ascii_case("chunked")
-        });
-
-        // Find where headers end and body begins
-        let header_end = data
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .map(|p| p + 4);
-
-        // Extract body if present
-        let body = if content_length > 0 {
-            // Content-Length based body: only take up to content_length bytes
-            // (the initial read may contain less than the full body, or may
-            // contain pipelined request data beyond the body)
-            if let Some(start) = header_end {
-                let available = data.len().saturating_sub(start);
-                let take = available.min(content_length);
-                Some(data[start..start + take].to_vec())
-            } else {
-                None
-            }
-        } else if is_chunked {
-            // Chunked transfer encoding: extract raw chunked data after headers.
-            // The body may be incomplete in the initial read; the caller will
-            // read more data and decode the chunks.
-            header_end.map(|start| data[start..].to_vec())
-        } else {
-            None
-        };
-
-        // In HTTP proxy mode, path contains full URL - use it directly
-        let (url, actual_path) = if path.starts_with("http://") || path.starts_with("https://") {
-            // path is already a full URL, extract just the path component
-            if let Ok(uri) = path.parse::<hyper::Uri>() {
-                let uri_path = uri
-                    .path_and_query()
-                    .map(|p| p.to_string())
-                    .unwrap_or("/".to_string());
-                (path.to_string(), uri_path)
-            } else {
-                (path.to_string(), path.to_string())
-            }
-        } else {
-            // path is just a path component
-            let scheme = if port == 443 { "https" } else { "http" };
-            (format!("{}://{}{}", scheme, host, path), path.to_string())
-        };
-
-        Ok(RequestData {
-            method: method.into(),
-            url,
-            host: host.to_string(),
-            path: actual_path,
-            headers,
-            body,
-            content_type,
-        })
-    }
-
-    /// Forward HTTPS request to upstream server
-    async fn forward_https_request(
-        &self,
-        request_data: &RequestData,
-        client_stream: &mut tokio_rustls::server::TlsStream<TcpStream>,
-    ) -> crate::Result<ResponseData> {
-        // Connect to upstream server
-        let upstream_socket = TcpStream::connect((&request_data.host[..], 443))
-            .await
-            .map_err(|e| Error::Proxy(format!("Failed to connect to upstream: {}", e)))?;
-
-        // Create TLS connector
-        let tls_config = self.create_tls_client_config();
-        let connector = tokio_rustls::TlsConnector::from(tls_config);
-        let server_name = rustls::pki_types::ServerName::try_from(request_data.host.clone())
-            .map_err(|e| Error::Tls(format!("Invalid server name: {}", e)))?;
-
-        let mut upstream_stream = connector
-            .connect(server_name, upstream_socket)
-            .await
-            .map_err(|e| Error::Tls(format!("TLS connection to upstream failed: {}", e)))?;
-
-        // Build and send request
-        let request_bytes = self.build_http_request(request_data);
-        upstream_stream.write_all(&request_bytes).await?;
-
-        // Read ALL response data (loop until upstream closes connection).
-        // We send Connection: close so the upstream should close after the
-        // response. An idle timeout guards against servers that don't honor it.
-        let mut response_buf = Vec::new();
-        let mut chunk = vec![0u8; 65536];
-        loop {
-            let read_result = tokio::time::timeout(
-                std::time::Duration::from_secs(60),
-                upstream_stream.read(&mut chunk),
-            )
-            .await;
-            match read_result {
-                Ok(Ok(0)) => break,
-                Ok(Ok(n)) => response_buf.extend_from_slice(&chunk[..n]),
-                Ok(Err(_)) => break,
-                Err(_) => break, // timed out
-            }
-        }
-
-        if response_buf.is_empty() {
-            return Err(Error::Proxy("Empty response from upstream".into()));
-        }
-
-        // Parse response (for storage)
-        let response_data = self.parse_http_response(&response_buf)?;
-
-        // Forward complete response to client
-        client_stream.write_all(&response_buf).await?;
-
-        Ok(response_data)
-    }
-
-    /// Forward HTTP request to upstream server
-    async fn forward_http_request(
-        &self,
-        request_data: &RequestData,
-        client_stream: &mut TcpStream,
-    ) -> crate::Result<ResponseData> {
-        // Connect to upstream server
-        let upstream_socket = TcpStream::connect((&request_data.host[..], 80))
-            .await
-            .map_err(|e| Error::Proxy(format!("Failed to connect to upstream: {}", e)))?;
-
-        let (mut upstream_read, mut upstream_write) = upstream_socket.into_split();
-
-        // Send request
-        let request_bytes = self.build_http_request(request_data);
-        upstream_write.write_all(&request_bytes).await?;
-
-        // Read ALL response data (loop until upstream closes connection).
-        // We send Connection: close so the upstream should close after the
-        // response. An idle timeout guards against servers that don't honor it.
-        let mut response_buf = Vec::new();
-        let mut chunk = vec![0u8; 65536];
-        loop {
-            let read_result = tokio::time::timeout(
-                std::time::Duration::from_secs(60),
-                upstream_read.read(&mut chunk),
-            )
-            .await;
-            match read_result {
-                Ok(Ok(0)) => break,
-                Ok(Ok(n)) => response_buf.extend_from_slice(&chunk[..n]),
-                Ok(Err(_)) => break,
-                Err(_) => break, // timed out
-            }
-        }
-
-        if response_buf.is_empty() {
-            return Err(Error::Proxy("Empty response from upstream".into()));
-        }
-
-        // Parse response (for storage)
-        let response_data = self.parse_http_response(&response_buf)?;
-
-        // Forward complete response to client
-        client_stream.write_all(&response_buf).await?;
-
-        Ok(response_data)
-    }
-
-    /// Build HTTP request bytes
-    fn build_http_request(&self, request_data: &RequestData) -> Vec<u8> {
-        let mut request = format!("{} {} HTTP/1.1\r\n", request_data.method, request_data.path);
-
-        for (key, value) in &request_data.headers {
-            // Skip hop-by-hop headers and content-length (we recompute it
-            // from the actual body to avoid mismatches when the body has
-            // been modified by rewrites/breakpoints or decoded from chunked)
-            if !matches!(
-                key.to_lowercase().as_str(),
-                "connection" | "keep-alive" | "transfer-encoding" | "upgrade" | "content-length"
-            ) {
-                request.push_str(&format!("{}: {}\r\n", key, value));
-            }
-        }
-
-        // Add Content-Length based on the actual body length
-        if let Some(ref body) = request_data.body {
-            request.push_str(&format!("Content-Length: {}\r\n", body.len()));
-        }
-
-        request.push_str("Connection: close\r\n");
-        request.push_str("\r\n");
-
-        let mut bytes = request.into_bytes();
-
-        if let Some(ref body) = request_data.body {
-            bytes.extend(body);
-        }
-
-        bytes
-    }
-
-    /// Parse HTTP response
-    fn parse_http_response(&self, data: &[u8]) -> crate::Result<ResponseData> {
-        let response_str = String::from_utf8_lossy(data);
-        let mut lines = response_str.lines();
-
-        // Parse status line
-        let status_line = lines.next().unwrap_or("");
-        let parts: Vec<&str> = status_line.split_whitespace().collect();
-
-        if parts.len() < 2 {
-            return Err(Error::Proxy("Invalid response line".into()));
-        }
-
-        let status_code: u16 = parts[1].parse().unwrap_or(0);
-        let status_message = parts.get(2).map(|s| s.to_string());
-
-        // Parse headers
-        let mut headers = std::collections::HashMap::new();
-        let mut content_type = None;
-        let mut is_chunked = false;
-        let mut content_length: Option<usize> = None;
-
-        for line in lines {
-            if line.is_empty() {
-                break;
-            }
-            if let Some((key, value)) = line.split_once(':') {
-                let key = key.trim().to_string();
-                let value = value.trim().to_string();
-
-                if key.eq_ignore_ascii_case("content-type") {
-                    content_type = Some(value.clone());
-                } else if key.eq_ignore_ascii_case("transfer-encoding") {
-                    if value.eq_ignore_ascii_case("chunked") {
-                        is_chunked = true;
-                    }
-                } else if key.eq_ignore_ascii_case("content-length") {
-                    content_length = value.parse().ok();
-                }
-
-                headers.insert(key, value);
-            }
-        }
-
-        // Extract body (everything after \r\n\r\n)
-        let body = data
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .map(|p| &data[p + 4..]);
-
-        // Process body based on transfer encoding
-        let body = if let Some(raw_body) = body {
-            if is_chunked {
-                // Decode chunked transfer encoding and remove the header
-                // so the stored response is consistent (decoded body + no TE)
-                let decoded = Self::decode_chunked(raw_body);
-                // Remove Transfer-Encoding header (case-insensitive)
-                headers.retain(|k, _| !k.eq_ignore_ascii_case("transfer-encoding"));
-                // Add Content-Length based on decoded body
-                headers.insert("Content-Length".to_string(), decoded.len().to_string());
-                Some(decoded)
-            } else if let Some(cl) = content_length {
-                // Truncate to Content-Length in case extra data was read
-                let take = raw_body.len().min(cl);
-                Some(raw_body[..take].to_vec())
-            } else {
-                Some(raw_body.to_vec())
-            }
-        } else {
-            None
-        };
-
-        // Decompress the body if Content-Encoding is gzip, deflate, or br.
-        // This makes compressed responses human-readable in the UI and
-        // avoids base64 encoding (which happens when bytes aren't valid UTF-8).
-        // The decompressed body is what gets stored; the Content-Encoding
-        // header is removed so the stored response is consistent.
-        let content_encoding = headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("content-encoding"))
-            .map(|(_, v)| v.to_lowercase());
-        let body =
-            body.and_then(|b| Self::decompress_body(content_encoding.as_deref(), b, &mut headers));
-
-        Ok(ResponseData {
-            status_code,
-            status_message,
-            headers,
-            body,
-            content_type,
-            duration_ms: 0, // Will be set by caller
-        })
-    }
-
-    /// Decompress response body based on Content-Encoding header.
-    /// On success, removes the Content-Encoding header and updates
-    /// Content-Length to match the decompressed body. Returns the
-    /// decompressed body, or the original body if decompression fails
-    /// or no encoding is present.
-    fn decompress_body(
-        content_encoding: Option<&str>,
-        body: Vec<u8>,
-        out_headers: &mut std::collections::HashMap<String, String>,
-    ) -> Option<Vec<u8>> {
-        let encoding = match content_encoding {
-            Some(e) => e,
-            None => return Some(body), // no encoding, return as-is
-        };
-
-        let decompressed = match encoding {
-            "gzip" | "x-gzip" => {
-                use std::io::Read;
-                let mut decoder = flate2::read::GzDecoder::new(&body[..]);
-                let mut out = Vec::with_capacity(body.len() * 4);
-                match decoder.read_to_end(&mut out) {
-                    Ok(_) => Some(out),
-                    Err(e) => {
-                        debug!("Failed to decompress gzip body: {}", e);
-                        None
-                    }
-                }
-            }
-            "deflate" => {
-                use std::io::Read;
-                // Try zlib-wrapped deflate first (most common), then raw deflate
-                let mut out = Vec::with_capacity(body.len() * 4);
-                let result = flate2::read::ZlibDecoder::new(&body[..])
-                    .read_to_end(&mut out)
-                    .or_else(|_| {
-                        out.clear();
-                        flate2::read::DeflateDecoder::new(&body[..]).read_to_end(&mut out)
-                    });
-                match result {
-                    Ok(_) => Some(out),
-                    Err(e) => {
-                        debug!("Failed to decompress deflate body: {}", e);
-                        None
-                    }
-                }
-            }
-            "br" => {
-                let mut decoder = brotli::Decompressor::new(&body[..], 4096);
-                let mut out = Vec::with_capacity(body.len() * 4);
-                use std::io::Read;
-                match decoder.read_to_end(&mut out) {
-                    Ok(_) => Some(out),
-                    Err(e) => {
-                        debug!("Failed to decompress brotli body: {}", e);
-                        None
-                    }
-                }
-            }
-            _ => {
-                // Unknown encoding — leave body as-is
-                return Some(body);
-            }
-        };
-
-        match decompressed {
-            Some(dec) => {
-                // Remove Content-Encoding header and update Content-Length
-                out_headers.retain(|k, _| !k.eq_ignore_ascii_case("content-encoding"));
-                out_headers.insert("Content-Length".to_string(), dec.len().to_string());
-                Some(dec)
-            }
-            None => Some(body), // decompression failed, keep original
-        }
-    }
-
-    /// Decode HTTP chunked transfer encoding into the raw body bytes
-    fn decode_chunked(data: &[u8]) -> Vec<u8> {
-        let mut result = Vec::new();
-        let mut pos = 0;
-
-        while pos < data.len() {
-            // Find the end of the chunk size line
-            let line_end = match data[pos..].windows(2).position(|w| w == b"\r\n") {
-                Some(p) => pos + p,
-                None => break,
-            };
-
-            // Parse chunk size (hex, may have extensions after ';')
-            let size_str = std::str::from_utf8(&data[pos..line_end]).unwrap_or("");
-            let chunk_size =
-                usize::from_str_radix(size_str.split(';').next().unwrap_or("0").trim(), 16)
-                    .unwrap_or(0);
-
-            pos = line_end + 2; // skip \r\n after size
-
-            if chunk_size == 0 {
-                break; // last chunk
-            }
-
-            // Copy chunk data (bounded by available data)
-            let end = (pos + chunk_size).min(data.len());
-            result.extend_from_slice(&data[pos..end]);
-            pos = end;
-
-            // Skip trailing \r\n after chunk data
-            if pos + 2 <= data.len() && &data[pos..pos + 2] == b"\r\n" {
-                pos += 2;
-            }
-        }
-
-        result
-    }
-
-    /// Read the full request body from the client, handling both
-    /// Content-Length and chunked transfer encoding. The initial body
-    /// bytes (from the first read) are supplemented with additional
-    /// reads as needed.
-    async fn read_full_request_body<R: AsyncReadExt + Unpin>(
-        &self,
-        reader: &mut R,
-        body: Option<Vec<u8>>,
-        headers: &std::collections::HashMap<String, String>,
-    ) -> crate::Result<Option<Vec<u8>>> {
-        // Check for chunked transfer encoding
-        let is_chunked = headers.iter().any(|(k, v)| {
-            k.eq_ignore_ascii_case("transfer-encoding") && v.eq_ignore_ascii_case("chunked")
-        });
-
-        if is_chunked {
-            // For chunked: read raw data until we see the 0\r\n\r\n terminator
-            let mut raw = body.unwrap_or_default();
-
-            // Check if we already have the terminator
-            let has_terminator = |buf: &[u8]| {
-                // Look for "0\r\n\r\n" which marks the end of chunked data
-                buf.windows(5).any(|w| w == b"0\r\n\r\n")
-            };
-
-            while !has_terminator(&raw) {
-                let mut chunk = vec![0u8; 65536];
-                match reader.read(&mut chunk).await {
-                    Ok(0) => break, // client closed
-                    Ok(n) => raw.extend_from_slice(&chunk[..n]),
-                    Err(e) => {
-                        return Err(Error::Proxy(format!(
-                            "Failed to read chunked request body: {}",
-                            e
-                        )))
-                    }
-                }
-            }
-
-            // Decode chunked encoding into raw body bytes
-            let decoded = Self::decode_chunked(&raw);
-            Ok(Some(decoded))
-        } else {
-            // Content-Length based: read until we have the full body
-            let content_length: usize = headers
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
-                .and_then(|(_, v)| v.parse().ok())
-                .unwrap_or(0);
-
-            if content_length == 0 {
-                return Ok(body);
-            }
-
-            let mut buf = body.unwrap_or_default();
-
-            // Read more if we don't have the full body yet
-            while buf.len() < content_length {
-                let mut chunk = vec![0u8; content_length - buf.len()];
-                match reader.read(&mut chunk).await {
-                    Ok(0) => break, // client closed
-                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
-                    Err(e) => {
-                        return Err(Error::Proxy(format!("Failed to read request body: {}", e)))
-                    }
-                }
-            }
-
-            // Truncate to content_length in case we over-read (pipelined requests)
-            buf.truncate(content_length);
-            Ok(Some(buf))
-        }
     }
 
     /// Create TLS client config for connecting to upstream servers
@@ -1388,55 +649,6 @@ impl ProxyEngine {
     /// Check if proxy is running
     pub fn is_running(&self) -> bool {
         *self.running.read()
-    }
-
-    /// Build a mock response from mock configuration
-    async fn build_mock_response(
-        &self,
-        mock_response: &crate::intercept::MockResponse,
-    ) -> ResponseData {
-        // Apply delay if specified
-        if let Some(delay_ms) = mock_response.delay_ms {
-            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-        }
-
-        ResponseData {
-            status_code: mock_response.status_code,
-            status_message: None,
-            headers: mock_response.headers.clone(),
-            body: mock_response.body_bytes(),
-            content_type: mock_response.headers.get("Content-Type").cloned(),
-            duration_ms: mock_response.delay_ms.unwrap_or(0),
-        }
-    }
-
-    /// Build HTTP response bytes from ResponseData
-    fn build_response_bytes(&self, response: &ResponseData) -> Vec<u8> {
-        let mut bytes = format!(
-            "HTTP/1.1 {} {}\r\n",
-            response.status_code,
-            response.status_message.as_deref().unwrap_or("OK")
-        )
-        .into_bytes();
-
-        // Add headers
-        for (key, value) in &response.headers {
-            bytes.extend(format!("{}: {}\r\n", key, value).as_bytes());
-        }
-
-        // Add content-length if body exists
-        if let Some(ref body) = response.body {
-            bytes.extend(format!("Content-Length: {}\r\n", body.len()).as_bytes());
-        }
-
-        bytes.extend(b"\r\n");
-
-        // Add body
-        if let Some(ref body) = response.body {
-            bytes.extend(body);
-        }
-
-        bytes
     }
 
     /// Handle WebSocket upgrade over TLS connection
@@ -1491,7 +703,7 @@ impl ProxyEngine {
         client_stream.write_all(&response_buf[..n]).await?;
 
         // Create connection tracking
-        if let Some(ref ws_manager) = self.ws_manager {
+        if let Some(ws_manager) = self.ws_manager.get() {
             let id = ws_manager.create_connection(
                 &request_data.url,
                 host,
@@ -1508,6 +720,11 @@ impl ProxyEngine {
             "WebSocket connection established (TLS): {}",
             request_data.url
         );
+
+        // Track WebSocket connection for metrics.
+        if let Some(metrics) = self.metrics_collector.get() {
+            metrics.websocket_opened();
+        }
 
         // Simple bidirectional copy
         let (mut client_rd, mut client_wr) = tokio::io::split(client_stream.get_mut().0);
@@ -1528,6 +745,11 @@ impl ProxyEngine {
         tokio::select! {
             _ = client_to_server => {},
             _ = server_to_client => {},
+        }
+
+        // WebSocket connection has closed.
+        if let Some(metrics) = self.metrics_collector.get() {
+            metrics.websocket_closed();
         }
 
         Ok(())
@@ -1574,7 +796,7 @@ impl ProxyEngine {
         client_socket.write_all(&response_buf[..n]).await?;
 
         // Create connection tracking
-        if let Some(ref ws_manager) = self.ws_manager {
+        if let Some(ws_manager) = self.ws_manager.get() {
             let id = ws_manager.create_connection(
                 &request_data.url,
                 host,
@@ -1591,6 +813,11 @@ impl ProxyEngine {
             "WebSocket connection established (HTTP): {}",
             request_data.url
         );
+
+        // Track WebSocket connection for metrics.
+        if let Some(metrics) = self.metrics_collector.get() {
+            metrics.websocket_opened();
+        }
 
         // Simple bidirectional copy
         let (mut client_rd, mut client_wr) = tokio::io::split(client_socket);
@@ -1611,6 +838,11 @@ impl ProxyEngine {
         tokio::select! {
             _ = client_to_server => {},
             _ = server_to_client => {},
+        }
+
+        // WebSocket connection has closed.
+        if let Some(metrics) = self.metrics_collector.get() {
+            metrics.websocket_closed();
         }
 
         Ok(())
@@ -1650,7 +882,7 @@ impl ProxyEngine {
     async fn forward_websocket_frames(
         &self,
         mut client_read: tokio::io::ReadHalf<tokio::net::TcpStream>,
-        _client_write: tokio::io::WriteHalf<tokio::net::TcpStream>,
+        mut client_write: tokio::io::WriteHalf<tokio::net::TcpStream>,
         mut upstream_read: tokio::io::ReadHalf<tokio::net::TcpStream>,
         mut upstream_write: tokio::io::WriteHalf<tokio::net::TcpStream>,
         conn_id: Option<&str>,
@@ -1666,20 +898,37 @@ impl ProxyEngine {
                         Ok(0) => {
                             info!("WebSocket client disconnected");
                             if let Some(id) = conn_id {
-                                if let Some(ref ws_manager) = self.ws_manager {
+                                if let Some(ws_manager) = self.ws_manager.get() {
                                     ws_manager.close_connection(id);
                                 }
                             }
                             break;
                         }
                         Ok(n) => {
+                            let data = &client_buf[..n];
+
                             // Record message if tracking is enabled
-                            if let (Some(id), Some(ref ws_manager)) = (conn_id, &self.ws_manager) {
-                                self.record_ws_frame(id, WsDirection::Send, &client_buf[..n], ws_manager);
+                            if let (Some(id), Some(ws_manager)) = (conn_id, self.ws_manager.get()) {
+                                self.record_ws_frame(id, WsDirection::Send, data, ws_manager);
                             }
 
-                            // Forward to upstream
-                            if let Err(e) = upstream_write.write_all(&client_buf[..n]).await {
+                            // Auto-reply to Ping frames from the client with a Pong
+                            // sent back to the client. The proxy acts as a server
+                            // towards the client, so the Pong is sent unmasked.
+                            for payload in extract_ping_payloads(data) {
+                                let pong = build_pong_frame(&payload, false);
+                                if let Err(e) = client_write.write_all(&pong).await {
+                                    warn!("Failed to send WebSocket Pong to client: {}", e);
+                                    break;
+                                }
+                                debug!(
+                                    "Sent auto-reply Pong ({} bytes) to WebSocket client",
+                                    pong.len()
+                                );
+                            }
+
+                            // Forward the original frame (including the Ping) to upstream
+                            if let Err(e) = upstream_write.write_all(data).await {
                                 warn!("Failed to forward WebSocket frame to upstream: {}", e);
                                 break;
                             }
@@ -1697,21 +946,40 @@ impl ProxyEngine {
                         Ok(0) => {
                             info!("WebSocket server disconnected");
                             if let Some(id) = conn_id {
-                                if let Some(ref ws_manager) = self.ws_manager {
+                                if let Some(ws_manager) = self.ws_manager.get() {
                                     ws_manager.close_connection(id);
                                 }
                             }
                             break;
                         }
                         Ok(n) => {
+                            let data = &upstream_buf[..n];
+
                             // Record message if tracking is enabled
-                            if let (Some(id), Some(ref ws_manager)) = (conn_id, &self.ws_manager) {
-                                self.record_ws_frame(id, WsDirection::Receive, &upstream_buf[..n], ws_manager);
+                            if let (Some(id), Some(ws_manager)) = (conn_id, self.ws_manager.get()) {
+                                self.record_ws_frame(id, WsDirection::Receive, data, ws_manager);
                             }
 
-                            // Forward to client (we need to re-acquire the write handle)
-                            // For now, just log - this is a simplified implementation
-                            debug!("Received {} bytes from WebSocket server", n);
+                            // Auto-reply to Ping frames from the server with a Pong
+                            // sent back to the server. The proxy acts as a client
+                            // towards the server, so the Pong must be masked.
+                            for payload in extract_ping_payloads(data) {
+                                let pong = build_pong_frame(&payload, true);
+                                if let Err(e) = upstream_write.write_all(&pong).await {
+                                    warn!("Failed to send WebSocket Pong to upstream: {}", e);
+                                    break;
+                                }
+                                debug!(
+                                    "Sent auto-reply Pong ({} bytes) to WebSocket server",
+                                    pong.len()
+                                );
+                            }
+
+                            // Forward the original frame (including the Ping) to the client
+                            if let Err(e) = client_write.write_all(data).await {
+                                warn!("Failed to forward WebSocket frame to client: {}", e);
+                                break;
+                            }
                         }
                         Err(e) => {
                             warn!("Error reading from WebSocket server: {}", e);
@@ -1757,207 +1025,6 @@ impl ProxyEngine {
 
             if fin {
                 debug!("WebSocket {:?} frame: {} bytes", direction, data.len());
-            }
-        }
-    }
-
-    /// Run script and plugin request hooks (on_request) before the request is
-    /// forwarded to the upstream server.
-    fn run_request_hooks(&self, request_data: &RequestData) {
-        // Script on_request hook
-        if let Some(ref script_runtime) = self.script_runtime {
-            let session_id = self.traffic_store.current_session_id();
-            let request_id = uuid::Uuid::new_v4().to_string();
-            let mut context = ScriptContext::new(&request_id, &session_id, ScriptHook::OnRequest)
-                .with_request(request_data);
-            let results = script_runtime.execute_hook(ScriptHook::OnRequest.as_str(), &mut context);
-            for result in &results {
-                if let Some(ref err) = result.error {
-                    debug!("Script on_request error: {}", err);
-                } else {
-                    debug!(
-                        "Script on_request executed (modified={}, continue={})",
-                        result.modified, result.continue_
-                    );
-                }
-            }
-        }
-
-        // Plugin on_request hook
-        if let Some(ref plugin_manager) = self.plugin_manager {
-            if plugin_manager.is_enabled() {
-                let session_id = self.traffic_store.current_session_id();
-                let request_id = uuid::Uuid::new_v4().to_string();
-                let mut context =
-                    PluginContext::new("", PluginHook::OnRequest).with_request(request_data);
-                context.request_id = Some(request_id);
-                context.session_id = Some(session_id);
-                let results = plugin_manager.execute_hook(PluginHook::OnRequest, context);
-                for (plugin_id, result) in &results {
-                    if let Some(ref err) = result.error {
-                        debug!("Plugin {} on_request error: {}", plugin_id, err);
-                    } else {
-                        debug!("Plugin {} on_request executed", plugin_id);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Run script and plugin response hooks (on_response) after a response is
-    /// received from the upstream server.
-    fn run_response_hooks(&self, request_data: &RequestData, response: &ResponseData) {
-        // Script on_response hook
-        if let Some(ref script_runtime) = self.script_runtime {
-            let session_id = self.traffic_store.current_session_id();
-            let request_id = uuid::Uuid::new_v4().to_string();
-            let mut context = ScriptContext::new(&request_id, &session_id, ScriptHook::OnResponse)
-                .with_request(request_data)
-                .with_response(response);
-            let results =
-                script_runtime.execute_hook(ScriptHook::OnResponse.as_str(), &mut context);
-            for result in &results {
-                if let Some(ref err) = result.error {
-                    debug!("Script on_response error: {}", err);
-                } else {
-                    debug!(
-                        "Script on_response executed (modified={}, continue={})",
-                        result.modified, result.continue_
-                    );
-                }
-            }
-        }
-
-        // Plugin on_response hook
-        if let Some(ref plugin_manager) = self.plugin_manager {
-            if plugin_manager.is_enabled() {
-                let session_id = self.traffic_store.current_session_id();
-                let request_id = uuid::Uuid::new_v4().to_string();
-                let mut context = PluginContext::new("", PluginHook::OnResponse)
-                    .with_request(request_data)
-                    .with_response(response);
-                context.request_id = Some(request_id);
-                context.session_id = Some(session_id);
-                let results = plugin_manager.execute_hook(PluginHook::OnResponse, context);
-                for (plugin_id, result) in &results {
-                    if let Some(ref err) = result.error {
-                        debug!("Plugin {} on_response error: {}", plugin_id, err);
-                    } else {
-                        debug!("Plugin {} on_response executed", plugin_id);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Detect gRPC traffic on a request and register the connection/stream and
-    /// record request frames with the gRPC manager. Returns the
-    /// `(connection_id, stream_id)` so the response path can reuse the same
-    /// stream, or `None` if no gRPC manager is attached or the request is not
-    /// gRPC.
-    fn detect_and_record_grpc_request(
-        &self,
-        request_data: &RequestData,
-    ) -> Option<(String, String)> {
-        let grpc_manager = self.grpc_manager.as_ref()?;
-
-        let content_type = request_data.content_type.as_deref();
-        let is_grpc = is_grpc_content_type(content_type) || is_grpc_path(&request_data.path);
-        if !is_grpc {
-            return None;
-        }
-
-        debug!(
-            "gRPC request detected: {} {}",
-            request_data.method, request_data.url
-        );
-
-        let conn_id = grpc_manager.register_connection("client", &request_data.host);
-        let stream_id = grpc_manager.register_stream(&conn_id, Some(&request_data.path));
-
-        // Record request metadata (HTTP/2 headers / pseudo-headers)
-        grpc_manager.update_stream_metadata(
-            &stream_id,
-            GrpcDirection::Request,
-            request_data.headers.clone(),
-        );
-
-        // Parse and record gRPC frames from the request body
-        if let Some(ref body) = request_data.body {
-            let mut offset = 0;
-            while offset < body.len() {
-                match parse_frame(
-                    &body[offset..],
-                    &stream_id,
-                    &conn_id,
-                    GrpcDirection::Request,
-                ) {
-                    Ok(Some((frame, consumed))) => {
-                        grpc_manager.record_frame(frame);
-                        offset += consumed;
-                    }
-                    _ => break,
-                }
-            }
-        }
-
-        Some((conn_id, stream_id))
-    }
-
-    /// Record gRPC response frames for a detected gRPC stream. If no stream
-    /// info is provided (the request wasn't detected as gRPC), a new stream is
-    /// registered only when the response itself looks like gRPC.
-    fn record_grpc_response(
-        &self,
-        request_data: &RequestData,
-        response: &ResponseData,
-        stream: Option<&(String, String)>,
-    ) {
-        let grpc_manager = match self.grpc_manager {
-            Some(ref m) => m,
-            None => return,
-        };
-
-        let (conn_id, stream_id) = match stream {
-            Some((c, s)) => (c.clone(), s.clone()),
-            None => {
-                let content_type = response.content_type.as_deref();
-                if !is_grpc_content_type(content_type) && !is_grpc_path(&request_data.path) {
-                    return;
-                }
-                debug!(
-                    "gRPC response detected (no request stream): {} {}",
-                    request_data.method, request_data.url
-                );
-                let conn_id = grpc_manager.register_connection("client", &request_data.host);
-                let stream_id = grpc_manager.register_stream(&conn_id, Some(&request_data.path));
-                (conn_id, stream_id)
-            }
-        };
-
-        // Record response metadata
-        grpc_manager.update_stream_metadata(
-            &stream_id,
-            GrpcDirection::Response,
-            response.headers.clone(),
-        );
-
-        // Parse and record gRPC frames from the response body
-        if let Some(ref body) = response.body {
-            let mut offset = 0;
-            while offset < body.len() {
-                match parse_frame(
-                    &body[offset..],
-                    &stream_id,
-                    &conn_id,
-                    GrpcDirection::Response,
-                ) {
-                    Ok(Some((frame, consumed))) => {
-                        grpc_manager.record_frame(frame);
-                        offset += consumed;
-                    }
-                    _ => break,
-                }
             }
         }
     }
@@ -2012,4 +1079,98 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
         self.supported_schemes.clone()
     }
+}
+
+/// WebSocket Ping opcode (RFC 6455).
+const WS_OPCODE_PING: u8 = 0x9;
+
+/// Extract the unmasked payloads of all complete WebSocket Ping frames
+/// contained in `data`.
+///
+/// A single TCP read may coalesce multiple WebSocket frames or contain a
+/// partial frame. This walks through as many *complete* frames as are
+/// present and returns the decoded payloads of any Ping (opcode `0x9`)
+/// frames. Trailing partial frames are ignored (they will be re-read on the
+/// next iteration once more bytes arrive).
+fn extract_ping_payloads(data: &[u8]) -> Vec<Vec<u8>> {
+    let mut pings = Vec::new();
+    let mut offset = 0;
+    while offset < data.len() {
+        let remaining = &data[offset..];
+        let (fin, opcode, payload_len, header_len) = match WsFrameParser::parse_header(remaining) {
+            Some(h) => h,
+            None => break, // Not enough bytes for a header yet.
+        };
+        let total = match (header_len as u64).checked_add(payload_len) {
+            Some(t) => t as usize,
+            None => break,
+        };
+        if remaining.len() < total {
+            // Partial frame: wait for more data on the next read.
+            break;
+        }
+
+        if opcode == WS_OPCODE_PING && fin {
+            let second_byte = remaining[1];
+            let masked = (second_byte & 0x80) != 0;
+            let mask_len = if masked { 4 } else { 0 };
+            let base_header_len = header_len - mask_len;
+            let payload = &remaining[header_len..total];
+            if masked {
+                let mask = [
+                    remaining[base_header_len],
+                    remaining[base_header_len + 1],
+                    remaining[base_header_len + 2],
+                    remaining[base_header_len + 3],
+                ];
+                pings.push(WsFrameParser::decode_masked(payload, mask));
+            } else {
+                pings.push(payload.to_vec());
+            }
+        }
+
+        offset += total;
+    }
+    pings
+}
+
+/// Build a WebSocket Pong frame (opcode `0x0A`) carrying `payload`.
+///
+/// Per RFC 6455, frames sent from a client to a server must be masked, while
+/// frames sent from a server to a client must not be masked. The proxy acts
+/// as a server towards the client and as a client towards the upstream
+/// server, so:
+///
+/// - When sending a Pong to the client, pass `mask = false`.
+/// - When sending a Pong to the server, pass `mask = true`.
+fn build_pong_frame(payload: &[u8], mask: bool) -> Vec<u8> {
+    use rand::Rng;
+
+    let mut frame = vec![0x8A]; // FIN=1, opcode=0x0A (Pong)
+    let mask_flag: u8 = if mask { 0x80 } else { 0x00 };
+    let len = payload.len();
+    if len < 126 {
+        frame.push(mask_flag | len as u8);
+    } else if len <= 65535 {
+        frame.push(mask_flag | 126);
+        frame.extend_from_slice(&(len as u16).to_be_bytes());
+    } else {
+        frame.push(mask_flag | 127);
+        frame.extend_from_slice(&(len as u64).to_be_bytes());
+    }
+
+    if mask {
+        let masking_key: [u8; 4] = rand::rng().random::<u32>().to_be_bytes();
+        frame.extend_from_slice(&masking_key);
+        let masked_payload: Vec<u8> = payload
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| b ^ masking_key[i % 4])
+            .collect();
+        frame.extend_from_slice(&masked_payload);
+    } else {
+        frame.extend_from_slice(payload);
+    }
+
+    frame
 }

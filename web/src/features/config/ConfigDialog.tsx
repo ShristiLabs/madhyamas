@@ -28,6 +28,7 @@ import {
   Camera,
   Palette,
 } from "lucide-react";
+import { apiGet, apiPatch } from "@/lib/api/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -165,8 +166,7 @@ function GeneralTab() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetch("/api/config")
-      .then((r) => r.json())
+    apiGet<RuntimeConfig>("/config")
       .then((data) => {
         setConfig({
           proxy_port: data.proxy_port ?? 8888,
@@ -185,24 +185,13 @@ function GeneralTab() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await fetch("/api/config", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          intercept_https: config.intercept_https,
-          max_requests: config.max_requests,
-          verbose: config.verbose,
-          public_ip: config.public_ip || null,
-        }),
+      await apiPatch("/config", {
+        intercept_https: config.intercept_https,
+        max_requests: config.max_requests,
+        verbose: config.verbose,
+        public_ip: config.public_ip || null,
       });
-      if (res.ok) {
-        toast({ description: "Configuration saved successfully." });
-      } else {
-        toast({
-          description: "Failed to save configuration.",
-          variant: "destructive",
-        });
-      }
+      toast({ description: "Configuration saved successfully." });
     } catch {
       toast({
         description: "Failed to save configuration.",

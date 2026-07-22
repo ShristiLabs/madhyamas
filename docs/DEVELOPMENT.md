@@ -75,12 +75,22 @@ madhyamas/
 │   ├── madhyamas-api/        # API server
 │   │   ├── src/
 │   │   │   ├── lib.rs
-│   │   │   ├── routes.rs      # Route definitions
-│   │   │   └── handlers/      # Request handlers
+│   │   │   ├── routes.rs           # Route definitions
+│   │   │   ├── handlers.rs         # Core request handlers
+│   │   │   ├── intercept_handlers.rs  # Breakpoint/mock/rewrite/throttle handlers
+│   │   │   ├── phase3_handlers.rs     # gRPC/script/plugin handlers
+│   │   │   ├── phase4_handlers.rs     # Enterprise/auth/audit handlers
+│   │   │   ├── ws.rs                # WebSocket handler
+│   │   │   ├── middleware.rs        # Auth middleware
+│   │   │   ├── error.rs             # Error types
+│   │   │   └── validation.rs        # Input validation
+│   │   └── Cargo.toml
+│   ├── madhyamas-mcp/        # MCP server library
+│   │   ├── src/
 │   │   └── Cargo.toml
 │   └── madhyamas-cli/        # CLI
 │       ├── src/
-│       │   └── main.rs
+│       │   └── commands/     # CLI subcommands
 │       └── Cargo.toml
 ├── web/                       # React frontend
 │   ├── src/

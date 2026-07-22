@@ -10,10 +10,60 @@ env:
 
 jobs:
   # =============================================================================
+  # Test gate — run tests before any build/publish steps
+  # =============================================================================
+  test-gate:
+    name: Test Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-testgate-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-testgate-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend (required for rust-embed)
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test --verbose
+
+  # =============================================================================
   # Build the unified binary for all platforms
   # Single binary includes: proxy server + web UI (embedded) + MCP + CLI
   # =============================================================================
   build-binaries:
+    needs: test-gate
     name: Build madhyamas for ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -407,15 +457,23 @@ jobs:
       - name: Download release checksums
         run: |
           mkdir -p checksums
-          for target in x86_64-apple-darwin aarch64-apple-darwin; do
+          for target in x86_64-apple-darwin aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
             curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/madhyamas-v${{ steps.version.outputs.VERSION }}-${target}.tar.gz.sha256" -o "checksums/madhyamas-${target}.sha256" || true
           done
 
-      - name: Update Homebrew formula
+      - name: Update Homebrew formula (version + SHA256)
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           for formula in packaging/homebrew/*.rb; do
             sed -i "s/version \"[^\"]*\"/version \"$VERSION\"/" "$formula"
+            MACOS_INTEL_SHA=$(awk '{print $1}' checksums/madhyamas-x86_64-apple-darwin.sha256 2>/dev/null || echo "")
+            MACOS_ARM_SHA=$(awk '{print $1}' checksums/madhyamas-aarch64-apple-darwin.sha256 2>/dev/null || echo "")
+            if [ -n "$MACOS_INTEL_SHA" ]; then
+              sed -i "s/PLACEHOLDER_SHA256_MACOS_INTEL/$MACOS_INTEL_SHA/" "$formula"
+            fi
+            if [ -n "$MACOS_ARM_SHA" ]; then
+              sed -i "s/PLACEHOLDER_SHA256_MACOS_ARM/$MACOS_ARM_SHA/" "$formula"
+            fi
           done
 
       - name: Push to Homebrew tap

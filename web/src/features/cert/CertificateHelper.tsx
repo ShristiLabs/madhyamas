@@ -25,6 +25,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
+import { apiGet, apiGetRaw } from "@/lib/api/client";
 
 interface CertificateHelperProps {
   trigger?: React.ReactNode;
@@ -88,20 +89,21 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
 
       // Get config from backend API (backend now detects private IP)
       try {
-        const response = await fetch("/api/config");
-        if (response.ok) {
-          const config = await response.json();
-          proxyPort = config.proxy_port || 8888;
-          apiPort = config.api_port || 3001;
-          // Backend now returns detected private IP, so we can use it directly
-          if (config.host && isUsableIP(config.host)) {
-            setProxyConfig({
-              ip: config.host,
-              port: proxyPort,
-              certUrl: `http://${config.host}:${apiPort}/api/cert/ca`,
-            });
-            return;
-          }
+        const config = await apiGet<{
+          proxy_port?: number;
+          api_port?: number;
+          host?: string;
+        }>("/config");
+        proxyPort = config.proxy_port || 8888;
+        apiPort = config.api_port || 3001;
+        // Backend now returns detected private IP, so we can use it directly
+        if (config.host && isUsableIP(config.host)) {
+          setProxyConfig({
+            ip: config.host,
+            port: proxyPort,
+            certUrl: `http://${config.host}:${apiPort}/api/cert/ca`,
+          });
+          return;
         }
       } catch {
         // API config not available
@@ -210,9 +212,7 @@ export function CertificateHelper({ trigger }: CertificateHelperProps) {
   const handleDownload = async () => {
     setDownloading(true);
     try {
-      const response = await fetch("/api/cert/ca");
-      if (!response.ok) throw new Error("Failed to download certificate");
-
+      const response = await apiGetRaw("/cert/ca");
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

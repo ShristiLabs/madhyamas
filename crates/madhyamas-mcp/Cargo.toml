@@ -6,6 +6,9 @@ license.workspace = true
 description = "MCP (Model Context Protocol) server for Madhyamas - enables AI agents to interact with Madhyamas"
 
 [dependencies]
+# Core library (for the unified `AppError` trait)
+madhyamas-core.workspace = true
+
 # Async runtime
 tokio.workspace = true
 
@@ -30,6 +33,9 @@ futures.workspace = true
 
 # URL encoding
 urlencoding.workspace = true
+
+[features]
+default = []
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -10,6 +10,7 @@ use super::mocks;
 use super::plugins;
 use super::replay;
 use super::rewrites;
+use super::sanitize_id;
 use super::scripts;
 use super::sessions;
 use super::throttle;
@@ -25,6 +26,16 @@ pub struct ToolExecutor {
 impl ToolExecutor {
     pub fn new(api_url: String, client: Client) -> Self {
         Self { api_url, client }
+    }
+
+    /// Borrow the underlying HTTP client (used by trait-based tools).
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Borrow the API URL (used by trait-based tools).
+    pub fn api_url(&self) -> &str {
+        &self.api_url
     }
 
     /// Execute a tool by name
@@ -61,8 +72,12 @@ impl ToolExecutor {
 
             "madhyamas_get_traffic_entry" => {
                 let args: EntryArgs = self.parse_args(&arguments)?;
-                let result =
-                    traffic::get_traffic_entry(&self.client, &self.api_url, &args.id).await?;
+                let result = traffic::get_traffic_entry(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: traffic::format_traffic_detail(&result),
                 }])
@@ -120,7 +135,9 @@ impl ToolExecutor {
 
             "madhyamas_delete_mock" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result = mocks::delete_mock(&self.client, &self.api_url, &args.id).await?;
+                let result =
+                    mocks::delete_mock(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -128,8 +145,13 @@ impl ToolExecutor {
 
             "madhyamas_toggle_mock" => {
                 let args: ToggleArgs = self.parse_args(&arguments)?;
-                let result =
-                    mocks::toggle_mock(&self.client, &self.api_url, &args.id, args.enabled).await?;
+                let result = mocks::toggle_mock(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.enabled,
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -158,8 +180,13 @@ impl ToolExecutor {
 
             "madhyamas_update_mock" => {
                 let args: UpdateMockArgs = self.parse_args(&arguments)?;
-                let result =
-                    mocks::update_mock(&self.client, &self.api_url, &args.id, args.mock).await?;
+                let result = mocks::update_mock(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.mock,
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -167,7 +194,8 @@ impl ToolExecutor {
 
             "madhyamas_get_mock" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result = mocks::get_mock(&self.client, &self.api_url, &args.id).await?;
+                let result =
+                    mocks::get_mock(&self.client, &self.api_url, &sanitize_id(&args.id)?).await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -178,7 +206,7 @@ impl ToolExecutor {
                 let result = mocks::duplicate_mock(
                     &self.client,
                     &self.api_url,
-                    &args.id,
+                    &sanitize_id(&args.id)?,
                     args.new_name.as_deref(),
                 )
                 .await?;
@@ -189,9 +217,13 @@ impl ToolExecutor {
 
             "madhyamas_rollback_mock" => {
                 let args: RollbackMockArgs = self.parse_args(&arguments)?;
-                let result =
-                    mocks::rollback_mock(&self.client, &self.api_url, &args.id, args.version)
-                        .await?;
+                let result = mocks::rollback_mock(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.version,
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -200,7 +232,8 @@ impl ToolExecutor {
             "madhyamas_get_mock_versions" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
                 let result =
-                    mocks::get_mock_versions(&self.client, &self.api_url, &args.id).await?;
+                    mocks::get_mock_versions(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -234,7 +267,7 @@ impl ToolExecutor {
                 let result = mocks::delete_collection(
                     &self.client,
                     &self.api_url,
-                    &args.id,
+                    &sanitize_id(&args.id)?,
                     args.delete_rules.unwrap_or(false),
                 )
                 .await?;
@@ -245,9 +278,13 @@ impl ToolExecutor {
 
             "madhyamas_toggle_mock_collection" => {
                 let args: ToggleCollectionArgs = self.parse_args(&arguments)?;
-                let result =
-                    mocks::toggle_collection(&self.client, &self.api_url, &args.id, args.enabled)
-                        .await?;
+                let result = mocks::toggle_collection(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.enabled,
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -263,7 +300,9 @@ impl ToolExecutor {
 
             "madhyamas_get_mock_hit_history" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result = mocks::get_hit_history(&self.client, &self.api_url, &args.id).await?;
+                let result =
+                    mocks::get_hit_history(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -272,8 +311,13 @@ impl ToolExecutor {
             // Mock Testing & Preview
             "madhyamas_test_mock" => {
                 let args: TestMockArgs = self.parse_args(&arguments)?;
-                let result =
-                    mocks::test_mock(&self.client, &self.api_url, &args.id, args.request).await?;
+                let result = mocks::test_mock(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.request,
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -363,8 +407,12 @@ impl ToolExecutor {
 
             "madhyamas_delete_breakpoint" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result =
-                    breakpoints::delete_breakpoint(&self.client, &self.api_url, &args.id).await?;
+                let result = breakpoints::delete_breakpoint(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -376,7 +424,7 @@ impl ToolExecutor {
                 let result = replay::replay_request(
                     &self.client,
                     &self.api_url,
-                    &args.id,
+                    &sanitize_id(&args.id)?,
                     args.modifications,
                 )
                 .await?;
@@ -408,7 +456,9 @@ impl ToolExecutor {
 
             "madhyamas_export_curl" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result = replay::export_curl(&self.client, &self.api_url, &args.id).await?;
+                let result =
+                    replay::export_curl(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: result.to_string(),
                 }])
@@ -439,7 +489,8 @@ impl ToolExecutor {
             "madhyamas_switch_session" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
                 let result =
-                    sessions::switch_session(&self.client, &self.api_url, &args.id).await?;
+                    sessions::switch_session(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -450,7 +501,7 @@ impl ToolExecutor {
                 let result = sessions::export_session(
                     &self.client,
                     &self.api_url,
-                    &args.id,
+                    &sanitize_id(&args.id)?,
                     args.format.as_deref(),
                 )
                 .await?;
@@ -567,16 +618,21 @@ impl ToolExecutor {
             "madhyamas_delete_rewrite" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
                 let result =
-                    rewrites::delete_rewrite(&self.client, &self.api_url, &args.id).await?;
+                    rewrites::delete_rewrite(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
             }
             "madhyamas_toggle_rewrite" => {
                 let args: ToggleArgs = self.parse_args(&arguments)?;
-                let result =
-                    rewrites::toggle_rewrite(&self.client, &self.api_url, &args.id, args.enabled)
-                        .await?;
+                let result = rewrites::toggle_rewrite(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.enabled,
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -647,32 +703,44 @@ impl ToolExecutor {
             }
             "madhyamas_get_script" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result = scripts::get_script(&self.client, &self.api_url, &args.id).await?;
+                let result =
+                    scripts::get_script(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
             }
             "madhyamas_update_script" => {
                 let args: UpdateScriptArgs = self.parse_args(&arguments)?;
-                let result =
-                    scripts::update_script(&self.client, &self.api_url, &args.id, args.script)
-                        .await?;
+                let result = scripts::update_script(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.script,
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
             }
             "madhyamas_delete_script" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result = scripts::delete_script(&self.client, &self.api_url, &args.id).await?;
+                let result =
+                    scripts::delete_script(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
             }
             "madhyamas_toggle_script" => {
                 let args: ToggleArgs = self.parse_args(&arguments)?;
-                let result =
-                    scripts::toggle_script(&self.client, &self.api_url, &args.id, args.enabled)
-                        .await?;
+                let result = scripts::toggle_script(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.enabled,
+                )
+                .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -693,21 +761,27 @@ impl ToolExecutor {
             }
             "madhyamas_get_plugin" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result = plugins::get_plugin(&self.client, &self.api_url, &args.id).await?;
+                let result =
+                    plugins::get_plugin(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
             }
             "madhyamas_enable_plugin" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result = plugins::enable_plugin(&self.client, &self.api_url, &args.id).await?;
+                let result =
+                    plugins::enable_plugin(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
             }
             "madhyamas_disable_plugin" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
-                let result = plugins::disable_plugin(&self.client, &self.api_url, &args.id).await?;
+                let result =
+                    plugins::disable_plugin(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -715,7 +789,8 @@ impl ToolExecutor {
             "madhyamas_get_plugin_stats" => {
                 let args: IdArgs = self.parse_args(&arguments)?;
                 let result =
-                    plugins::get_plugin_stats(&self.client, &self.api_url, &args.id).await?;
+                    plugins::get_plugin_stats(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])

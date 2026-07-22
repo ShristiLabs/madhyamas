@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-
-const API_BASE = '/api';
+import { apiGet, apiPost, apiPostVoid, apiDeleteVoid, apiGetRaw } from './client';
 
 // ==================== Types ====================
 
@@ -42,9 +41,7 @@ export function useSessions() {
   return useQuery({
     queryKey: ['sessions'],
     queryFn: async (): Promise<Session[]> => {
-      const res = await fetch(`${API_BASE}/sessions`);
-      if (!res.ok) throw new Error('Failed to fetch sessions');
-      return res.json();
+      return apiGet<Session[]>('/sessions');
     },
   });
 }
@@ -53,13 +50,7 @@ export function useCreateSession() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: CreateSessionInput): Promise<Session> => {
-      const res = await fetch(`${API_BASE}/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
-      });
-      if (!res.ok) throw new Error('Failed to create session');
-      return res.json();
+      return apiPost<Session>('/sessions', input);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
@@ -71,10 +62,7 @@ export function useDeleteSession() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const res = await fetch(`${API_BASE}/sessions/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('Failed to delete session');
+      return apiDeleteVoid(`/sessions/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
@@ -86,10 +74,7 @@ export function useSwitchSession() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const res = await fetch(`${API_BASE}/sessions/${id}/switch`, {
-        method: 'POST',
-      });
-      if (!res.ok) throw new Error('Failed to switch session');
+      return apiPostVoid(`/sessions/${id}/switch`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
@@ -103,13 +88,7 @@ export function useImportSession() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (exportData: SessionExport): Promise<Session> => {
-      const res = await fetch(`${API_BASE}/sessions/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(exportData),
-      });
-      if (!res.ok) throw new Error('Failed to import session');
-      return res.json();
+      return apiPost<Session>('/sessions/import', exportData);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
@@ -122,8 +101,7 @@ export function useImportSession() {
  * On-demand function (not a hook) since it triggers a browser download.
  */
 export async function exportSession(id: string, name?: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/sessions/${id}/export`);
-  if (!res.ok) throw new Error('Failed to export session');
+  const res = await apiGetRaw(`/sessions/${id}/export`);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

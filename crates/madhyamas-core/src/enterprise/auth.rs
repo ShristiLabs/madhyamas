@@ -258,36 +258,35 @@ impl AuthManager {
             .unwrap_or_default()
     }
 
-    /// Generate a JWT token for a user (stub - returns a simple token)
+    /// Generate a JWT token for a user using HMAC-SHA256 signing.
     pub fn generate_jwt(&self, user_id: &str, role: &str) -> Result<String, EnterpriseError> {
-        // Stub implementation - in production, use proper JWT library
-        use base64::prelude::{Engine, BASE64_STANDARD};
         let claims = JwtClaims::new(user_id, role, self.config.jwt_expiration_secs as i64);
-        let token = BASE64_STANDARD.encode(serde_json::to_string(&claims).unwrap_or_default());
-        Ok(token)
+        let encoding_key = jsonwebtoken::EncodingKey::from_secret(self.config.jwt_secret.as_ref());
+        jsonwebtoken::encode(&jsonwebtoken::Header::default(), &claims, &encoding_key).map_err(
+            |e| EnterpriseError::JwtError {
+                message: e.to_string(),
+            },
+        )
     }
 
-    /// Validate a JWT token (stub - parses the simple token)
+    /// Validate a JWT token and return its claims.
+    /// Verifies the HMAC-SHA256 signature and expiration.
     pub fn validate_jwt(&self, token: &str) -> Result<JwtClaims, EnterpriseError> {
-        // Stub implementation - in production, use proper JWT library
-        use base64::prelude::{Engine, BASE64_STANDARD};
-        let decoded = BASE64_STANDARD
-            .decode(token)
-            .map_err(|_| EnterpriseError::AuthFailed {
-                message: "Invalid token".to_string(),
-            })?;
-        let claims: JwtClaims =
-            serde_json::from_slice(&decoded).map_err(|_| EnterpriseError::AuthFailed {
-                message: "Invalid token claims".to_string(),
+        let decoding_key = jsonwebtoken::DecodingKey::from_secret(self.config.jwt_secret.as_ref());
+        let validation = jsonwebtoken::Validation::default();
+        let token_data = jsonwebtoken::decode::<JwtClaims>(token, &decoding_key, &validation)
+            .map_err(|e| {
+                let msg = e.to_string();
+                if msg.contains("ExpiredSignature") {
+                    EnterpriseError::TokenExpired
+                } else {
+                    EnterpriseError::AuthFailed {
+                        message: format!("Invalid token: {}", msg),
+                    }
+                }
             })?;
 
-        if claims.is_expired() {
-            return Err(EnterpriseError::TokenExpired {
-                token: token.to_string(),
-            });
-        }
-
-        Ok(claims)
+        Ok(token_data.claims)
     }
 
     /// Invalidate a session

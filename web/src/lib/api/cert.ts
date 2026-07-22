@@ -1,16 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
+import { apiGetText } from './client'
 
 export function useCertificate() {
   return useQuery({
     queryKey: ['cert', 'ca'],
     queryFn: async () => {
-      const response = await fetch('/api/cert/ca')
-      if (!response.ok) {
-        throw new Error('Failed to fetch certificate')
-      }
-      const blob = await response.blob()
-      const text = await blob.text()
-      return text
+      return apiGetText('/cert/ca')
     },
   })
 }

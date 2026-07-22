@@ -1,5 +1,6 @@
 //! Common types for interception features
 
+use super::regex_cache;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -97,33 +98,20 @@ impl MatchCondition {
     ) -> bool {
         match self {
             MatchCondition::All => true,
-            MatchCondition::UrlPattern { pattern } => regex::Regex::new(pattern)
-                .map(|re| re.is_match(url))
-                .unwrap_or(false),
+            MatchCondition::UrlPattern { pattern } => regex_cache::is_match(pattern, url),
             MatchCondition::Method { method: m } => method.eq_ignore_ascii_case(m),
             MatchCondition::Header { name, value } => headers.iter().any(|(k, v)| {
                 k.eq_ignore_ascii_case(name) && value.as_ref().is_none_or(|expected| v == expected)
             }),
-            MatchCondition::HeaderPattern { name, pattern } => headers.iter().any(|(k, v)| {
-                k.eq_ignore_ascii_case(name)
-                    && regex::Regex::new(pattern)
-                        .map(|re| re.is_match(v))
-                        .unwrap_or(false)
-            }),
+            MatchCondition::HeaderPattern { name, pattern } => headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case(name) && regex_cache::is_match(pattern, v)),
             MatchCondition::BodyPattern { pattern } => body
                 .and_then(|b| std::str::from_utf8(b).ok())
-                .map(|body_str| {
-                    regex::Regex::new(pattern)
-                        .map(|re| re.is_match(body_str))
-                        .unwrap_or(false)
-                })
+                .map(|body_str| regex_cache::is_match(pattern, body_str))
                 .unwrap_or(false),
             MatchCondition::ContentType { pattern } => content_type
-                .map(|ct| {
-                    regex::Regex::new(pattern)
-                        .map(|re| re.is_match(ct))
-                        .unwrap_or(false)
-                })
+                .map(|ct| regex_cache::is_match(pattern, ct))
                 .unwrap_or(false),
             MatchCondition::QueryParam { name, value } => {
                 if let Ok(parsed_url) = url::Url::parse(url) {
@@ -136,12 +124,9 @@ impl MatchCondition {
             }
             MatchCondition::QueryParamPattern { name, pattern } => {
                 if let Ok(parsed_url) = url::Url::parse(url) {
-                    parsed_url.query_pairs().any(|(k, v)| {
-                        k == *name
-                            && regex::Regex::new(pattern)
-                                .map(|re| re.is_match(&v))
-                                .unwrap_or(false)
-                    })
+                    parsed_url
+                        .query_pairs()
+                        .any(|(k, v)| k == *name && regex_cache::is_match(pattern, &v))
                 } else {
                     false
                 }
@@ -157,21 +142,21 @@ impl MatchCondition {
             MatchCondition::JsonPathPattern { path, pattern } => body
                 .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
                 .map(|json| {
-                    if let Ok(re) = regex::Regex::new(pattern) {
-                        jsonpath_lib::select(&json, path)
-                            .map(|results| {
-                                results.iter().any(|r| {
-                                    if let Some(s) = r.as_str() {
-                                        re.is_match(s)
-                                    } else {
-                                        re.is_match(&r.to_string())
-                                    }
+                    regex_cache::cached_regex(pattern)
+                        .map(|re| {
+                            jsonpath_lib::select(&json, path)
+                                .map(|results| {
+                                    results.iter().any(|r| {
+                                        if let Some(s) = r.as_str() {
+                                            re.is_match(s)
+                                        } else {
+                                            re.is_match(&r.to_string())
+                                        }
+                                    })
                                 })
-                            })
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    }
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false)
                 })
                 .unwrap_or(false),
             MatchCondition::GraphQLOperation { operation_name } => body
@@ -223,9 +208,7 @@ impl MatchCondition {
             }
             MatchCondition::PathPattern { pattern } => {
                 if let Ok(parsed_url) = url::Url::parse(url) {
-                    regex::Regex::new(pattern)
-                        .map(|re| re.is_match(parsed_url.path()))
-                        .unwrap_or(false)
+                    regex_cache::is_match(pattern, parsed_url.path())
                 } else {
                     false
                 }
@@ -234,11 +217,7 @@ impl MatchCondition {
                 if let Ok(parsed_url) = url::Url::parse(url) {
                     parsed_url
                         .host_str()
-                        .map(|host| {
-                            regex::Regex::new(pattern)
-                                .map(|re| re.is_match(host))
-                                .unwrap_or(false)
-                        })
+                        .map(|host| regex_cache::is_match(pattern, host))
                         .unwrap_or(false)
                 } else {
                     false
@@ -302,26 +281,15 @@ impl MatchCondition {
             MatchCondition::Header { name, value } => headers.iter().any(|(k, v)| {
                 k.eq_ignore_ascii_case(name) && value.as_ref().is_none_or(|expected| v == expected)
             }),
-            MatchCondition::HeaderPattern { name, pattern } => headers.iter().any(|(k, v)| {
-                k.eq_ignore_ascii_case(name)
-                    && regex::Regex::new(pattern)
-                        .map(|re| re.is_match(v))
-                        .unwrap_or(false)
-            }),
+            MatchCondition::HeaderPattern { name, pattern } => headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case(name) && regex_cache::is_match(pattern, v)),
             MatchCondition::BodyPattern { pattern } => body
                 .and_then(|b| std::str::from_utf8(b).ok())
-                .map(|body_str| {
-                    regex::Regex::new(pattern)
-                        .map(|re| re.is_match(body_str))
-                        .unwrap_or(false)
-                })
+                .map(|body_str| regex_cache::is_match(pattern, body_str))
                 .unwrap_or(false),
             MatchCondition::ContentType { pattern } => content_type
-                .map(|ct| {
-                    regex::Regex::new(pattern)
-                        .map(|re| re.is_match(ct))
-                        .unwrap_or(false)
-                })
+                .map(|ct| regex_cache::is_match(pattern, ct))
                 .unwrap_or(false),
             MatchCondition::JsonPath { path, value } => body
                 .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
@@ -334,21 +302,21 @@ impl MatchCondition {
             MatchCondition::JsonPathPattern { path, pattern } => body
                 .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
                 .map(|json| {
-                    if let Ok(re) = regex::Regex::new(pattern) {
-                        jsonpath_lib::select(&json, path)
-                            .map(|results| {
-                                results.iter().any(|r| {
-                                    if let Some(s) = r.as_str() {
-                                        re.is_match(s)
-                                    } else {
-                                        re.is_match(&r.to_string())
-                                    }
+                    regex_cache::cached_regex(pattern)
+                        .map(|re| {
+                            jsonpath_lib::select(&json, path)
+                                .map(|results| {
+                                    results.iter().any(|r| {
+                                        if let Some(s) = r.as_str() {
+                                            re.is_match(s)
+                                        } else {
+                                            re.is_match(&r.to_string())
+                                        }
+                                    })
                                 })
-                            })
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    }
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false)
                 })
                 .unwrap_or(false),
             MatchCondition::And { conditions } => conditions

@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Toaster } from "@/components/ui/toaster"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { AppHeader } from "@/features/shell/AppHeader"
 import { NavRail, type NavView } from "@/features/shell/NavRail"
 import { TrafficView } from "@/features/traffic/TrafficView"
@@ -26,14 +27,35 @@ const queryClient = new QueryClient({
 function useTheme() {
   const [isDark, setIsDark] = useState(() => {
     if (typeof window === "undefined") return true
-    return document.documentElement.classList.contains("dark")
+    // Check localStorage first, then fall back to system preference
+    const stored = localStorage.getItem("madhyamas-theme")
+    if (stored === "dark") return true
+    if (stored === "light") return false
+    // No stored preference — use system preference
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
   })
 
   useEffect(() => {
     const root = document.documentElement
     root.classList.toggle("dark", isDark)
     root.classList.toggle("light", !isDark)
+    // Persist user's explicit choice
+    localStorage.setItem("madhyamas-theme", isDark ? "dark" : "light")
   }, [isDark])
+
+  // Listen for system theme changes (only when user hasn't set a preference)
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)")
+    const handler = (e: MediaQueryListEvent) => {
+      // Only follow system if no explicit preference is stored
+      const stored = localStorage.getItem("madhyamas-theme")
+      if (!stored) {
+        setIsDark(e.matches)
+      }
+    }
+    mq.addEventListener("change", handler)
+    return () => mq.removeEventListener("change", handler)
+  }, [])
 
   return { isDark, toggle: () => setIsDark((d) => !d) }
 }
@@ -45,9 +67,9 @@ const TOOL_VIEWS: NavView[] = [
   { id: "mocks", label: "Mocks", icon: "Theater" },
   { id: "rewrites", label: "Rewrites", icon: "Pencil" },
   { id: "replay", label: "Replay", icon: "RotateCcw" },
-  { id: "grpc", label: "gRPC", icon: "Zap" },
-  { id: "scripts", label: "Scripts", icon: "Code" },
-  { id: "plugins", label: "Plugins", icon: "Puzzle" },
+  { id: "grpc", label: "gRPC", icon: "Zap", experimental: true },
+  { id: "scripts", label: "Scripts", icon: "Code", experimental: true },
+  { id: "plugins", label: "Plugins", icon: "Puzzle", experimental: true },
   { id: "sessions", label: "Sessions", icon: "FolderTree" },
 ]
 
@@ -70,18 +92,20 @@ export default function App() {
         <div className="flex min-h-0 flex-1">
           <NavRail views={TOOL_VIEWS} activeView={activeView} onSelect={setActiveView} />
           <main className="min-w-0 flex-1 overflow-hidden">
-            <Suspense fallback={<PanelFallback />}>
-              {activeView === "traffic" && <TrafficView />}
-              {activeView === "breakpoints" && <BreakpointsPanel />}
-              {activeView === "throttle" && <ThrottlePanel />}
-              {activeView === "mocks" && <MocksPanel />}
-              {activeView === "rewrites" && <RewritesPanel />}
-              {activeView === "replay" && <ReplayPanel selectedEntry={null} />}
-              {activeView === "grpc" && <GrpcPanel />}
-              {activeView === "scripts" && <ScriptsPanel />}
-              {activeView === "plugins" && <PluginsPanel />}
-              {activeView === "sessions" && <SessionsPanel />}
-            </Suspense>
+            <ErrorBoundary label="Traffic View">
+              <Suspense fallback={<PanelFallback />}>
+                {activeView === "traffic" && <TrafficView />}
+                {activeView === "breakpoints" && <BreakpointsPanel />}
+                {activeView === "throttle" && <ThrottlePanel />}
+                {activeView === "mocks" && <MocksPanel />}
+                {activeView === "rewrites" && <RewritesPanel />}
+                {activeView === "replay" && <ReplayPanel selectedEntry={null} />}
+                {activeView === "grpc" && <GrpcPanel />}
+                {activeView === "scripts" && <ScriptsPanel />}
+                {activeView === "plugins" && <PluginsPanel />}
+                {activeView === "sessions" && <SessionsPanel />}
+              </Suspense>
+            </ErrorBoundary>
           </main>
         </div>
       </div>

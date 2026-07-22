@@ -27,9 +27,11 @@ pub async fn get_breakpoint_rules(State(state): State<Arc<AppState>>) -> impl In
 }
 
 /// Create a breakpoint rule
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateBreakpointRequest {
+    #[validate(length(min = 1, max = 255))]
     pub name: String,
+    #[validate(custom(function = "super::validation::validate_match_condition"))]
     pub condition: MatchCondition,
     pub direction: InterceptDirection,
     pub enabled: Option<bool>,
@@ -40,6 +42,9 @@ pub async fn create_breakpoint_rule(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateBreakpointRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     let mut rule = BreakpointRule::new(req.name, req.condition, req.direction);
     if let Some(enabled) = req.enabled {
         rule.enabled = enabled;
@@ -49,7 +54,7 @@ pub async fn create_breakpoint_rule(
     }
 
     let id = state.breakpoint_manager.add_rule(rule);
-    (StatusCode::CREATED, Json(serde_json::json!({ "id": id })))
+    (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
 /// Get a specific breakpoint rule
@@ -146,10 +151,13 @@ pub async fn get_mock_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
 }
 
 /// Create a mock rule
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateMockRequest {
+    #[validate(length(min = 1, max = 255))]
     pub name: String,
+    #[validate(custom(function = "super::validation::validate_match_condition"))]
     pub condition: MatchCondition,
+    #[validate(custom(function = "super::validation::validate_mock_response"))]
     pub response: MockResponse,
     pub enabled: Option<bool>,
     pub priority: Option<u32>,
@@ -159,6 +167,9 @@ pub async fn create_mock_rule(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateMockRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     let mut rule = MockRule::new(req.name, req.condition, req.response);
     if let Some(enabled) = req.enabled {
         rule.enabled = enabled;
@@ -168,7 +179,7 @@ pub async fn create_mock_rule(
     }
 
     let id = state.mock_manager.add_rule(rule);
-    (StatusCode::CREATED, Json(serde_json::json!({ "id": id })))
+    (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
 /// Get a specific mock rule
@@ -194,6 +205,17 @@ pub async fn update_mock_rule(
     Path(id): Path<String>,
     Json(rule): Json<MockRule>,
 ) -> impl IntoResponse {
+    // Validate the incoming rule without requiring a Validate impl on the
+    // core MockRule type.
+    if rule.name.trim().is_empty() {
+        return super::error::ApiError::bad_request("name cannot be empty").into_response();
+    }
+    if let Err(e) = super::validation::validate_match_condition(&rule.condition) {
+        return super::error::ApiError::bad_request(e.to_string()).into_response();
+    }
+    if let Err(e) = super::validation::validate_response_config(&rule.response_config) {
+        return super::error::ApiError::bad_request(e.to_string()).into_response();
+    }
     if state.mock_manager.update_rule(&id, rule) {
         StatusCode::OK.into_response()
     } else {
@@ -247,6 +269,56 @@ pub async fn toggle_mock_rule(
         )
             .into_response()
     }
+}
+
+/// Batch toggle multiple mock rules at once
+#[derive(Debug, Deserialize)]
+pub struct BatchToggleRequest {
+    pub ids: Vec<String>,
+    pub enabled: bool,
+}
+
+pub async fn batch_toggle_mocks(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BatchToggleRequest>,
+) -> impl IntoResponse {
+    let mut updated = 0;
+    let mut not_found: Vec<String> = Vec::new();
+    for id in &req.ids {
+        if state.mock_manager.toggle_rule(id, req.enabled) {
+            updated += 1;
+        } else {
+            not_found.push(id.clone());
+        }
+    }
+    Json(serde_json::json!({
+        "updated": updated,
+        "not_found": not_found,
+        "total": req.ids.len(),
+    }))
+    .into_response()
+}
+
+/// Batch toggle multiple rewrite rules at once
+pub async fn batch_toggle_rewrites(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BatchToggleRequest>,
+) -> impl IntoResponse {
+    let mut updated = 0;
+    let mut not_found: Vec<String> = Vec::new();
+    for id in &req.ids {
+        if state.rewrite_manager.toggle_rule(id, req.enabled) {
+            updated += 1;
+        } else {
+            not_found.push(id.clone());
+        }
+    }
+    Json(serde_json::json!({
+        "updated": updated,
+        "not_found": not_found,
+        "total": req.ids.len(),
+    }))
+    .into_response()
 }
 
 /// Get mock templates
@@ -303,8 +375,9 @@ pub async fn get_mock_collections(State(state): State<Arc<AppState>>) -> impl In
 }
 
 /// Create a mock collection
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateCollectionRequest {
+    #[validate(length(min = 1, max = 255))]
     pub name: String,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
@@ -314,6 +387,9 @@ pub async fn create_mock_collection(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateCollectionRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     let mut collection = MockCollection::new(req.name);
     if let Some(desc) = req.description {
         collection.description = Some(desc);
@@ -322,7 +398,7 @@ pub async fn create_mock_collection(
         collection.tags = tags;
     }
     let id = state.mock_manager.add_collection(collection);
-    (StatusCode::CREATED, Json(serde_json::json!({ "id": id })))
+    (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
 /// Get a specific mock collection
@@ -499,9 +575,11 @@ pub async fn export_mocks(State(state): State<Arc<AppState>>) -> impl IntoRespon
 }
 
 /// Import mocks from HAR format
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct ImportMocksRequest {
+    #[validate(length(min = 1))]
     pub format: String, // "har", "openapi", "postman"
+    #[validate(length(min = 1))]
     pub data: String,
 }
 
@@ -509,6 +587,9 @@ pub async fn import_mocks(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ImportMocksRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     let result = match req.format.as_str() {
         "har" => state.mock_manager.import_from_har(&req.data),
         "openapi" => state.mock_manager.import_from_openapi(&req.data),
@@ -655,11 +736,14 @@ pub async fn get_mock_version_history(
 // ============================================================================
 
 /// Create a mock rule with advanced configuration
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateAdvancedMockRequest {
+    #[validate(length(min = 1, max = 255))]
     pub name: String,
     pub description: Option<String>,
+    #[validate(custom(function = "super::validation::validate_match_condition"))]
     pub condition: MatchCondition,
+    #[validate(custom(function = "super::validation::validate_response_config"))]
     pub response_config: ResponseConfig,
     pub enabled: Option<bool>,
     pub priority: Option<u32>,
@@ -671,6 +755,9 @@ pub async fn create_advanced_mock_rule(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateAdvancedMockRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     let mut rule = MockRule::with_config(req.name, req.condition, req.response_config);
     if let Some(desc) = req.description {
         rule.description = Some(desc);
@@ -689,7 +776,7 @@ pub async fn create_advanced_mock_rule(
     }
 
     let id = state.mock_manager.add_rule(rule);
-    (StatusCode::CREATED, Json(serde_json::json!({ "id": id })))
+    (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
 // ============================================================================
@@ -703,9 +790,11 @@ pub async fn get_rewrite_rules(State(state): State<Arc<AppState>>) -> impl IntoR
 }
 
 /// Create a rewrite rule
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateRewriteRequest {
+    #[validate(length(min = 1, max = 255))]
     pub name: String,
+    #[validate(custom(function = "super::validation::validate_match_condition"))]
     pub condition: MatchCondition,
     pub direction: RewriteDirection,
     pub rewrites: Vec<RewriteAction>,
@@ -717,6 +806,9 @@ pub async fn create_rewrite_rule(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateRewriteRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     let mut rule = RewriteRule::new(req.name, req.condition, req.direction, req.rewrites);
     if let Some(enabled) = req.enabled {
         rule.enabled = enabled;
@@ -726,7 +818,7 @@ pub async fn create_rewrite_rule(
     }
 
     let id = state.rewrite_manager.add_rule(rule);
-    (StatusCode::CREATED, Json(serde_json::json!({ "id": id })))
+    (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
 /// Get a specific rewrite rule
@@ -846,8 +938,9 @@ pub async fn get_throttle_profile(State(state): State<Arc<AppState>>) -> impl In
 }
 
 /// Set throttle profile
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct SetThrottleRequest {
+    #[validate(custom(function = "super::validation::validate_throttle_profile"))]
     pub profile: ThrottleProfile,
     pub enabled: Option<bool>,
 }
@@ -856,11 +949,14 @@ pub async fn set_throttle_profile(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SetThrottleRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     state.throttle_manager.set_profile(req.profile);
     if let Some(enabled) = req.enabled {
         state.throttle_manager.set_enabled(enabled);
     }
-    StatusCode::OK
+    StatusCode::OK.into_response()
 }
 
 /// Enable/disable throttling
@@ -888,10 +984,11 @@ pub async fn get_saved_requests(State(state): State<Arc<AppState>>) -> impl Into
 }
 
 /// Save a request for replay
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct SaveRequestPayload {
     pub entry_id: Option<String>,
     pub request: madhyamas_core::RequestData,
+    #[validate(length(min = 1, max = 255))]
     pub name: Option<String>,
     pub tags: Option<Vec<String>>,
     pub collection: Option<String>,
@@ -901,6 +998,9 @@ pub async fn save_request(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SaveRequestPayload>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     let mut saved = match req.entry_id {
         Some(entry_id) => SavedRequest::from_traffic(&entry_id, req.request),
         None => SavedRequest::new(req.name.as_deref(), req.request),
@@ -915,7 +1015,7 @@ pub async fn save_request(
     }
 
     let id = state.replay_manager.save_request(saved);
-    (StatusCode::CREATED, Json(serde_json::json!({ "id": id })))
+    (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
 /// Get a specific saved request

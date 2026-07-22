@@ -71,7 +71,14 @@ madhyamas --help  # See all commands
 - `lib.rs` - API server setup
 - `embedded_assets.rs` - rust-embed web UI serving (compiled into binary)
 - `routes.rs` - Route definitions
-- `handlers/` - Request handlers
+- `handlers.rs` - Core request handlers (traffic, sessions, export, cert, ws, config, capture)
+- `intercept_handlers.rs` - Interception handlers (breakpoints, mocks, rewrites, throttle, replay)
+- `phase3_handlers.rs` - Phase 3 handlers (gRPC, scripts, plugins)
+- `phase4_handlers.rs` - Phase 4 enterprise handlers (auth, users, RBAC, audit, onboarding)
+- `ws.rs` - WebSocket connection handler
+- `middleware.rs` - Auth middleware
+- `error.rs` - API error types
+- `validation.rs` - Input validation
 
 ### CLI Crate (`madhyamas-cli`)
 - `lib.rs` - Exports `Commands` enum and `ApiClient`
@@ -119,9 +126,28 @@ cd web && npm run build
 
 **Data Directory**: `~/.madhyamas/` (certs, logs, traffic.db)
 
-**API Endpoints**:
-- `GET /health` - Health check
-- `GET /api/config` - Returns config with detected/host IP for display
+**API Endpoints** (all under `/api` prefix):
+
+| Category | Endpoints |
+|----------|-----------|
+| Traffic | `GET /traffic`, `GET /traffic/{id}`, `POST /traffic/clear`, `GET /traffic/count` |
+| Sessions | `GET /sessions`, `POST /sessions`, `GET/DELETE /sessions/{id}`, `GET /sessions/{id}/export`, `POST /sessions/{id}/switch`, `POST /sessions/import` |
+| Export | `GET /export/har`, `GET /export/curl/{id}` |
+| Certificate | `GET /cert/ca` |
+| WebSocket | `GET /ws` (real-time traffic updates) |
+| Config | `GET /config`, `PATCH /config` |
+| Capture | `GET /capture`, `POST /capture/toggle` |
+| Breakpoints | `GET/POST /breakpoints`, `GET/DELETE /breakpoints/{id}`, `GET /breakpoints/paused`, `POST /breakpoints/paused/{id}/resume` |
+| Mocks | `GET/POST /mocks`, `GET/PUT/DELETE /mocks/{id}`, `POST /mocks/{id}/toggle`, collections, recording, import/export |
+| Rewrites | `GET/POST /rewrites`, `GET/DELETE /rewrites/{id}`, `POST /rewrites/{id}/toggle` |
+| Throttle | `GET/POST /throttle`, `POST /throttle/enabled`, `GET /throttle/presets` |
+| Replay | `GET/POST /replay/saved`, `POST /replay/execute/{id}`, `GET /replay/history` |
+| gRPC | `GET /grpc/connections`, `GET /grpc/streams`, `GET /grpc/frames`, `GET /grpc/stats` |
+| Scripts | `GET/POST /scripts`, `GET/PUT/DELETE /scripts/{id}`, `POST /scripts/{id}/toggle` |
+| Plugins | `GET /plugins`, `POST /plugins/{id}/enable`, `POST /plugins/{id}/disable`, `POST /plugins/reload` |
+| Health | `GET /health` |
+
+> **Phase 4 (Enterprise, conditionally enabled):** `/metrics`, `/auth/*`, `/users`, `/rbac/*`, `/audit/*`, `/onboarding/*`
 
 ## AI Assistant Guidelines
 

@@ -91,14 +91,35 @@ GET /api/traffic?limit=100&offset=0
 | offset | number | Number of results to skip |
 
 ## WebSocket Events
-The Event | Payload | Description |
-|-------|---------|-------------|
-| traffic:new | TrafficEntry | New traffic entry captured |
-| traffic:cleared | - | All traffic cleared |
-| breakpoint:hit | PausedTraffic | Request hit a breakpoint |
-| breakpoint:resume | { id, decision } | Breakpoint resumed |
-| throttle:changed | ThrottleProfile | Throttle profile changed |
 
-| mock:hit | MockRule | Mock rule matched |
-| script:error | { id, error } | Script execution error |
+The WebSocket endpoint (`/api/ws`) sends `WsServerMessage` messages to clients. Traffic updates are wrapped in `WsServerMessage::Traffic(Box<TrafficEvent>)`.
+
+### Server-to-Client Messages (`WsServerMessage`)
+
+| Message Type | Payload | Description |
+|--------------|---------|-------------|
+| `Traffic` | `Box<TrafficEvent>` | A traffic event notification (see below) |
+| `InitialTraffic` | `Vec<TrafficEntrySnapshot>` | Initial traffic list sent on connection |
+| `Connected` | `{ client_id: String }` | Connection established acknowledgment |
+| `Pong` | - | Response to client ping (keep-alive) |
+| `Error` | `{ message: String }` | Error message |
+
+### Traffic Event Variants (`TrafficEvent`)
+
+| Variant | Payload | Description |
+|---------|---------|-------------|
+| `Added` | `TrafficEntrySnapshot` | A new traffic entry was added (request captured) |
+| `Updated` | `TrafficEntrySnapshot` | A traffic entry was updated (response received) |
+| `Deleted` | `Vec<String>` | Specific traffic entries were deleted |
+| `Cleared` | - | All traffic was cleared |
+| `CountUpdate` | `usize` | Traffic count changed |
+
+### Client-to-Server Messages (`WsClientMessage`)
+
+| Message Type | Payload | Description |
+|--------------|---------|-------------|
+| `Subscribe` | `{ filter: Option<TrafficSubscriptionFilter> }` | Subscribe to traffic updates with optional filter |
+| `Unsubscribe` | - | Unsubscribe from traffic updates |
+| `GetInitialTraffic` | `{ limit: Option<usize> }` | Request initial traffic data |
+| `Ping` | - | Keep-alive ping |
 

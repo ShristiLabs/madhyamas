@@ -11,7 +11,7 @@ pub mod metrics;
 pub mod monitor;
 pub mod pool;
 
-pub use memory::{GarbageCollectionConfig, MemoryManager, MemoryStats};
+pub use memory::{GarbageCollectionConfig, MemoryManager, MemoryPressure, MemoryStats};
 pub use metrics::{MemoryInfo, Metrics, MetricsCollector, PerformanceStats, PoolStats};
 pub use monitor::{Alert, AlertConfig, AlertLevel, HealthCheck, HealthStatus, PerformanceMonitor};
 pub use pool::{ConnectionPool, PoolConfig, PoolStatistics, PooledConnection};

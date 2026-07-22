@@ -1,4 +1,30 @@
 //! Connection pooling for upstream connections
+//!
+//! # Status: intentionally unused
+//!
+//! This module implements a [`ConnectionPool`] that tracks reusable upstream
+//! connections on a per-host basis. It is **not currently wired into the proxy
+//! engine**, by design:
+//!
+//! * **HTTP/HTTPS forwarding** is performed via `reqwest::Client` (see the C1
+//!   fix in `proxy::pipeline`), which maintains its own internal connection
+//!   pool with keep-alive support. Layering a second pool on top would be
+//!   redundant and could interfere with reqwest's own lifecycle management.
+//! * **WebSocket upstream connections** (see `ProxyEngine::handle_websocket_upgrade_*`)
+//!   use raw `TcpStream`/`TlsStream` sockets, but these are long-lived,
+//!   bidirectional streams that stay open until either side disconnects. They
+//!   are not short-lived request/response connections, so pooling them would
+//!   not improve throughput.
+//! * The [`PooledConnection`] type only carries connection **metadata**
+//!   (id, host, timestamps, use count) — it does not hold an actual socket.
+//!   As a result the pool is a bookkeeping/tracking structure rather than a
+//!   true socket pool, and wiring it in would add complexity without a
+//!   concrete benefit.
+//!
+//! The implementation is retained for future use (e.g. if the engine moves
+//! away from `reqwest` for HTTP forwarding, or if short-lived raw-TCP upstream
+//! connections are introduced). All public items are annotated with
+//! `#[allow(dead_code)]` so the unused state is explicit and intentional.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,6 +34,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 /// Connection pool configuration
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolConfig {
     /// Maximum connections per host
@@ -35,6 +62,7 @@ impl Default for PoolConfig {
 }
 
 /// Pooled connection wrapper
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct PooledConnection {
     /// Connection ID
@@ -51,6 +79,7 @@ pub struct PooledConnection {
 
 impl PooledConnection {
     /// Check if connection is expired
+    #[allow(dead_code)]
     pub fn is_expired(&self, config: &PoolConfig) -> bool {
         let now = Instant::now();
 
@@ -69,6 +98,7 @@ impl PooledConnection {
 }
 
 /// Connection pool for a single host
+#[allow(dead_code)]
 #[derive(Debug)]
 struct HostPool {
     /// Idle connections ready for reuse
@@ -78,6 +108,7 @@ struct HostPool {
 }
 
 impl HostPool {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self {
             idle: VecDeque::new(),
@@ -87,6 +118,7 @@ impl HostPool {
 }
 
 /// Connection pool manager
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ConnectionPool {
     /// Per-host pools
@@ -105,6 +137,7 @@ pub struct ConnectionPool {
 
 impl ConnectionPool {
     /// Create a new connection pool
+    #[allow(dead_code)]
     pub fn new(config: PoolConfig) -> Self {
         Self {
             pools: Mutex::new(VecDeque::new()),
@@ -117,6 +150,7 @@ impl ConnectionPool {
     }
 
     /// Get a connection for a host
+    #[allow(dead_code)]
     pub fn get(&self, host: &str) -> Option<PooledConnection> {
         if !self.config.enabled {
             return None;
@@ -151,6 +185,7 @@ impl ConnectionPool {
     }
 
     /// Create a new connection
+    #[allow(dead_code)]
     pub fn create(&self, host: &str) -> PooledConnection {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let now = Instant::now();
@@ -181,6 +216,7 @@ impl ConnectionPool {
     }
 
     /// Return a connection to the pool
+    #[allow(dead_code)]
     pub fn release(&self, conn: PooledConnection) {
         if !self.config.enabled {
             return;
@@ -199,6 +235,7 @@ impl ConnectionPool {
     }
 
     /// Cleanup expired connections
+    #[allow(dead_code)]
     pub fn cleanup(&self) {
         let mut pools = self.pools.lock();
         let mut expired_count = 0;
@@ -219,6 +256,7 @@ impl ConnectionPool {
     }
 
     /// Get pool statistics
+    #[allow(dead_code)]
     pub fn stats(&self) -> PoolStatistics {
         let pools = self.pools.lock();
 
@@ -244,6 +282,7 @@ impl ConnectionPool {
         }
     }
 
+    #[allow(dead_code)]
     fn calculate_reuse_rate(&self) -> f64 {
         let created = self.total_created.load(Ordering::Relaxed);
         let reused = self.total_reused.load(Ordering::Relaxed);
@@ -257,6 +296,7 @@ impl ConnectionPool {
 }
 
 /// Pool statistics
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolStatistics {
     /// Number of hosts with connections

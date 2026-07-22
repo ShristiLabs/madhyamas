@@ -27,7 +27,7 @@ Madhyamas is a Rust-based HTTP/HTTPS debugging proxy with a modern web-based UI.
                               ▼
                      ┌────────────────┐
                      │   Web UI (React)   │
-                     │   :3000/ws          │
+                     │   :3001/ws          │
                      └────────────────┘
 ```
 
@@ -35,11 +35,12 @@ Madhyamas is a Rust-based HTTP/HTTPS debugging proxy with a modern web-based UI.
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| Proxy Engine | hyper, tokio | HTTP interception |
+| Proxy Engine | manual TCP, tokio | HTTP interception |
+| Upstream Client | reqwest::Client | Forwarding requests to target servers |
 | TLS | rustls | Certificate management |
 | API | axum | REST/WebSocket server |
-| Storage | sqlite | Traffic persistence |
-| Frontend | React,18 + User interface |
+| Storage | sqlite (rusqlite) | Traffic persistence |
+| Frontend | React 18, TypeScript | User interface |
 
 ## Directory Structure
 
@@ -54,7 +55,7 @@ madhyamas/
 └── tests/                   # Test suites
 ```
 
-## Performance Consider
+## Performance Considerations
 
 - **Memory**: < 500MB under normal load
 - **Latency**: < 10ms proxy overhead
@@ -63,11 +64,9 @@ madhyamas/
 
 ## Security Model
 
-- TLS 1.3+ for upstream connections
-- mTLS for client connections
-- Certificate pinning for CA trust
-- Optional API key authentication
-- Role-based access control (RBAC)
+- rustls for TLS (upstream and interception)
+- On-the-fly CA certificate generation for HTTPS interception
+- Optional API key authentication (Phase 4 enterprise features)
 
 ## Extension Points
 

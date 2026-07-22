@@ -1,7 +1,9 @@
 //! Bandwidth throttling and network simulation
 
+use crate::persistence::InterceptStore;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Pre-defined network profiles
@@ -171,6 +173,8 @@ pub struct ThrottleManager {
     profile: RwLock<ThrottleProfile>,
     /// Whether throttling is enabled
     enabled: RwLock<bool>,
+    /// Optional SQLite persistence backend
+    store: Option<Arc<InterceptStore>>,
 }
 
 impl ThrottleManager {
@@ -178,11 +182,23 @@ impl ThrottleManager {
         Self {
             profile: RwLock::new(ThrottleProfile::none()),
             enabled: RwLock::new(false),
+            store: None,
         }
+    }
+
+    /// Attach a SQLite persistence backend.
+    pub fn with_store(mut self, store: Arc<InterceptStore>) -> Self {
+        self.store = Some(store);
+        self
     }
 
     /// Set the throttle profile
     pub fn set_profile(&self, profile: ThrottleProfile) {
+        if let Some(store) = &self.store {
+            if let Err(e) = store.save_throttle_profile(&profile, *self.enabled.read()) {
+                tracing::warn!("Failed to persist throttle profile: {}", e);
+            }
+        }
         *self.profile.write() = profile;
     }
 
@@ -194,6 +210,13 @@ impl ThrottleManager {
     /// Enable/disable throttling
     pub fn set_enabled(&self, enabled: bool) {
         *self.enabled.write() = enabled;
+        if let Some(store) = &self.store {
+            if let Err(e) =
+                store.save_throttle_profile(&self.profile.read(), enabled)
+            {
+                tracing::warn!("Failed to persist throttle enabled state: {}", e);
+            }
+        }
     }
 
     /// Check if throttling is enabled
@@ -252,6 +275,39 @@ impl ThrottleManager {
 impl Default for ThrottleManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl crate::persistence::Persistable for ThrottleManager {
+    fn save(&self) -> crate::Result<()> {
+        if let Some(store) = &self.store {
+            store.save_throttle_profile(&self.profile.read(), *self.enabled.read())?;
+        }
+        Ok(())
+    }
+
+    fn load(&self) -> crate::Result<()> {
+        if let Some(store) = &self.store {
+            if let Some((profile, enabled)) = store.load_throttle_profile()? {
+                *self.profile.write() = profile;
+                *self.enabled.write() = enabled;
+            }
+        }
+        Ok(())
+    }
+
+    fn clear(&self) -> crate::Result<()> {
+        *self.profile.write() = ThrottleProfile::none();
+        *self.enabled.write() = false;
+        Ok(())
+    }
+
+    fn size(&self) -> usize {
+        if self.is_enabled() {
+            1
+        } else {
+            0
+        }
     }
 }
 

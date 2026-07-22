@@ -26,6 +26,7 @@ import {
   Github,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { apiGet, apiPost } from "@/lib/api/client"
 
 // Lazy-load heavy dialogs that are only opened on demand.
 const CertificateHelper = lazy(() =>
@@ -46,15 +47,13 @@ export function AppHeader({ isDark, onToggleTheme }: AppHeaderProps) {
   const [captureLoading, setCaptureLoading] = useState(false)
 
   useEffect(() => {
-    fetch("/api/capture")
-      .then((r) => r.json())
+    apiGet<{ capture_enabled?: boolean }>("/capture")
       .then((d) => setCaptureEnabled(d.capture_enabled ?? true))
       .catch(() => {})
   }, [])
 
   useEffect(() => {
-    fetch("/api/config")
-      .then((r) => r.json())
+    apiGet<{ host?: string; proxy_port?: number }>("/config")
       .then((c) => {
         const host = c.host || "localhost"
         const port = c.proxy_port || 8888
@@ -66,8 +65,7 @@ export function AppHeader({ isDark, onToggleTheme }: AppHeaderProps) {
   const handleToggleCapture = useCallback(async () => {
     setCaptureLoading(true)
     try {
-      const res = await fetch("/api/capture/toggle", { method: "POST" })
-      const data = await res.json()
+      const data = await apiPost<{ capture_enabled: boolean }>("/capture/toggle")
       setCaptureEnabled(data.capture_enabled)
     } catch {
       // ignore

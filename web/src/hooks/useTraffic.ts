@@ -3,8 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { TrafficEntry, TrafficFilter } from "@/types/traffic";
 import { useTrafficWebSocket } from "./useTrafficWebSocket";
 import type { TrafficEntrySnapshot, WsConnectionInfo } from "@/types/websocket";
-
-const API_BASE = "/api";
+import { apiGet, apiPostVoid } from "@/lib/api/client";
 
 // Storage key for WebSocket mode preference
 const WS_MODE_STORAGE_KEY = "madhyamas-use-websocket";
@@ -17,26 +16,19 @@ async function fetchTraffic(filter?: TrafficFilter): Promise<TrafficEntry[]> {
   if (filter?.offset) params.set("offset", filter.offset.toString());
   if (filter?.search) params.set("search", filter.search);
 
-  const response = await fetch(`${API_BASE}/traffic?${params}`);
-  if (!response.ok) throw new Error("Failed to fetch traffic");
-  return response.json();
+  return apiGet<TrafficEntry[]>(`/traffic?${params}`);
 }
 
 async function fetchTrafficEntry(id: string): Promise<TrafficEntry> {
-  const response = await fetch(`${API_BASE}/traffic/${id}`);
-  if (!response.ok) throw new Error("Failed to fetch traffic entry");
-  return response.json();
+  return apiGet<TrafficEntry>(`/traffic/${id}`);
 }
 
 async function clearTraffic(): Promise<void> {
-  const response = await fetch(`${API_BASE}/traffic/clear`, { method: "POST" });
-  if (!response.ok) throw new Error("Failed to clear traffic");
+  await apiPostVoid("/traffic/clear");
 }
 
 async function fetchTrafficCount(): Promise<number> {
-  const response = await fetch(`${API_BASE}/traffic/count`);
-  if (!response.ok) throw new Error("Failed to fetch traffic count");
-  const data = await response.json();
+  const data = await apiGet<{ count: number }>("/traffic/count");
   return data.count;
 }
 
@@ -67,6 +59,8 @@ function snapshotToTrafficEntry(snapshot: TrafficEntrySnapshot): TrafficEntry {
     timestamp: snapshot.timestamp,
     modified: snapshot.modified,
     notes: undefined,
+    request_size: snapshot.request_size,
+    response_size: snapshot.response_size ?? undefined,
   };
 }
 

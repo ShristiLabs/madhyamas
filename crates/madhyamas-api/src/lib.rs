@@ -1,23 +1,64 @@
 //! Madhyamas API - REST and WebSocket API for the web UI
 
 pub mod embedded_assets;
+pub mod error;
 pub mod handlers;
 pub mod intercept_handlers;
+#[cfg(feature = "enterprise")]
+pub mod middleware;
+#[cfg(any(feature = "grpc", feature = "scripting", feature = "plugins"))]
 pub mod phase3_handlers;
+#[cfg(feature = "enterprise")]
 pub mod phase4_handlers;
 pub mod routes;
+pub mod validation;
 pub mod ws;
 
 use axum::Router;
+#[cfg(feature = "enterprise")]
+use madhyamas_core::enterprise::AuthManager;
 use madhyamas_core::{
-    BreakpointManager, CertificateManager, GrpcManager, InterceptStore, MockManager, PluginManager,
-    ProxyConfig, ReplayManager, RewriteManager, ScriptRuntime, SessionManager, ThrottleManager,
-    TrafficStore, WsManager,
+    BreakpointManager, CertificateManager, InterceptStore, MockManager, ProxyConfig,
+    ReplayManager, RewriteManager, SessionManager, ThrottleManager, TrafficStore, WsManager,
 };
+#[cfg(feature = "grpc")]
+use madhyamas_core::GrpcManager;
+#[cfg(feature = "plugins")]
+use madhyamas_core::PluginManager;
+#[cfg(feature = "scripting")]
+use madhyamas_core::ScriptRuntime;
+use parking_lot::RwLock;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
+
+/// Returns true if the given Origin header value points at a localhost or
+/// private-network address. This prevents arbitrary websites from reading
+/// captured traffic (cookies, auth headers) via the local API.
+fn is_safe_origin(value: &axum::http::HeaderValue) -> bool {
+    let s = match value.to_str() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    // Parse origin URL: scheme://host[:port]
+    if let Ok(url) = url::Url::parse(s) {
+        match url.host() {
+            Some(url::Host::Ipv4(ip)) => {
+                // localhost, loopback, private ranges (10/172.16/192.168)
+                ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
+            }
+            Some(url::Host::Ipv6(ip)) => {
+                ip.is_loopback() || ip.is_unspecified() || ip.is_unicast_link_local()
+            }
+            Some(url::Host::Domain(d)) => d == "localhost" || d.ends_with(".localhost"),
+            None => false,
+        }
+    } else {
+        false
+    }
+}
 
 /// API state shared across handlers
 #[derive(Clone)]
@@ -29,13 +70,20 @@ pub struct AppState {
     pub rewrite_manager: Arc<RewriteManager>,
     pub throttle_manager: Arc<ThrottleManager>,
     pub replay_manager: Arc<ReplayManager>,
+    #[cfg(feature = "grpc")]
     pub grpc_manager: Arc<GrpcManager>,
+    #[cfg(feature = "scripting")]
     pub script_runtime: Arc<ScriptRuntime>,
+    #[cfg(feature = "plugins")]
     pub plugin_manager: Arc<PluginManager>,
     pub ws_manager: Arc<WsManager>,
     pub session_manager: Arc<SessionManager>,
     pub intercept_store: Option<Arc<InterceptStore>>,
-    pub proxy_config: Option<Arc<ProxyConfig>>,
+    pub proxy_config: Option<Arc<RwLock<ProxyConfig>>>,
+    /// Optional enterprise auth manager. When present and Phase 4 is enabled,
+    /// JWT authentication is enforced on protected routes.
+    #[cfg(feature = "enterprise")]
+    pub auth_service: Option<Arc<AuthManager>>,
 }
 
 impl AppState {
@@ -49,13 +97,18 @@ impl AppState {
             rewrite_manager: Arc::new(RewriteManager::default()),
             throttle_manager: Arc::new(ThrottleManager::default()),
             replay_manager: Arc::new(ReplayManager::default()),
+            #[cfg(feature = "grpc")]
             grpc_manager: Arc::new(GrpcManager::default()),
+            #[cfg(feature = "scripting")]
             script_runtime: Arc::new(ScriptRuntime::default()),
+            #[cfg(feature = "plugins")]
             plugin_manager: Arc::new(PluginManager::default()),
             ws_manager: Arc::new(WsManager::new()),
             session_manager,
             intercept_store: None,
             proxy_config: None,
+            #[cfg(feature = "enterprise")]
+            auth_service: None,
         }
     }
 
@@ -89,16 +142,19 @@ impl AppState {
         self
     }
 
+    #[cfg(feature = "grpc")]
     pub fn with_grpc_manager(mut self, manager: Arc<GrpcManager>) -> Self {
         self.grpc_manager = manager;
         self
     }
 
+    #[cfg(feature = "scripting")]
     pub fn with_script_runtime(mut self, runtime: Arc<ScriptRuntime>) -> Self {
         self.script_runtime = runtime;
         self
     }
 
+    #[cfg(feature = "plugins")]
     pub fn with_plugin_manager(mut self, manager: Arc<PluginManager>) -> Self {
         self.plugin_manager = manager;
         self
@@ -119,17 +175,74 @@ impl AppState {
         self
     }
 
-    pub fn with_proxy_config(mut self, config: Arc<ProxyConfig>) -> Self {
+    pub fn with_proxy_config(mut self, config: Arc<RwLock<ProxyConfig>>) -> Self {
         self.proxy_config = Some(config);
+        self
+    }
+
+    /// Attach an enterprise auth manager. When set, Phase 4 routes enforce
+    /// JWT authentication (see [`middleware::auth_middleware`]).
+    #[cfg(feature = "enterprise")]
+    pub fn with_auth_service(mut self, auth_service: Arc<AuthManager>) -> Self {
+        self.auth_service = Some(auth_service);
         self
     }
 }
 
-/// Create the API router
-pub fn create_router(state: AppState) -> Router<()> {
+/// Rate-limiting configuration for the API server.
+///
+/// Rate limiting is **disabled by default**. Madhyamas is a local debugging
+/// tool, and the web UI's TanStack Query fires many parallel requests on
+/// page load, which can easily exhaust a low burst budget. Enable rate
+/// limiting only when the API is exposed to a less-trusted network.
+#[derive(Clone, Debug)]
+pub struct RateLimitConfig {
+    /// Enable or disable rate limiting.
+    pub enabled: bool,
+    /// Maximum requests per second per peer IP.
+    pub requests_per_second: u32,
+    /// Maximum burst size (tokens that can accumulate when idle).
+    pub burst_size: u32,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            requests_per_second: 600,
+            burst_size: 1000,
+        }
+    }
+}
+
+impl RateLimitConfig {
+    /// Create a disabled config.
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            ..Default::default()
+        }
+    }
+
+    /// Create an enabled config with the given parameters.
+    pub fn enabled(requests_per_second: u32, burst_size: u32) -> Self {
+        Self {
+            enabled: true,
+            requests_per_second,
+            burst_size,
+        }
+    }
+}
+
+/// Create the API router.
+///
+/// `rate_limit` controls whether the [`tower_governor`] rate-limiting layer
+/// is applied. When [`RateLimitConfig::enabled`] is `false` (the default),
+/// no rate limiting is applied.
+pub fn create_router(state: AppState, rate_limit: RateLimitConfig) -> Router<()> {
     let state = Arc::new(state);
 
-    Router::new()
+    let mut router = Router::new()
         // Top-level health check for quick status
         .route("/health", axum::routing::get(|| async { "OK" }))
         .nest("/api", routes::create_routes())
@@ -138,7 +251,7 @@ pub fn create_router(state: AppState) -> Router<()> {
         .fallback(embedded_assets::embedded_fallback)
         .layer(
             CorsLayer::new()
-                .allow_origin(Any)
+                .allow_origin(AllowOrigin::predicate(|origin, _| is_safe_origin(origin)))
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
@@ -155,6 +268,39 @@ pub fn create_router(state: AppState) -> Router<()> {
             axum::http::header::REFERRER_POLICY,
             axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
         ))
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
+        // Limit request bodies to 10MB to prevent OOM from large payloads
+        .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024));
+
+    // Rate limiting is opt-in. When enabled, apply the governor layer with
+    // the configured requests-per-second and burst size.
+    if rate_limit.enabled {
+        tracing::info!(
+            "API rate limiting enabled: {} req/s, burst {}",
+            rate_limit.requests_per_second,
+            rate_limit.burst_size
+        );
+        router = router.layer(tower_governor::GovernorLayer::new(
+            tower_governor::governor::GovernorConfigBuilder::default()
+                .const_per_second(rate_limit.requests_per_second as u64)
+                .burst_size(rate_limit.burst_size)
+                .finish()
+                .unwrap(),
+        ));
+    } else {
+        tracing::debug!("API rate limiting disabled (default)");
+    }
+
+    // Log only method, URI, and status — exclude headers and body to
+    // avoid leaking sensitive data (cookies, auth headers) into logs.
+    router = router.layer(
+        TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<_>| {
+            tracing::info_span!(
+                "api",
+                method = %request.method(),
+                uri = %request.uri(),
+            )
+        }),
+    );
+
+    router.with_state(state)
 }

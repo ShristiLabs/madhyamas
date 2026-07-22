@@ -8,5 +8,5 @@ mod hooks;
 mod runtime;
 
 pub use api::ScriptApi;
-pub use hooks::{ScriptContext, ScriptHook, ScriptResult};
+pub use hooks::{RequestContext, ResponseContext, ScriptContext, ScriptHook, ScriptResult};
 pub use runtime::{Script, ScriptConfig, ScriptExecution, ScriptRuntime, ScriptTemplates};

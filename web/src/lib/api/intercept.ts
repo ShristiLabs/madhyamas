@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-
-const API_BASE = '/api';
+import { apiGet, apiPost, apiPostVoid, apiPut, apiDeleteVoid } from './client';
 
 // ==================== Types ====================
 
@@ -227,9 +226,7 @@ export function useBreakpoints() {
   return useQuery({
     queryKey: ['breakpoints'],
     queryFn: async (): Promise<BreakpointRule[]> => {
-      const res = await fetch(`${API_BASE}/breakpoints`);
-      if (!res.ok) throw new Error('Failed to fetch breakpoints');
-      return res.json();
+      return apiGet<BreakpointRule[]>('/breakpoints');
     },
   });
 }
@@ -238,9 +235,7 @@ export function usePausedTraffic() {
   return useQuery({
     queryKey: ['paused-traffic'],
     queryFn: async (): Promise<PausedTraffic[]> => {
-      const res = await fetch(`${API_BASE}/breakpoints/paused`);
-      if (!res.ok) throw new Error('Failed to fetch paused traffic');
-      return res.json();
+      return apiGet<PausedTraffic[]>('/breakpoints/paused');
     },
   });
 }
@@ -249,13 +244,7 @@ export function useCreateBreakpoint() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (breakpoint: Omit<BreakpointRule, 'id' | 'hit_count'>): Promise<BreakpointRule> => {
-      const res = await fetch(`${API_BASE}/breakpoints`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(breakpoint),
-      });
-      if (!res.ok) throw new Error('Failed to create breakpoint');
-      return res.json();
+      return apiPost<BreakpointRule>('/breakpoints', breakpoint);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['breakpoints'] });
@@ -267,10 +256,7 @@ export function useDeleteBreakpoint() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const res = await fetch(`${API_BASE}/breakpoints/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('Failed to delete breakpoint');
+      return apiDeleteVoid(`/breakpoints/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['breakpoints'] });
@@ -282,12 +268,7 @@ export function useResumePaused() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, action }: { id: string; action: BreakpointDecision }): Promise<void> => {
-      const res = await fetch(`${API_BASE}/breakpoints/paused/${id}/resume`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(action),
-      });
-      if (!res.ok) throw new Error('Failed to resume traffic');
+      return apiPostVoid(`/breakpoints/paused/${id}/resume`, action);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['paused-traffic'] });
@@ -302,9 +283,7 @@ export function useMocks() {
   return useQuery({
     queryKey: ['mocks'],
     queryFn: async (): Promise<MockRule[]> => {
-      const res = await fetch(`${API_BASE}/mocks`);
-      if (!res.ok) throw new Error('Failed to fetch mocks');
-      return res.json();
+      return apiGet<MockRule[]>('/mocks');
     },
   });
 }
@@ -327,13 +306,7 @@ export function useCreateMock() {
         enabled: mock.enabled,
         priority: mock.priority,
       };
-      const res = await fetch(`${API_BASE}/mocks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error('Failed to create mock');
-      return res.json();
+      return apiPost<MockRule>('/mocks', body);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mocks'] });
@@ -345,10 +318,7 @@ export function useDeleteMock() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const res = await fetch(`${API_BASE}/mocks/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('Failed to delete mock');
+      return apiDeleteVoid(`/mocks/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mocks'] });
@@ -360,12 +330,7 @@ export function useToggleMock() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }): Promise<void> => {
-      const res = await fetch(`${API_BASE}/mocks/${id}/toggle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
-      if (!res.ok) throw new Error('Failed to toggle mock');
+      return apiPostVoid(`/mocks/${id}/toggle`, { enabled });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mocks'] });
@@ -377,13 +342,7 @@ export function useDuplicateMock() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, newName }: { id: string; newName?: string }): Promise<{ id: string }> => {
-      const res = await fetch(`${API_BASE}/mocks/${id}/duplicate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ new_name: newName }),
-      });
-      if (!res.ok) throw new Error('Failed to duplicate mock');
-      return res.json();
+      return apiPost<{ id: string }>(`/mocks/${id}/duplicate`, { new_name: newName });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mocks'] });
@@ -397,9 +356,7 @@ export function useMockCollections() {
   return useQuery({
     queryKey: ['mock-collections'],
     queryFn: async (): Promise<MockCollection[]> => {
-      const res = await fetch(`${API_BASE}/mocks/collections`);
-      if (!res.ok) throw new Error('Failed to fetch mock collections');
-      return res.json();
+      return apiGet<MockCollection[]>('/mocks/collections');
     },
   });
 }
@@ -408,13 +365,7 @@ export function useCreateMockCollection() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (collection: { name: string; description?: string; tags?: string[] }): Promise<{ id: string }> => {
-      const res = await fetch(`${API_BASE}/mocks/collections`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(collection),
-      });
-      if (!res.ok) throw new Error('Failed to create collection');
-      return res.json();
+      return apiPost<{ id: string }>('/mocks/collections', collection);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mock-collections'] });
@@ -426,12 +377,12 @@ export function useDeleteMockCollection() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, deleteRules }: { id: string; deleteRules?: boolean }): Promise<void> => {
-      const res = await fetch(`${API_BASE}/mocks/collections/${id}`, {
-        method: 'DELETE',
+      // DELETE with a JSON body — pass via RequestInit since apiDeleteVoid
+      // doesn't accept a body parameter directly.
+      return apiDeleteVoid(`/mocks/collections/${id}`, {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ delete_rules: deleteRules }),
       });
-      if (!res.ok) throw new Error('Failed to delete collection');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mock-collections'] });
@@ -444,13 +395,7 @@ export function useToggleMockCollection() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }): Promise<{ toggled: number }> => {
-      const res = await fetch(`${API_BASE}/mocks/collections/${id}/toggle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
-      if (!res.ok) throw new Error('Failed to toggle collection');
-      return res.json();
+      return apiPost<{ toggled: number }>(`/mocks/collections/${id}/toggle`, { enabled });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mocks'] });
@@ -465,9 +410,7 @@ export function useMockAnalytics() {
   return useQuery({
     queryKey: ['mock-analytics'],
     queryFn: async (): Promise<MockHitRecord[]> => {
-      const res = await fetch(`${API_BASE}/mocks/analytics`);
-      if (!res.ok) throw new Error('Failed to fetch mock analytics');
-      return res.json();
+      return apiGet<MockHitRecord[]>('/mocks/analytics');
     },
   });
 }
@@ -476,9 +419,7 @@ export function useMockRuleAnalytics(id: string) {
   return useQuery({
     queryKey: ['mock-analytics', id],
     queryFn: async (): Promise<MockHitStats> => {
-      const res = await fetch(`${API_BASE}/mocks/${id}/analytics`);
-      if (!res.ok) throw new Error('Failed to fetch mock analytics');
-      return res.json();
+      return apiGet<MockHitStats>(`/mocks/${id}/analytics`);
     },
     enabled: !!id,
   });
@@ -488,9 +429,7 @@ export function useMockHitHistory(id: string) {
   return useQuery({
     queryKey: ['mock-hit-history', id],
     queryFn: async (): Promise<MockHitRecord[]> => {
-      const res = await fetch(`${API_BASE}/mocks/${id}/history`);
-      if (!res.ok) throw new Error('Failed to fetch hit history');
-      return res.json();
+      return apiGet<MockHitRecord[]>(`/mocks/${id}/history`);
     },
     enabled: !!id,
   });
@@ -500,10 +439,7 @@ export function useClearMockHitHistory() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (): Promise<void> => {
-      const res = await fetch(`${API_BASE}/mocks/analytics/clear`, {
-        method: 'POST',
-      });
-      if (!res.ok) throw new Error('Failed to clear hit history');
+      return apiPostVoid('/mocks/analytics/clear');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mock-analytics'] });
@@ -517,9 +453,7 @@ export function useClearMockHitHistory() {
 export function useExportMocks() {
   return useMutation({
     mutationFn: async (): Promise<MockRule[]> => {
-      const res = await fetch(`${API_BASE}/mocks/export`);
-      if (!res.ok) throw new Error('Failed to export mocks');
-      return res.json();
+      return apiGet<MockRule[]>('/mocks/export');
     },
   });
 }
@@ -528,13 +462,7 @@ export function useImportMocks() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ format, data }: { format: 'har' | 'openapi' | 'postman'; data: string }): Promise<{ imported: number }> => {
-      const res = await fetch(`${API_BASE}/mocks/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ format, data }),
-      });
-      if (!res.ok) throw new Error('Failed to import mocks');
-      return res.json();
+      return apiPost<{ imported: number }>('/mocks/import', { format, data });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mocks'] });
@@ -548,9 +476,7 @@ export function useMockRecordingStatus() {
   return useQuery({
     queryKey: ['mock-recording-status'],
     queryFn: async (): Promise<{ recording: boolean }> => {
-      const res = await fetch(`${API_BASE}/mocks/recording/status`);
-      if (!res.ok) throw new Error('Failed to fetch recording status');
-      return res.json();
+      return apiGet<{ recording: boolean }>('/mocks/recording/status');
     },
   });
 }
@@ -559,13 +485,7 @@ export function useSetMockRecording() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (enabled: boolean): Promise<{ recording: boolean }> => {
-      const res = await fetch(`${API_BASE}/mocks/recording`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
-      if (!res.ok) throw new Error('Failed to set recording');
-      return res.json();
+      return apiPost<{ recording: boolean }>('/mocks/recording', { enabled });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mock-recording-status'] });
@@ -577,9 +497,7 @@ export function useRecordedMocks() {
   return useQuery({
     queryKey: ['recorded-mocks'],
     queryFn: async (): Promise<MockRule[]> => {
-      const res = await fetch(`${API_BASE}/mocks/recording/recorded`);
-      if (!res.ok) throw new Error('Failed to fetch recorded mocks');
-      return res.json();
+      return apiGet<MockRule[]>('/mocks/recording/recorded');
     },
   });
 }
@@ -588,11 +506,7 @@ export function usePromoteRecordedMocks() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (): Promise<{ promoted: number }> => {
-      const res = await fetch(`${API_BASE}/mocks/recording/promote`, {
-        method: 'POST',
-      });
-      if (!res.ok) throw new Error('Failed to promote recorded mocks');
-      return res.json();
+      return apiPost<{ promoted: number }>('/mocks/recording/promote');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mocks'] });
@@ -605,10 +519,7 @@ export function useClearRecordedMocks() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (): Promise<void> => {
-      const res = await fetch(`${API_BASE}/mocks/recording/clear`, {
-        method: 'POST',
-      });
-      if (!res.ok) throw new Error('Failed to clear recorded mocks');
+      return apiPostVoid('/mocks/recording/clear');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['recorded-mocks'] });
@@ -622,12 +533,7 @@ export function useUpdateMock() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, rule }: { id: string; rule: MockRule }): Promise<void> => {
-      const res = await fetch(`${API_BASE}/mocks/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(rule),
-      });
-      if (!res.ok) throw new Error('Failed to update mock');
+      return apiPut<void>(`/mocks/${id}`, rule);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mocks'] });
@@ -654,13 +560,7 @@ export interface TestMockResult {
 export function useTestMock() {
   return useMutation({
     mutationFn: async ({ id, request }: { id: string; request: TestMockRequest }): Promise<TestMockResult> => {
-      const res = await fetch(`${API_BASE}/mocks/${id}/test`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ request }),
-      });
-      if (!res.ok) throw new Error('Failed to test mock');
-      return res.json();
+      return apiPost<TestMockResult>(`/mocks/${id}/test`, { request });
     },
   });
 }
@@ -668,13 +568,7 @@ export function useTestMock() {
 export function usePreviewMockMatch() {
   return useMutation({
     mutationFn: async (request: TestMockRequest): Promise<TestMockResult> => {
-      const res = await fetch(`${API_BASE}/mocks/preview`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ request }),
-      });
-      if (!res.ok) throw new Error('Failed to preview mock match');
-      return res.json();
+      return apiPost<TestMockResult>('/mocks/preview', { request });
     },
   });
 }
@@ -685,12 +579,7 @@ export function useRollbackMock() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, version }: { id: string; version: number }): Promise<void> => {
-      const res = await fetch(`${API_BASE}/mocks/${id}/rollback`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ version }),
-      });
-      if (!res.ok) throw new Error('Failed to rollback mock');
+      return apiPostVoid(`/mocks/${id}/rollback`, { version });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mocks'] });
@@ -702,9 +591,7 @@ export function useMockVersionHistory(id: string) {
   return useQuery({
     queryKey: ['mock-version-history', id],
     queryFn: async (): Promise<MockRuleVersion[]> => {
-      const res = await fetch(`${API_BASE}/mocks/${id}/versions`);
-      if (!res.ok) throw new Error('Failed to fetch version history');
-      return res.json();
+      return apiGet<MockRuleVersion[]>(`/mocks/${id}/versions`);
     },
     enabled: !!id,
   });
@@ -716,12 +603,7 @@ export function useUpdateMockCollection() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, collection }: { id: string; collection: Partial<MockCollection> }): Promise<void> => {
-      const res = await fetch(`${API_BASE}/mocks/collections/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(collection),
-      });
-      if (!res.ok) throw new Error('Failed to update collection');
+      return apiPut<void>(`/mocks/collections/${id}`, collection);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mock-collections'] });
@@ -735,9 +617,7 @@ export function useRewrites() {
   return useQuery({
     queryKey: ['rewrites'],
     queryFn: async (): Promise<RewriteRule[]> => {
-      const res = await fetch(`${API_BASE}/rewrites`);
-      if (!res.ok) throw new Error('Failed to fetch rewrites');
-      return res.json();
+      return apiGet<RewriteRule[]>('/rewrites');
     },
   });
 }
@@ -746,13 +626,7 @@ export function useCreateRewrite() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (rewrite: Omit<RewriteRule, 'id' | 'hit_count'>): Promise<RewriteRule> => {
-      const res = await fetch(`${API_BASE}/rewrites`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(rewrite),
-      });
-      if (!res.ok) throw new Error('Failed to create rewrite');
-      return res.json();
+      return apiPost<RewriteRule>('/rewrites', rewrite);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rewrites'] });
@@ -764,10 +638,7 @@ export function useDeleteRewrite() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const res = await fetch(`${API_BASE}/rewrites/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('Failed to delete rewrite');
+      return apiDeleteVoid(`/rewrites/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rewrites'] });
@@ -779,12 +650,7 @@ export function useToggleRewrite() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }): Promise<void> => {
-      const res = await fetch(`${API_BASE}/rewrites/${id}/toggle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
-      if (!res.ok) throw new Error('Failed to toggle rewrite');
+      return apiPostVoid(`/rewrites/${id}/toggle`, { enabled });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rewrites'] });
@@ -798,9 +664,7 @@ export function useThrottle() {
   return useQuery({
     queryKey: ['throttle'],
     queryFn: async (): Promise<ThrottleConfig> => {
-      const res = await fetch(`${API_BASE}/throttle`);
-      if (!res.ok) throw new Error('Failed to fetch throttle config');
-      return res.json();
+      return apiGet<ThrottleConfig>('/throttle');
     },
   });
 }
@@ -809,9 +673,7 @@ export function useThrottlePresets() {
   return useQuery({
     queryKey: ['throttle-presets'],
     queryFn: async (): Promise<ThrottleProfile[]> => {
-      const res = await fetch(`${API_BASE}/throttle/presets`);
-      if (!res.ok) throw new Error('Failed to fetch throttle presets');
-      return res.json();
+      return apiGet<ThrottleProfile[]>('/throttle/presets');
     },
   });
 }
@@ -820,12 +682,7 @@ export function useSetThrottle() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (config: ThrottleConfig): Promise<void> => {
-      const res = await fetch(`${API_BASE}/throttle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      });
-      if (!res.ok) throw new Error('Failed to set throttle config');
+      return apiPostVoid('/throttle', config);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['throttle'] });
@@ -839,9 +696,7 @@ export function useSavedRequests() {
   return useQuery({
     queryKey: ['saved-requests'],
     queryFn: async (): Promise<SavedRequest[]> => {
-      const res = await fetch(`${API_BASE}/replay/saved`);
-      if (!res.ok) throw new Error('Failed to fetch saved requests');
-      return res.json();
+      return apiGet<SavedRequest[]>('/replay/saved');
     },
   });
 }
@@ -850,9 +705,7 @@ export function useReplayHistory() {
   return useQuery({
     queryKey: ['replay-history'],
     queryFn: async (): Promise<ReplayResult[]> => {
-      const res = await fetch(`${API_BASE}/replay/history`);
-      if (!res.ok) throw new Error('Failed to fetch replay history');
-      return res.json();
+      return apiGet<ReplayResult[]>('/replay/history');
     },
   });
 }
@@ -861,13 +714,7 @@ export function useSaveRequest() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: { entry_id?: string; request: SavedRequest['request']; name: string }): Promise<SavedRequest> => {
-      const res = await fetch(`${API_BASE}/replay/saved`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error('Failed to save request');
-      return res.json();
+      return apiPost<SavedRequest>('/replay/saved', data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['saved-requests'] });
@@ -879,10 +726,7 @@ export function useDeleteSavedRequest() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const res = await fetch(`${API_BASE}/replay/saved/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('Failed to delete saved request');
+      return apiDeleteVoid(`/replay/saved/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['saved-requests'] });
@@ -894,13 +738,7 @@ export function useReplayRequest() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, modifications }: { id: string; modifications?: Partial<SavedRequest['request']> }): Promise<ReplayResult> => {
-      const res = await fetch(`${API_BASE}/replay/execute/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modifications }),
-      });
-      if (!res.ok) throw new Error('Failed to replay request');
-      return res.json();
+      return apiPost<ReplayResult>(`/replay/execute/${id}`, { modifications });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['replay-history'] });

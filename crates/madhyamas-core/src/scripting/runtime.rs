@@ -64,17 +64,22 @@ pub struct ScriptExecution {
 }
 
 /// Script runtime configuration
+///
+/// **Note:** The `timeout_ms`, `max_memory_bytes`, `allow_network`, and
+/// `allow_fs` limits are defined here for future use but are NOT yet
+/// enforced. They will be enforced once a JS engine (e.g. `boa_engine`)
+/// is integrated with sandboxing support.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScriptConfig {
-    /// Maximum execution time in milliseconds
+    /// Maximum execution time in milliseconds (not yet enforced)
     pub timeout_ms: u64,
-    /// Maximum memory usage in bytes
+    /// Maximum memory usage in bytes (not yet enforced)
     pub max_memory_bytes: usize,
     /// Enable console logging
     pub enable_console: bool,
-    /// Allow network access from scripts
+    /// Allow network access from scripts (not yet enforced)
     pub allow_network: bool,
-    /// Allow file system access from scripts
+    /// Allow file system access from scripts (not yet enforced)
     pub allow_fs: bool,
 }
 
@@ -167,15 +172,70 @@ impl ScriptRuntime {
         }
     }
 
+    /// Validate a script's source code.
+    ///
+    /// Performs basic structural checks (non-empty, balanced braces/parens).
+    /// Full syntax validation requires a JS engine and will be added when
+    /// `boa_engine` or similar is integrated. Templates require ES6+ (const,
+    /// let, template literals).
+    pub fn validate(source: &str) -> Result<(), String> {
+        let trimmed = source.trim();
+        if trimmed.is_empty() {
+            return Err("Script source is empty".to_string());
+        }
+        // Basic brace/paren balance check (not a full parser, but catches
+        // obvious typos that would fail at runtime).
+        let mut braces = 0i32;
+        let mut parens = 0i32;
+        let mut brackets = 0i32;
+        let mut in_string: Option<char> = None;
+        let mut escaped = false;
+        for ch in trimmed.chars() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if let Some(quote) = in_string {
+                if ch == '\\' {
+                    escaped = true;
+                } else if ch == quote {
+                    in_string = None;
+                }
+                continue;
+            }
+            match ch {
+                '"' | '\'' | '`' => in_string = Some(ch),
+                '{' => braces += 1,
+                '}' => braces -= 1,
+                '(' => parens += 1,
+                ')' => parens -= 1,
+                '[' => brackets += 1,
+                ']' => brackets -= 1,
+                _ => {}
+            }
+        }
+        if braces != 0 {
+            return Err(format!("Unbalanced braces: off by {}", braces));
+        }
+        if parens != 0 {
+            return Err(format!("Unbalanced parentheses: off by {}", parens));
+        }
+        if brackets != 0 {
+            return Err(format!("Unbalanced brackets: off by {}", brackets));
+        }
+        Ok(())
+    }
+
     /// Execute a script with the given context
     ///
     /// Note: This is a placeholder implementation. Full JavaScript execution
     /// would require integrating a JS engine like V8, QuickJS, or Deno Core.
     /// For now, we provide the infrastructure for scripts to be stored and
     /// managed, with execution delegated to an embedded runtime.
+    ///
+    /// **Important:** No fake execution is recorded in history. The history
+    /// only contains real executions (once a JS runtime is integrated).
     pub fn execute(&self, script_id: &str, _context: &super::ScriptContext) -> super::ScriptResult {
-        let start = std::time::Instant::now();
-
         let _script = match self.get_script(script_id) {
             Some(s) => s,
             None => {
@@ -190,29 +250,16 @@ impl ScriptRuntime {
             }
         };
 
-        // Record execution
-        let execution = ScriptExecution {
-            script_id: script_id.to_string(),
-            duration_ms: 0,
-            success: false,
-            error: Some("No JS runtime integrated".to_string()),
-            console: Vec::new(),
-            timestamp: chrono::Utc::now(),
-        };
-
-        self.record_execution(execution);
-
-        // Return placeholder result
-        // In a real implementation, this would execute the JS code
+        // No JS runtime is integrated — return an error result without
+        // recording a fake execution in history. This prevents users from
+        // thinking scripts are running when they are not.
         super::ScriptResult {
             modified: false,
             continue_: true,
             response: None,
             error: Some("No JS runtime integrated".to_string()),
-            console: vec![
-                "Script execution placeholder - integrate JS runtime for full support".to_string(),
-            ],
-            duration_ms: start.elapsed().as_millis() as u64,
+            console: Vec::new(),
+            duration_ms: 0,
         }
     }
 
@@ -234,6 +281,7 @@ impl ScriptRuntime {
     }
 
     /// Record an execution in history
+    #[allow(dead_code)]
     fn record_execution(&self, execution: ScriptExecution) {
         let mut history = self.history.write();
         history.push(execution);

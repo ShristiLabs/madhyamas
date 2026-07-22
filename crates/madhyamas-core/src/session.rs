@@ -136,8 +136,29 @@ impl SessionManager {
         })
     }
 
-    /// Import a session from export format
+    /// Import a session from export format.
+    ///
+    /// Only the currently supported export version ("1.0") is accepted.
+    /// Future versions should add a migration step here before importing.
     pub fn import_session(&self, export: SessionExport) -> Result<Session, Error> {
+        // Version check — reject unsupported export versions.
+        //
+        // Migration path for future versions:
+        //   * When bumping the export format (e.g. to "1.1" or "2.0"), add a
+        //     match arm here that transforms the incoming `SessionExport` into
+        //     the current in-memory representation before proceeding.
+        //   * Keep old versions loadable whenever possible; only return an
+        //     error when the format is too old/new to migrate safely.
+        match export.version.as_str() {
+            "1.0" => {}
+            other => {
+                return Err(Error::Config(format!(
+                    "Unsupported session export version: '{}' (expected \"1.0\")",
+                    other
+                )));
+            }
+        }
+
         let session = self.create_session(export.session.name.as_deref())?;
 
         for entry in export.entries {

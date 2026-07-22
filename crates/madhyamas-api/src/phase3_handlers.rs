@@ -94,9 +94,11 @@ pub async fn get_script(
 }
 
 /// Create script request
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateScriptRequest {
+    #[validate(length(min = 1, max = 255))]
     pub name: String,
+    #[validate(length(min = 1))]
     pub source: String,
     pub description: Option<String>,
     pub hooks: Vec<String>,
@@ -107,6 +109,9 @@ pub async fn create_script(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateScriptRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     let mut script = Script::new(req.name, req.source);
     script.description = req.description;
     script.hooks = req.hooks;
@@ -115,11 +120,13 @@ pub async fn create_script(
         StatusCode::CREATED,
         Json(serde_json::json!({ "id": id, "script": script })),
     )
+        .into_response()
 }
 
 /// Update script request
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct UpdateScriptRequest {
+    #[validate(length(min = 1))]
     pub source: String,
 }
 
@@ -129,6 +136,9 @@ pub async fn update_script(
     Path(id): Path<String>,
     Json(req): Json<UpdateScriptRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
     if state.script_runtime.update_script(&id, req.source) {
         StatusCode::NO_CONTENT.into_response()
     } else {

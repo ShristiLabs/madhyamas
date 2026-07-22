@@ -122,6 +122,9 @@ impl From<&RequestData> for PluginRequest {
             host: req.host.clone(),
             path: req.path.clone(),
             headers: req.headers.clone(),
+            // Clone the body — plugin execution is currently a no-op, so this
+            // is never exercised. When plugins are implemented, consider using
+            // Arc<Vec<u8>> with a custom serde wrapper to avoid cloning.
             body: req.body.clone(),
             content_type: req.content_type.clone(),
         }

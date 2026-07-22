@@ -85,6 +85,13 @@ pub struct RequestData {
     pub content_type: Option<String>,
 }
 
+impl RequestData {
+    /// Total size of the request in bytes, computed from headers + body.
+    pub fn size(&self) -> usize {
+        headers_size(&self.headers) + self.body.as_ref().map(|b| b.len()).unwrap_or(0)
+    }
+}
+
 /// Response data structure
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ResponseData {
@@ -104,6 +111,22 @@ pub struct ResponseData {
     pub content_type: Option<String>,
     /// Response time in milliseconds
     pub duration_ms: u64,
+}
+
+impl ResponseData {
+    /// Total size of the response in bytes, computed from headers + body.
+    pub fn size(&self) -> usize {
+        headers_size(&self.headers) + self.body.as_ref().map(|b| b.len()).unwrap_or(0)
+    }
+}
+
+/// Compute the on-wire size of a header map in bytes.
+/// Each header contributes `key: value\r\n` = key.len() + 2 + value.len() + 2.
+fn headers_size(headers: &HashMap<String, String>) -> usize {
+    headers
+        .iter()
+        .map(|(k, v)| k.len() + 2 + v.len() + 2)
+        .sum()
 }
 
 // Custom body serializer: converts Vec<u8> to String (UTF-8 or base64 for binary)
@@ -167,6 +190,12 @@ pub struct TrafficEntry {
     pub modified: bool,
     /// Notes/annotations
     pub notes: Option<String>,
+    /// Total request size in bytes (headers + body).
+    #[serde(default)]
+    pub request_size: usize,
+    /// Total response size in bytes (headers + body), if a response was received.
+    #[serde(default)]
+    pub response_size: Option<usize>,
 }
 
 fn serialize_datetime<S>(dt: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
@@ -179,6 +208,7 @@ where
 impl TrafficEntry {
     /// Create a new traffic entry with a request
     pub fn new(session_id: &str, request: RequestData) -> Self {
+        let request_size = request.size();
         Self {
             id: Uuid::new_v4().to_string(),
             session_id: session_id.to_string(),
@@ -187,18 +217,17 @@ impl TrafficEntry {
             timestamp: Utc::now(),
             modified: false,
             notes: None,
+            request_size,
+            response_size: None,
         }
     }
 
-    /// Get the body size (request + response if available)
+    /// Get the total size (request + response if available)
     pub fn total_size(&self) -> usize {
-        let req_size = self.request.body.as_ref().map(|b| b.len()).unwrap_or(0);
-        let res_size = self
-            .response
-            .as_ref()
-            .and_then(|r| r.body.as_ref().map(|b| b.len()))
-            .unwrap_or(0);
-        req_size + res_size
+        self.request_size
+            + self.response_size.unwrap_or_else(|| {
+                self.response.as_ref().map(|r| r.size()).unwrap_or(0)
+            })
     }
 
     /// Check if this is an HTTPS request

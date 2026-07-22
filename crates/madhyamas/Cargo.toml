@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 description = "HTTP/HTTPS Debugging Proxy - Unified binary (proxy server + web UI + MCP server + CLI)"
 
+[features]
+default = ["grpc", "scripting", "plugins", "enterprise"]
+grpc = ["madhyamas-api/grpc", "madhyamas-core/grpc"]
+scripting = ["madhyamas-api/scripting", "madhyamas-core/scripting"]
+plugins = ["madhyamas-api/plugins", "madhyamas-core/plugins"]
+enterprise = ["madhyamas-api/enterprise", "madhyamas-core/enterprise"]
+
 [[bin]]
 name = "madhyamas"
 path = "src/main.rs"
@@ -25,3 +32,4 @@ rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
+parking_lot.workspace = true

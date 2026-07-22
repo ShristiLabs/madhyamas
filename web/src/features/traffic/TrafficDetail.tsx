@@ -1,6 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,10 +8,15 @@ import {
   FileText,
   Braces,
   Search,
-  Minimize2,
-  Maximize2,
   ChevronDown,
+  FileArchive,
+  Eye,
+  EyeOff,
+  Terminal,
+  X,
 } from "lucide-react";
+import { JSONPath } from "jsonpath-plus";
+import jmespath from "jmespath";
 import { JsonView } from "@/features/traffic/JsonView";
 import { Input } from "@/components/ui/input";
 import {
@@ -32,8 +35,6 @@ interface TrafficDetailProps {
 export function TrafficDetail({ entry }: TrafficDetailProps) {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("request");
-  const [decodeRequest, setDecodeRequest] = useState(false);
-  const [decodeResponse, setDecodeResponse] = useState(false);
 
   const handleCopyCurl = useCallback(async () => {
     const curl = generateCurl(entry);
@@ -187,30 +188,11 @@ export function TrafficDetail({ entry }: TrafficDetailProps) {
 
             {/* Request Body */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-semibold text-sm">Body</h4>
-                {entry.request.body && entry.request.body.length > 0 && (
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="decode-request"
-                      checked={decodeRequest}
-                      onCheckedChange={(checked) =>
-                        setDecodeRequest(checked as boolean)
-                      }
-                    />
-                    <Label
-                      htmlFor="decode-request"
-                      className="text-sm cursor-pointer"
-                    >
-                      Decode payload
-                    </Label>
-                  </div>
-                )}
-              </div>
+              <h4 className="font-semibold mb-2 text-sm">Body</h4>
               <BodyView
                 body={entry.request.body}
                 contentType={entry.request.content_type}
-                decode={decodeRequest}
+                headers={entry.request.headers}
               />
             </div>
           </div>
@@ -252,30 +234,11 @@ export function TrafficDetail({ entry }: TrafficDetailProps) {
 
                 {/* Response Body */}
                 <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-semibold text-sm">Body</h4>
-                    {entry.response.body && entry.response.body.length > 0 && (
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="decode-response"
-                          checked={decodeResponse}
-                          onCheckedChange={(checked) =>
-                            setDecodeResponse(checked as boolean)
-                          }
-                        />
-                        <Label
-                          htmlFor="decode-response"
-                          className="text-sm cursor-pointer"
-                        >
-                          Decode payload
-                        </Label>
-                      </div>
-                    )}
-                  </div>
+                  <h4 className="font-semibold mb-2 text-sm">Body</h4>
                   <BodyView
                     body={entry.response.body}
                     contentType={entry.response.content_type}
-                    decode={decodeResponse}
+                    headers={entry.response.headers}
                   />
                 </div>
               </>
@@ -313,7 +276,9 @@ export function TrafficDetail({ entry }: TrafficDetailProps) {
                         Request Size
                       </span>
                       <span className="font-mono text-sm">
-                        {formatBytes(entry.request.body?.length || 0)}
+                        {formatBytes(
+                          entry.request_size ?? entry.request.body?.length ?? 0
+                        )}
                       </span>
                     </div>
                     <div className="flex justify-between items-center py-2 border-b">
@@ -321,7 +286,11 @@ export function TrafficDetail({ entry }: TrafficDetailProps) {
                         Response Size
                       </span>
                       <span className="font-mono text-sm">
-                        {formatBytes(entry.response.body?.length || 0)}
+                        {formatBytes(
+                          entry.response_size ??
+                            entry.response?.body?.length ??
+                            0
+                        )}
                       </span>
                     </div>
                   </>
@@ -338,7 +307,7 @@ export function TrafficDetail({ entry }: TrafficDetailProps) {
 interface BodyViewProps {
   body?: string;
   contentType?: string;
-  decode?: boolean;
+  headers?: Record<string, string>;
 }
 
 function HeadersTable({ headers }: { headers: Record<string, string> }) {
@@ -385,50 +354,182 @@ function formatBytes(bytes: number): string {
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
 }
 
-function BodyView({ body, contentType, decode = false }: BodyViewProps) {
-  const [isPrettified, setIsPrettified] = useState(true);
+type JsonQueryMode = "none" | "jsonpath" | "jmespath";
+
+function BodyView({ body, contentType, headers }: BodyViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [showDecompressed, setShowDecompressed] = useState(true);
+  const [showAsImage, setShowAsImage] = useState(true);
+  const [queryMode, setQueryMode] = useState<JsonQueryMode>("none");
+  const [queryString, setQueryString] = useState("");
 
-  // Decode base64-prefixed bodies (backend marks binary/non-UTF-8 bodies
-  // with "base64:" prefix). Also handles the "Decode payload" checkbox.
-  const decodedBody = useMemo(() => {
-    if (!body) return "";
+  // Check for Content-Encoding header (case-insensitive)
+  const contentEncoding = useMemo(() => {
+    if (!headers) return undefined;
+    const entry = Object.entries(headers).find(([k]) =>
+      k.toLowerCase() === "content-encoding",
+    );
+    return entry?.[1];
+  }, [headers]);
 
-    // If the body has the "base64:" prefix, decode it automatically.
-    // The backend uses this prefix for content that isn't valid UTF-8
-    // (e.g. binary data, or compressed content that wasn't decompressed).
-    if (body.startsWith("base64:")) {
-      const b64Data = body.slice(7);
-      try {
-        // atob() returns a binary string; convert to UTF-8 safely
-        const binaryStr = atob(b64Data);
-        // Convert binary string to UTF-8 string
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          bytes[i] = binaryStr.charCodeAt(i);
-        }
+  const isCompressed = !!contentEncoding;
+
+  // Detect image content types
+  const isImage = useMemo(() => {
+    if (!contentType) return false;
+    const ct = contentType.toLowerCase();
+    return ct.startsWith("image/");
+  }, [contentType]);
+
+  // Decode body: handles base64 prefix, and async decompression when
+  // Content-Encoding is present and the user wants the decompressed view.
+  // Tracks both the text representation (for text display) and the raw
+  // bytes (for image data URLs and downloads).
+  const [decodedBody, setDecodedBody] = useState("");
+  const [rawBytes, setRawBytes] = useState<Uint8Array | null>(null);
+
+  useEffect(() => {
+    if (!body) {
+      setDecodedBody("");
+      setRawBytes(null);
+      return;
+    }
+
+    const bodyStr = body;
+    let cancelled = false;
+
+    async function decode() {
+      // Step 1: Get raw bytes from the body string (may be base64-encoded)
+      let bytes: Uint8Array;
+      if (bodyStr.startsWith("base64:")) {
+        const b64Data = bodyStr.slice(7);
         try {
-          return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+          const binaryStr = atob(b64Data);
+          bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+          }
         } catch {
-          // If UTF-8 decode fails, show the raw binary string
-          return binaryStr;
+          if (!cancelled) {
+            setDecodedBody(bodyStr);
+            setRawBytes(null);
+          }
+          return;
         }
-      } catch {
-        return body; // return original if base64 decode fails
+      } else {
+        bytes = new TextEncoder().encode(bodyStr);
+      }
+
+      // Step 2: If compressed and decompression is requested, use
+      // DecompressionStream to decompress the raw bytes.
+      if (isCompressed && showDecompressed && contentEncoding) {
+        const encoding = contentEncoding.toLowerCase().trim();
+        try {
+          const format = encoding === "x-gzip" ? "gzip" : encoding;
+          const ds = new DecompressionStream(format as CompressionFormat);
+          const blob = new Blob([bytes.buffer as ArrayBuffer]);
+          const stream = blob.stream().pipeThrough(ds);
+          const buffer = await new Response(stream).arrayBuffer();
+          if (cancelled) return;
+          const decompressed = new Uint8Array(buffer);
+          setRawBytes(decompressed);
+          setDecodedBody(
+            new TextDecoder("utf-8", { fatal: false }).decode(decompressed),
+          );
+        } catch {
+          // Decompression failed — fall back to showing raw bytes
+          if (!cancelled) {
+            setRawBytes(bytes);
+            setDecodedBody(
+              `[Decompression failed — showing raw data, ${bytes.length} bytes, encoding: ${contentEncoding}]`,
+            );
+          }
+        }
+      } else if (isCompressed && !showDecompressed) {
+        // Show raw compressed data info
+        if (!cancelled) {
+          setRawBytes(bytes);
+          setDecodedBody(
+            `[Raw compressed data: ${bytes.length} bytes, encoding: ${contentEncoding}]`,
+          );
+        }
+      } else {
+        // Not compressed — decode bytes as UTF-8
+        if (!cancelled) {
+          setRawBytes(bytes);
+          try {
+            setDecodedBody(
+              new TextDecoder("utf-8", { fatal: false }).decode(bytes),
+            );
+          } catch {
+            setDecodedBody(bodyStr);
+          }
+        }
       }
     }
 
-    // "Decode payload" checkbox: try base64 decode on the raw body
-    if (decode) {
-      try {
-        return atob(body);
-      } catch {
-        // not valid base64, return as-is
-      }
-    }
+    decode();
+    return () => {
+      cancelled = true;
+    };
+  }, [body, isCompressed, showDecompressed, contentEncoding]);
 
-    return body;
-  }, [body, decode]);
+  // Build a data URL for image display from raw bytes + content type.
+  const imageDataUrl = useMemo(() => {
+    if (!isImage || !rawBytes || rawBytes.length === 0) return undefined;
+    // For SVG, the body may be text (not base64-prefixed), so use the
+    // raw text directly with a data URL.
+    if (contentType?.includes("svg")) {
+      const svgText = new TextDecoder("utf-8", { fatal: false }).decode(
+        rawBytes,
+      );
+      return `data:image/svg+xml;utf8,${encodeURIComponent(svgText)}`;
+    }
+    // For binary image formats, use base64 data URL. Build in chunks to
+    // avoid call stack limits with String.fromCharCode(...spread) on large
+    // images.
+    const chunkSize = 8192;
+    let binaryStr = "";
+    for (let i = 0; i < rawBytes.length; i += chunkSize) {
+      const chunk = rawBytes.subarray(i, Math.min(i + chunkSize, rawBytes.length));
+      binaryStr += String.fromCharCode.apply(null, Array.from(chunk));
+    }
+    const b64 = btoa(binaryStr);
+    return `data:${contentType};base64,${b64}`;
+  }, [isImage, rawBytes, contentType]);
+
+  // Derive a file extension from content type for downloads.
+  const fileExtension = useMemo(() => {
+    if (!contentType) return "bin";
+    const ct = contentType.toLowerCase().split(";")[0].trim();
+    const map: Record<string, string> = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/gif": "gif",
+      "image/webp": "webp",
+      "image/svg+xml": "svg",
+      "image/x-icon": "ico",
+      "image/bmp": "bmp",
+      "image/avif": "avif",
+      "image/tiff": "tiff",
+    };
+    return map[ct] || "bin";
+  }, [contentType]);
+
+  const handleDownload = useCallback(() => {
+    if (!rawBytes) return;
+    const blob = new Blob([rawBytes.buffer as ArrayBuffer], {
+      type: contentType || "application/octet-stream",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `response.${fileExtension}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [rawBytes, contentType, fileExtension]);
 
   // Calculate values before early return
   const isJson = decodedBody
@@ -446,16 +547,47 @@ function BodyView({ body, contentType, decode = false }: BodyViewProps) {
     }
   }, [isJson, decodedBody]);
 
+  // Apply JSONPath or JMESPath query to the parsed JSON.
+  // Returns { result, error } where result is the queried data (or null
+  // if no query is active / query failed), and error is an error message.
+  const queryResult = useMemo(() => {
+    if (!parsedJson || queryMode === "none" || !queryString.trim()) {
+      return { result: null as unknown, error: undefined as string | undefined };
+    }
+    try {
+      if (queryMode === "jsonpath") {
+        const res = JSONPath({ path: queryString, json: parsedJson });
+        // JSONPath always returns an array; unwrap single-element arrays
+        // for a cleaner display.
+        const unwrapped = Array.isArray(res) && res.length === 1 ? res[0] : res;
+        return { result: unwrapped, error: undefined };
+      }
+      // jmespath
+      const res = jmespath.search(parsedJson, queryString);
+      return { result: res, error: undefined };
+    } catch (e) {
+      return { result: null, error: e instanceof Error ? e.message : String(e) };
+    }
+  }, [parsedJson, queryMode, queryString]);
+
+  // The effective JSON data to display: query result if a query is active,
+  // otherwise the full parsed JSON.
+  const effectiveJson = useMemo(() => {
+    if (queryMode !== "none" && queryString.trim() && parsedJson) {
+      return queryResult.error ? null : queryResult.result;
+    }
+    return parsedJson;
+  }, [queryMode, queryString, parsedJson, queryResult]);
+
   const displayBody = useMemo(() => {
     if (!decodedBody) return "";
 
-    if (isJson && parsedJson) {
-      return isPrettified
-        ? JSON.stringify(parsedJson, null, 2)
-        : JSON.stringify(parsedJson);
+    // If query produced an error, show it
+    if (isJson && queryResult.error) {
+      return `Query error: ${queryResult.error}`;
     }
     return decodedBody;
-  }, [isJson, parsedJson, isPrettified, decodedBody]);
+  }, [isJson, decodedBody, queryResult]);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(displayBody);
@@ -470,44 +602,185 @@ function BodyView({ body, contentType, decode = false }: BodyViewProps) {
     <div className="space-y-2">
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
-        {isJson && parsedJson && (
+        {isCompressed && (
           <Button
-            variant="outline"
+            variant={showDecompressed ? "default" : "outline"}
             size="sm"
-            onClick={() => setIsPrettified(!isPrettified)}
-            title={isPrettified ? "Minify" : "Prettify"}
+            onClick={() => setShowDecompressed(!showDecompressed)}
+            title={
+              showDecompressed
+                ? "Show raw compressed data"
+                : "Decompress body"
+            }
           >
-            {isPrettified ? (
+            <FileArchive className="h-4 w-4 mr-1" />
+            {showDecompressed
+              ? `Decompressed (${contentEncoding})`
+              : `Raw (${contentEncoding})`}
+          </Button>
+        )}
+        {isImage && imageDataUrl && (
+          <Button
+            variant={showAsImage ? "default" : "outline"}
+            size="sm"
+            onClick={() => setShowAsImage(!showAsImage)}
+            title={showAsImage ? "Show raw data" : "Show as image"}
+          >
+            {showAsImage ? (
               <>
-                <Minimize2 className="h-4 w-4 mr-1" />
-                Minify
+                <EyeOff className="h-4 w-4 mr-1" />
+                Hide Image
               </>
             ) : (
               <>
-                <Maximize2 className="h-4 w-4 mr-1" />
-                Prettify
+                <Eye className="h-4 w-4 mr-1" />
+                Show Image
               </>
             )}
           </Button>
         )}
-        <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search body..."
-            className="pl-8 h-8"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        <Button variant="ghost" size="sm" onClick={handleCopy}>
-          <Copy className="h-4 w-4 mr-1" />
-          Copy
-        </Button>
+        {isImage && rawBytes && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDownload}
+            title="Download image"
+          >
+            <Download className="h-4 w-4 mr-1" />
+            Download
+          </Button>
+        )}
+        {isJson && parsedJson && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant={queryMode !== "none" ? "default" : "outline"}
+                size="sm"
+                title="JSON query tools"
+              >
+                <Terminal className="h-4 w-4 mr-1" />
+                {queryMode === "none"
+                  ? "JSON Tools"
+                  : queryMode === "jsonpath"
+                    ? "JSONPath"
+                    : "JMESPath"}
+                <ChevronDown className="h-3 w-3 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={() => setQueryMode("none")}>
+                None
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setQueryMode("jsonpath");
+                  setQueryString("");
+                }}
+              >
+                JSONPath
+                <span className="text-xs text-muted-foreground ml-2">
+                  $.store.book[*].title
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setQueryMode("jmespath");
+                  setQueryString("");
+                }}
+              >
+                JMESPath
+                <span className="text-xs text-muted-foreground ml-2">
+                  store.book[*].title
+                </span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        {!isImage && !isJson && (
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search body..."
+              className="pl-8 h-8"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+        )}
+        {!isImage && !isJson && (
+          <Button variant="ghost" size="sm" onClick={handleCopy}>
+            <Copy className="h-4 w-4 mr-1" />
+            Copy
+          </Button>
+        )}
       </div>
 
+      {/* JSON Query Input */}
+      {isJson && parsedJson && queryMode !== "none" && (
+        <div className="flex items-center gap-2">
+          <code className="text-xs text-muted-foreground font-mono shrink-0">
+            {queryMode === "jsonpath" ? "$" : "@"}
+          </code>
+          <Input
+            placeholder={
+              queryMode === "jsonpath"
+                ? "$.store.book[*].title"
+                : "store.book[*].title"
+            }
+            className="h-8 font-mono text-sm"
+            value={queryString}
+            onChange={(e) => setQueryString(e.target.value)}
+          />
+          {queryResult.error && (
+            <span className="text-xs text-destructive shrink-0 max-w-xs truncate">
+              {queryResult.error}
+            </span>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setQueryMode("none");
+              setQueryString("");
+            }}
+            title="Clear query"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
       {/* Body Content */}
-      {isJson && parsedJson ? (
-        <JsonView data={parsedJson} searchTerm={searchTerm} />
+      {isImage && showAsImage && imageDataUrl ? (
+        <div className="space-y-2">
+          <div className="border rounded-md p-4 bg-muted/30 flex items-center justify-center min-h-[100px]">
+            <img
+              src={imageDataUrl}
+              alt="Response body"
+              className="max-w-full max-h-[600px] object-contain rounded"
+              onError={(e) => {
+                const target = e.currentTarget;
+                target.style.display = "none";
+                const parent = target.parentElement;
+                if (parent) {
+                  parent.innerHTML =
+                    '<p class="text-muted-foreground text-sm">Failed to render image. Try downloading instead.</p>';
+                }
+              }}
+            />
+          </div>
+          {rawBytes && (
+            <p className="text-xs text-muted-foreground">
+              {contentType} — {formatBytes(rawBytes.length)}
+            </p>
+          )}
+        </div>
+      ) : isJson && effectiveJson != null ? (
+        <JsonView data={effectiveJson} />
+      ) : isJson && queryResult.error ? (
+        <pre className="font-mono text-sm bg-destructive/10 text-destructive p-3 rounded-md overflow-x-auto whitespace-pre-wrap break-all">
+          {displayBody}
+        </pre>
       ) : (
         <pre className="font-mono text-sm bg-muted p-3 rounded-md overflow-x-auto whitespace-pre-wrap break-all">
           {highlightBodyText(displayBody, searchTerm)}

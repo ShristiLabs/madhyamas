@@ -1,0 +1,23 @@
+# Madhyamas Default Configuration
+# This file provides default configuration values for Madhyamas.
+# Installed to /etc/madhyamas/config.toml by RPM/AUR packages.
+#
+# All values can be overridden by environment variables or CLI flags.
+# Environment variables: MADHYAMAS_HOST, MADHYAMAS_API_PORT, MADHYAMAS_PROXY_PORT, etc.
+
+[server]
+# Host address to bind the API/web UI server
+host = "127.0.0.1"
+# Port for the web UI and REST API
+api_port = 3001
+# Port for the HTTP proxy
+proxy_port = 8888
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+[storage]
+# Data directory for certs, logs, and traffic database
+# Default: ~/.madhyamas/
+# data_dir = "~/.madhyamas"

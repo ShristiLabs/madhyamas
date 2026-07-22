@@ -24,17 +24,25 @@ pub fn serve_embedded(path: &str) -> Option<Response<Body>> {
     // Normalize: strip leading slash, default to index.html
     let path = path.trim_start_matches('/');
 
-    // Try the exact path first
-    let file = WebAssets::get(path).or_else(|| {
-        // SPA fallback: serve index.html for non-asset routes
-        if !path.starts_with("assets/") && !path.starts_with("favicon") && !path.contains('.') {
-            WebAssets::get("index.html")
-        } else {
-            None
+    // Try the exact path first, then SPA fallback to index.html
+    let (file, served_path) = match WebAssets::get(path) {
+        Some(f) => (f, path),
+        None => {
+            // SPA fallback: serve index.html for non-asset routes
+            if !path.starts_with("assets/") && !path.starts_with("favicon") && !path.contains('.') {
+                match WebAssets::get("index.html") {
+                    Some(f) => (f, "index.html"),
+                    None => return None,
+                }
+            } else {
+                return None;
+            }
         }
-    })?;
+    };
 
-    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    // Guess MIME from the ACTUAL file being served, not the request path.
+    // This ensures index.html (served via SPA fallback) gets text/html.
+    let mime = mime_guess::from_path(served_path).first_or_octet_stream();
 
     let mut response = Response::builder()
         .status(StatusCode::OK)
@@ -43,7 +51,7 @@ pub fn serve_embedded(path: &str) -> Option<Response<Body>> {
         .ok()?;
 
     // Set cache headers for hashed assets
-    if path.starts_with("assets/") {
+    if served_path.starts_with("assets/") {
         let val = HeaderValue::from_static("public, max-age=31536000, immutable");
         response.headers_mut().insert(header::CACHE_CONTROL, val);
     }

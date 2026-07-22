@@ -336,8 +336,8 @@ const TrafficListItem = memo(function TrafficListItem({
 })
 
 function calculateSize(entry: TrafficEntry): number {
-  const reqSize = entry.request.body?.length || 0
-  const resSize = entry.response?.body?.length || 0
+  const reqSize = entry.request_size ?? entry.request.body?.length ?? 0
+  const resSize = entry.response_size ?? entry.response?.body?.length ?? 0
   return reqSize + resSize
 }
 

@@ -25,6 +25,10 @@ export interface TrafficEntry {
   timestamp: string
   modified: boolean
   notes?: string
+  /** Total request size in bytes (headers + body). */
+  request_size?: number
+  /** Total response size in bytes (headers + body), if a response was received. */
+  response_size?: number
 }
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'CONNECT' | 'TRACE'

@@ -61,11 +61,10 @@ impl From<&TrafficEntry> for TrafficEntrySnapshot {
             content_type: entry.request.content_type.clone(),
             response_content_type: entry.response.as_ref().and_then(|r| r.content_type.clone()),
             duration_ms: entry.response.as_ref().map(|r| r.duration_ms),
-            request_size: entry.request.body.as_ref().map(|b| b.len()).unwrap_or(0),
+            request_size: entry.request_size,
             response_size: entry
-                .response
-                .as_ref()
-                .map(|r| r.body.as_ref().map(|b| b.len()).unwrap_or(0)),
+                .response_size
+                .or_else(|| entry.response.as_ref().map(|r| r.size())),
             timestamp: entry.timestamp.to_rfc3339(),
             modified: entry.modified,
             has_request_body: entry.request.body.is_some(),

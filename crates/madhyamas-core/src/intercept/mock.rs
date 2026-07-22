@@ -11,14 +11,16 @@
 //! - Hit analytics with history
 //! - Scripting support
 
+use super::regex_cache;
 use super::MatchCondition;
+use crate::persistence::InterceptStore;
 use crate::traffic::RequestData;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use rand::Rng;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 
 // ============================================================================
@@ -194,16 +196,10 @@ impl RequestCondition {
                 .headers
                 .iter()
                 .any(|(k, v)| k.eq_ignore_ascii_case(name) && v == value),
-            RequestCondition::HeaderMatches { name, pattern } => {
-                if let Ok(re) = Regex::new(pattern) {
-                    request
-                        .headers
-                        .iter()
-                        .any(|(k, v)| k.eq_ignore_ascii_case(name) && re.is_match(v))
-                } else {
-                    false
-                }
-            }
+            RequestCondition::HeaderMatches { name, pattern } => request
+                .headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case(name) && regex_cache::is_match(pattern, v)),
             RequestCondition::QueryParamEquals { name, value } => {
                 if let Ok(url) = url::Url::parse(&request.url) {
                     url.query_pairs().any(|(k, v)| k == *name && v == *value)
@@ -228,8 +224,8 @@ impl RequestCondition {
             RequestCondition::JsonPathMatches { path, pattern } => {
                 if let Some(body) = &request.body {
                     if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
-                        if let Ok(re) = Regex::new(pattern) {
-                            match jsonpath_lib::select(&json, path) {
+                        regex_cache::cached_regex(pattern)
+                            .map(|re| match jsonpath_lib::select(&json, path) {
                                 Ok(results) => results.iter().any(|r| {
                                     if let Some(s) = r.as_str() {
                                         re.is_match(s)
@@ -238,10 +234,8 @@ impl RequestCondition {
                                     }
                                 }),
                                 Err(_) => false,
-                            }
-                        } else {
-                            false
-                        }
+                            })
+                            .unwrap_or(false)
                     } else {
                         false
                     }
@@ -252,9 +246,7 @@ impl RequestCondition {
             RequestCondition::BodyMatches { pattern } => {
                 if let Some(body) = &request.body {
                     if let Ok(body_str) = std::str::from_utf8(body) {
-                        Regex::new(pattern)
-                            .map(|re| re.is_match(body_str))
-                            .unwrap_or(false)
+                        regex_cache::is_match(pattern, body_str)
                     } else {
                         false
                     }
@@ -517,7 +509,8 @@ impl TemplateEngine {
         }
 
         // Request headers: {{request.headers.X-Custom}}
-        let header_re = Regex::new(r"\{\{request\.headers\.([^}]+)\}\}").unwrap();
+        let header_re = regex_cache::cached_regex(r"\{\{request\.headers\.([^}]+)\}\}")
+            .expect("hardcoded header template regex");
         result = header_re
             .replace_all(&result, |caps: &regex::Captures| {
                 let header_name = &caps[1];
@@ -531,7 +524,8 @@ impl TemplateEngine {
             .to_string();
 
         // Query parameters: {{request.query.param_name}}
-        let query_re = Regex::new(r"\{\{request\.query\.([^}]+)\}\}").unwrap();
+        let query_re = regex_cache::cached_regex(r"\{\{request\.query\.([^}]+)\}\}")
+            .expect("hardcoded query template regex");
         if let Ok(url) = url::Url::parse(&request.url) {
             result = query_re
                 .replace_all(&result, |caps: &regex::Captures| {
@@ -545,7 +539,8 @@ impl TemplateEngine {
         }
 
         // JSON body paths: {{request.body.path.to.value}}
-        let body_re = Regex::new(r"\{\{request\.body\.([^}]+)\}\}").unwrap();
+        let body_re = regex_cache::cached_regex(r"\{\{request\.body\.([^}]+)\}\}")
+            .expect("hardcoded body template regex");
         if let Some(body) = &request.body {
             if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
                 result = body_re
@@ -654,6 +649,8 @@ pub struct MockManager {
     recording_enabled: RwLock<bool>,
     /// Recorded mocks from live traffic
     recorded_mocks: RwLock<Vec<MockRule>>,
+    /// Optional SQLite persistence backend
+    store: Option<Arc<InterceptStore>>,
 }
 
 impl MockManager {
@@ -666,6 +663,7 @@ impl MockManager {
             sequence_indices: RwLock::new(HashMap::new()),
             recording_enabled: RwLock::new(false),
             recorded_mocks: RwLock::new(Vec::new()),
+            store: None,
         }
     }
 
@@ -679,7 +677,15 @@ impl MockManager {
             sequence_indices: RwLock::new(HashMap::new()),
             recording_enabled: RwLock::new(false),
             recorded_mocks: RwLock::new(Vec::new()),
+            store: None,
         }
+    }
+
+    /// Attach a SQLite persistence backend. When set, [`Persistable::save`]
+    /// and [`Persistable::load`] will read/write rules through this store.
+    pub fn with_store(mut self, store: Arc<InterceptStore>) -> Self {
+        self.store = Some(store);
+        self
     }
 
     // ==================== Rule Management ====================
@@ -687,6 +693,11 @@ impl MockManager {
     /// Add a mock rule
     pub fn add_rule(&self, rule: MockRule) -> String {
         let id = rule.id.clone();
+        if let Some(store) = &self.store {
+            if let Err(e) = store.save_mock_rule(&rule) {
+                tracing::warn!("Failed to persist mock rule: {}", e);
+            }
+        }
         self.rules.write().push(rule);
         id
     }
@@ -697,6 +708,11 @@ impl MockManager {
         if let Some(pos) = rules.iter().position(|r| r.id == id) {
             rules.remove(pos);
             self.sequence_indices.write().remove(id);
+            if let Some(store) = &self.store {
+                if let Err(e) = store.delete_mock_rule(id) {
+                    tracing::warn!("Failed to delete mock rule from store: {}", e);
+                }
+            }
             true
         } else {
             false
@@ -1521,6 +1537,39 @@ impl MockManager {
 impl Default for MockManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl crate::persistence::Persistable for MockManager {
+    fn save(&self) -> crate::Result<()> {
+        if let Some(store) = &self.store {
+            let rules = self.rules.read();
+            for rule in rules.iter() {
+                store.save_mock_rule(rule)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn load(&self) -> crate::Result<()> {
+        if let Some(store) = &self.store {
+            let loaded = store.load_mock_rules()?;
+            *self.rules.write() = loaded;
+        }
+        Ok(())
+    }
+
+    fn clear(&self) -> crate::Result<()> {
+        if let Some(store) = &self.store {
+            store.clear_mock_rules()?;
+        }
+        self.rules.write().clear();
+        self.collections.write().clear();
+        Ok(())
+    }
+
+    fn size(&self) -> usize {
+        self.rules.read().len()
     }
 }
 

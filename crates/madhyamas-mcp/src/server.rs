@@ -9,15 +9,17 @@ use serde_json::{json, Value};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info};
 
-use crate::tools::{ToolExecutor, ToolRegistry};
+use crate::tools::{default_dyn_registry, DynToolRegistry, ToolExecutor, ToolRegistry};
 use crate::types::*;
 
 /// MCP Server for Madhyamas
 pub struct McpServer {
-    config: McpConfig,
     tool_registry: ToolRegistry,
-    http_client: reqwest::Client,
+    /// Trait-based tool registry (new tools self-register here).
+    dyn_registry: DynToolRegistry,
     tokio_runtime: Runtime,
+    /// Cached ToolExecutor (reused across calls instead of fresh per invocation)
+    tool_executor: ToolExecutor,
 }
 
 impl McpServer {
@@ -30,11 +32,13 @@ impl McpServer {
 
         let tokio_runtime = Runtime::new().map_err(|e| McpError::ToolExecution(e.to_string()))?;
 
+        let tool_executor = ToolExecutor::new(config.api_url.clone(), http_client);
+
         Ok(Self {
-            config,
             tool_registry: ToolRegistry::new(),
-            http_client,
+            dyn_registry: default_dyn_registry(),
             tokio_runtime,
+            tool_executor,
         })
     }
 
@@ -127,20 +131,22 @@ impl McpServer {
         JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
             id: Some(request.id),
-            result: Some(serde_json::to_value(result).unwrap()),
+            result: Some(serde_json::to_value(result).unwrap_or_default()),
             error: None,
         }
     }
 
     /// Handle tools/list request
     fn handle_list_tools(&self, request: JsonRpcRequest) -> JsonRpcResponse {
-        let tools = self.tool_registry.list_tools();
+        // Merge legacy static tools with trait-based tools.
+        let mut tools = self.tool_registry.list_tools();
+        tools.extend(self.dyn_registry.list_tools());
         let result = ListToolsResult { tools };
 
         JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
             id: Some(request.id),
-            result: Some(serde_json::to_value(result).unwrap()),
+            result: Some(serde_json::to_value(result).unwrap_or_default()),
             error: None,
         }
     }
@@ -175,11 +181,18 @@ impl McpServer {
 
         debug!("Calling tool: {} with args: {:?}", tool_name, arguments);
 
-        let executor = ToolExecutor::new(self.config.api_url.clone(), self.http_client.clone());
-
-        let result = self
-            .tokio_runtime
-            .block_on(async { executor.execute(&tool_name, arguments).await });
+        // Try the trait-based registry first. If the tool isn't found
+        // there, fall back to the legacy executor match statement.
+        let result = self.tokio_runtime.block_on(async {
+            if let Some(r) = self
+                .dyn_registry
+                .execute(&tool_name, self.tool_executor.client(), self.tool_executor.api_url(), &arguments)
+                .await
+            {
+                return r;
+            }
+            self.tool_executor.execute(&tool_name, arguments).await
+        });
 
         match result {
             Ok(content) => {
@@ -190,7 +203,7 @@ impl McpServer {
                 JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     id: Some(request.id),
-                    result: Some(serde_json::to_value(tool_result).unwrap()),
+                    result: Some(serde_json::to_value(tool_result).unwrap_or_default()),
                     error: None,
                 }
             }
@@ -204,7 +217,7 @@ impl McpServer {
                 JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     id: Some(request.id),
-                    result: Some(serde_json::to_value(tool_result).unwrap()),
+                    result: Some(serde_json::to_value(tool_result).unwrap_or_default()),
                     error: None,
                 }
             }
@@ -239,7 +252,7 @@ impl McpServer {
         JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
             id: Some(request.id),
-            result: Some(serde_json::to_value(result).unwrap()),
+            result: Some(serde_json::to_value(result).unwrap_or_default()),
             error: None,
         }
     }
@@ -270,32 +283,36 @@ impl McpServer {
             }
         };
 
-        let executor = ToolExecutor::new(self.config.api_url.clone(), self.http_client.clone());
-
         let contents = self.tokio_runtime.block_on(async {
             match uri {
                 "madhyamas://traffic" => {
-                    let traffic = executor.get_traffic(None, None, None, None).await?;
+                    let traffic = self
+                        .tool_executor
+                        .get_traffic(None, None, None, None)
+                        .await?;
                     Ok(vec![ResourceContents {
                         uri: uri.to_string(),
                         mime_type: Some("application/json".to_string()),
-                        text: serde_json::to_string_pretty(&traffic).unwrap(),
+                        text: serde_json::to_string_pretty(&traffic)
+                            .unwrap_or_else(|_| "[]".to_string()),
                     }])
                 }
                 "madhyamas://sessions" => {
-                    let sessions = executor.get_sessions().await?;
+                    let sessions = self.tool_executor.get_sessions().await?;
                     Ok(vec![ResourceContents {
                         uri: uri.to_string(),
                         mime_type: Some("application/json".to_string()),
-                        text: serde_json::to_string_pretty(&sessions).unwrap(),
+                        text: serde_json::to_string_pretty(&sessions)
+                            .unwrap_or_else(|_| "[]".to_string()),
                     }])
                 }
                 "madhyamas://config" => {
-                    let config = executor.get_config().await?;
+                    let config = self.tool_executor.get_config().await?;
                     Ok(vec![ResourceContents {
                         uri: uri.to_string(),
                         mime_type: Some("application/json".to_string()),
-                        text: serde_json::to_string_pretty(&config).unwrap(),
+                        text: serde_json::to_string_pretty(&config)
+                            .unwrap_or_else(|_| "{}".to_string()),
                     }])
                 }
                 _ => Err(McpError::NotFound(format!("Unknown resource: {}", uri))),
@@ -308,7 +325,7 @@ impl McpServer {
                 JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     id: Some(request.id),
-                    result: Some(serde_json::to_value(result).unwrap()),
+                    result: Some(serde_json::to_value(result).unwrap_or_default()),
                     error: None,
                 }
             }

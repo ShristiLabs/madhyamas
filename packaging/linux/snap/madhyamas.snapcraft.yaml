@@ -16,7 +16,7 @@ description: |
   - MCP integration for AI agents
   - CLI commands for scripting and automation
 
-base: core22
+base: core24
 confinement: strict
 grade: stable
 license: MIT

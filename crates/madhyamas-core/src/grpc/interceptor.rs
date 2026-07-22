@@ -15,6 +15,8 @@ pub struct GrpcManager {
     streams: RwLock<HashMap<String, GrpcStream>>,
     /// Captured frames
     frames: RwLock<Vec<GrpcFrame>>,
+    /// Index: stream_id → frame indices in `frames` for O(1) lookup
+    frame_index: RwLock<HashMap<String, Vec<usize>>>,
     /// Maximum frames to keep
     max_frames: usize,
     /// Broadcast channel for real-time updates
@@ -28,6 +30,7 @@ impl GrpcManager {
             connections: RwLock::new(HashMap::new()),
             streams: RwLock::new(HashMap::new()),
             frames: RwLock::new(Vec::new()),
+            frame_index: RwLock::new(HashMap::new()),
             max_frames,
             frame_tx,
         }
@@ -126,15 +129,33 @@ impl GrpcManager {
             }
         }
 
-        // Store frame
+        // Store frame and update index
         {
             let mut frames = self.frames.write();
+            let idx = frames.len();
             frames.push(frame.clone());
+
+            // Update stream_id → frame index mapping
+            self.frame_index
+                .write()
+                .entry(frame.stream_id.clone())
+                .or_default()
+                .push(idx);
 
             // Trim if over limit
             if frames.len() > self.max_frames {
                 let excess = frames.len() - self.max_frames;
                 frames.drain(0..excess);
+                // Shift all index values down by `excess` and remove invalid ones
+                let mut index = self.frame_index.write();
+                for indices in index.values_mut() {
+                    for i in indices.iter_mut() {
+                        *i = i.saturating_sub(excess);
+                    }
+                    indices.retain(|&i| i < frames.len());
+                }
+                // Remove empty entries
+                index.retain(|_, v| !v.is_empty());
             }
         }
 
@@ -154,6 +175,9 @@ impl GrpcManager {
             stream.closed_at = Some(Utc::now());
             stream.status_code = status_code;
             stream.status_message = status_message;
+
+            // Auto-detect the message type now that all frame counts are final.
+            stream.message_type = stream.detect_message_type();
 
             // Update connection
             if let Some(conn) = self.connections.write().get_mut(&stream.connection_id) {
@@ -192,14 +216,17 @@ impl GrpcManager {
         self.streams.read().get(id).cloned()
     }
 
-    /// Get frames for a stream
+    /// Get frames for a stream (uses index for O(1) lookup)
     pub fn get_stream_frames(&self, stream_id: &str) -> Vec<GrpcFrame> {
-        self.frames
-            .read()
-            .iter()
-            .filter(|f| f.stream_id == stream_id)
-            .cloned()
-            .collect()
+        let index = self.frame_index.read();
+        let frames = self.frames.read();
+        match index.get(stream_id) {
+            Some(indices) => indices
+                .iter()
+                .filter_map(|&i| frames.get(i).cloned())
+                .collect(),
+            None => Vec::new(),
+        }
     }
 
     /// Get frames with filter
@@ -299,6 +326,7 @@ impl GrpcManager {
     /// Clear all captured data
     pub fn clear(&self) {
         self.frames.write().clear();
+        self.frame_index.write().clear();
     }
 
     /// Get statistics
@@ -326,6 +354,25 @@ impl GrpcManager {
 impl Default for GrpcManager {
     fn default() -> Self {
         Self::new(10000)
+    }
+}
+
+impl crate::persistence::Persistable for GrpcManager {
+    fn save(&self) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn load(&self) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn clear(&self) -> crate::Result<()> {
+        self.clear();
+        Ok(())
+    }
+
+    fn size(&self) -> usize {
+        self.frames.read().len()
     }
 }
 
@@ -357,11 +404,15 @@ pub struct GrpcMethodDescriptor {
     pub server_streaming: bool,
 }
 
-/// Check if HTTP/2 path looks like gRPC
+/// Check if HTTP/2 path looks like gRPC.
+///
+/// gRPC paths are typically `/package.Service/Method`, but some services
+/// use paths without dots (e.g. `/Service/Method`). We relax the check to
+/// accept any two-segment path with a non-empty service and method, and
+/// rely on the `content-type` header for definitive detection.
 pub fn is_grpc_path(path: &str) -> bool {
-    // gRPC paths are typically /package.Service/Method
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    parts.len() == 2 && parts[0].contains('.') && !parts[1].is_empty()
+    parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty()
 }
 
 /// Check if content-type is gRPC

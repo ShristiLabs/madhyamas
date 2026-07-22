@@ -107,6 +107,8 @@ pub struct ReplayManager {
     saved_requests: std::sync::Arc<parking_lot::RwLock<Vec<SavedRequest>>>,
     /// Replay history
     history: std::sync::Arc<parking_lot::RwLock<Vec<ReplayResult>>>,
+    /// Maximum history entries (FIFO eviction)
+    max_history: usize,
 }
 
 impl ReplayManager {
@@ -114,7 +116,14 @@ impl ReplayManager {
         Self {
             saved_requests: std::sync::Arc::new(parking_lot::RwLock::new(Vec::new())),
             history: std::sync::Arc::new(parking_lot::RwLock::new(Vec::new())),
+            max_history: 500,
         }
+    }
+
+    /// Set the maximum history size.
+    pub fn with_max_history(mut self, max: usize) -> Self {
+        self.max_history = max;
+        self
     }
 
     /// Save a request for later replay
@@ -182,6 +191,15 @@ impl ReplayManager {
         self.history.write().clear();
     }
 
+    /// Record a replay result, evicting oldest entries if over max_history.
+    fn record_history(&self, result: ReplayResult) {
+        let mut history = self.history.write();
+        history.push(result);
+        while history.len() > self.max_history {
+            history.remove(0);
+        }
+    }
+
     /// Replay a saved request
     pub async fn replay(
         &self,
@@ -209,14 +227,16 @@ impl ReplayManager {
 
         // Clone and modify the request
         let mut request = saved.request.clone();
+        let mut follow_redirects = false;
         if let Some(mods) = modifications {
             mods.apply(&mut request);
+            follow_redirects = mods.follow_redirects.unwrap_or(false);
         }
 
         let start = std::time::Instant::now();
 
         // Execute the request
-        match self.execute_request(&request).await {
+        match self.execute_request(&request, follow_redirects).await {
             Ok(response) => {
                 let result = ReplayResult::success(
                     id,
@@ -224,172 +244,106 @@ impl ReplayManager {
                     response,
                     start.elapsed().as_millis() as u64,
                 );
-                self.history.write().push(result.clone());
+                self.record_history(result.clone());
                 result
             }
             Err(e) => {
                 let result = ReplayResult::error(id, request, e.to_string());
-                self.history.write().push(result.clone());
+                self.record_history(result.clone());
                 result
             }
         }
     }
 
-    /// Execute an HTTP request
-    async fn execute_request(&self, request: &RequestData) -> crate::Result<ResponseData> {
-        let is_https = request.url.starts_with("https://");
-        let port = if is_https { 443 } else { 80 };
-
-        // Connect to the target server
-        let addr = format!("{}:{}", request.host, port);
-        let stream = tokio::net::TcpStream::connect(&addr)
-            .await
-            .map_err(|e| crate::Error::Proxy(format!("Failed to connect to {}: {}", addr, e)))?;
-
-        if is_https {
-            self.execute_https_request(stream, request).await
+    /// Execute an HTTP request using `reqwest`.
+    ///
+    /// This replaces the previous manual TCP+TLS+HTTP/1.1 implementation
+    /// which had a 64KB buffer limit and didn't support chunked encoding,
+    /// HTTP/2, or compression. Now uses reqwest for full protocol support.
+    async fn execute_request(
+        &self,
+        request: &RequestData,
+        follow_redirects: bool,
+    ) -> crate::Result<ResponseData> {
+        // Build a reqwest client. Don't use system proxy (avoid feedback loop).
+        let redirect_policy = if follow_redirects {
+            reqwest::redirect::Policy::default()
         } else {
-            self.execute_http_request(stream, request).await
-        }
-    }
+            reqwest::redirect::Policy::none()
+        };
 
-    async fn execute_http_request(
-        &self,
-        mut stream: tokio::net::TcpStream,
-        request: &RequestData,
-    ) -> crate::Result<ResponseData> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let client = reqwest::Client::builder()
+            .redirect(redirect_policy)
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| crate::Error::Proxy(format!("Failed to create HTTP client: {}", e)))?;
 
-        // Build and send request
-        let request_bytes = self.build_request_bytes(request);
-        stream.write_all(&request_bytes).await?;
+        let method = reqwest::Method::from_bytes(request.method.to_string().as_bytes())
+            .map_err(|e| crate::Error::Proxy(format!("Invalid HTTP method: {}", e)))?;
 
-        // Read response
-        let mut response_buf = vec![0u8; 65536];
-        let n = stream
-            .read(&mut response_buf)
-            .await
-            .map_err(|e| crate::Error::Proxy(format!("Failed to read response: {}", e)))?;
+        let mut req_builder = client.request(method, &request.url);
 
-        self.parse_response(&response_buf[..n])
-    }
-
-    async fn execute_https_request(
-        &self,
-        stream: tokio::net::TcpStream,
-        request: &RequestData,
-    ) -> crate::Result<ResponseData> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        // Create TLS connector that skips verification (for proxy use)
-        let config = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(std::sync::Arc::new(SkipServerVerification::new()))
-            .with_no_client_auth();
-
-        let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
-        let server_name = rustls::pki_types::ServerName::try_from(request.host.clone())
-            .map_err(|e| crate::Error::Tls(format!("Invalid server name: {}", e)))?;
-
-        let mut tls_stream = connector
-            .connect(server_name, stream)
-            .await
-            .map_err(|e| crate::Error::Tls(format!("TLS connection failed: {}", e)))?;
-
-        // Build and send request
-        let request_bytes = self.build_request_bytes(request);
-        tls_stream.write_all(&request_bytes).await?;
-
-        // Read response
-        let mut response_buf = vec![0u8; 65536];
-        let n = tls_stream
-            .read(&mut response_buf)
-            .await
-            .map_err(|e| crate::Error::Proxy(format!("Failed to read response: {}", e)))?;
-
-        self.parse_response(&response_buf[..n])
-    }
-
-    fn build_request_bytes(&self, request: &RequestData) -> Vec<u8> {
-        let mut req_str = format!("{} {} HTTP/1.1\r\n", request.method, request.path);
-
-        // Add host header if not present
-        if !request
-            .headers
-            .keys()
-            .any(|k| k.eq_ignore_ascii_case("host"))
-        {
-            req_str.push_str(&format!("Host: {}\r\n", request.host));
-        }
-
+        // Copy headers (skip hop-by-hop and content-length)
         for (key, value) in &request.headers {
-            req_str.push_str(&format!("{}: {}\r\n", key, value));
+            if !matches!(
+                key.to_lowercase().as_str(),
+                "connection" | "keep-alive" | "transfer-encoding" | "content-length" | "upgrade"
+            ) {
+                if let Ok(name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
+                    if let Ok(val) = reqwest::header::HeaderValue::from_str(value) {
+                        req_builder = req_builder.header(name, val);
+                    }
+                }
+            }
         }
 
-        req_str.push_str("Connection: close\r\n");
-        req_str.push_str("\r\n");
-
-        let mut bytes = req_str.into_bytes();
-        if let Some(ref body) = request.body {
-            bytes.extend(body);
+        // Add body if present
+        if let Some(body) = &request.body {
+            req_builder = req_builder.body(body.clone());
         }
 
-        bytes
-    }
+        // Send the request
+        let response = req_builder
+            .send()
+            .await
+            .map_err(|e| crate::Error::Proxy(format!("Request failed: {}", e)))?;
 
-    fn parse_response(&self, data: &[u8]) -> crate::Result<ResponseData> {
-        let response_str = String::from_utf8_lossy(data);
-        let mut lines = response_str.lines();
+        let status_code = response.status().as_u16();
 
-        // Parse status line
-        let status_line = lines.next().unwrap_or("");
-        let parts: Vec<&str> = status_line.splitn(3, ' ').collect();
-
-        if parts.len() < 2 {
-            return Err(crate::Error::Proxy("Invalid response line".into()));
-        }
-
-        // Validate HTTP version
-        if !parts[0].starts_with("HTTP/") {
-            return Err(crate::Error::Proxy("Invalid HTTP response".into()));
-        }
-
-        let status_code: u16 = parts[1]
-            .parse()
-            .map_err(|_| crate::Error::Proxy("Invalid status code".into()))?;
-
-        // Status message is everything after the status code (may contain spaces)
-        let status_message = parts.get(2).map(|s| s.to_string());
-
-        // Parse headers
+        // Extract headers
         let mut headers = HashMap::new();
         let mut content_type = None;
-
-        for line in lines {
-            if line.is_empty() {
-                break;
+        for (name, value) in response.headers() {
+            let name_lower = name.as_str().to_lowercase();
+            if matches!(
+                name_lower.as_str(),
+                "transfer-encoding" | "content-encoding" | "content-length" | "connection"
+            ) {
+                continue;
             }
-            if let Some((key, value)) = line.split_once(':') {
-                let key = key.trim().to_string();
-                let value = value.trim().to_string();
-
-                if key.eq_ignore_ascii_case("content-type") {
-                    content_type = Some(value.clone());
-                }
-
-                headers.insert(key, value);
+            let val_str = value.to_str().unwrap_or("").to_string();
+            if name_lower == "content-type" {
+                content_type = Some(val_str.clone());
             }
+            headers.insert(name.as_str().to_string(), val_str);
         }
 
-        // Extract body
-        let body = data
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .map(|p| data[p + 4..].to_vec());
+        // Read full body (reqwest handles decompression)
+        let body_bytes = response
+            .bytes()
+            .await
+            .map_err(|e| crate::Error::Proxy(format!("Failed to read response body: {}", e)))?;
+
+        let body = if body_bytes.is_empty() {
+            None
+        } else {
+            Some(body_bytes.to_vec())
+        };
 
         Ok(ResponseData {
             status_code,
-            status_message,
+            status_message: None,
             headers,
             body,
             content_type,
@@ -401,6 +355,28 @@ impl ReplayManager {
 impl Default for ReplayManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl crate::persistence::Persistable for ReplayManager {
+    fn save(&self) -> crate::Result<()> {
+        // In-memory only for now; no backing store wired up yet.
+        Ok(())
+    }
+
+    fn load(&self) -> crate::Result<()> {
+        // In-memory only for now; no backing store wired up yet.
+        Ok(())
+    }
+
+    fn clear(&self) -> crate::Result<()> {
+        self.saved_requests.write().clear();
+        self.clear_history();
+        Ok(())
+    }
+
+    fn size(&self) -> usize {
+        self.saved_requests.read().len()
     }
 }
 
@@ -417,6 +393,8 @@ pub struct RequestModifications {
     pub remove_headers: Vec<String>,
     /// New body
     pub body: Option<String>,
+    /// Whether to follow redirect responses (3xx). Default: false.
+    pub follow_redirects: Option<bool>,
 }
 
 impl RequestModifications {
@@ -448,57 +426,6 @@ impl RequestModifications {
         if let Some(body) = &self.body {
             request.body = Some(body.as_bytes().to_vec());
         }
-    }
-}
-
-/// Skip server certificate verification
-#[derive(Debug)]
-struct SkipServerVerification {
-    supported_schemes: Vec<rustls::SignatureScheme>,
-}
-
-impl SkipServerVerification {
-    fn new() -> Self {
-        Self {
-            supported_schemes: rustls::crypto::ring::default_provider()
-                .signature_verification_algorithms
-                .supported_schemes(),
-        }
-    }
-}
-
-impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.supported_schemes.clone()
     }
 }
 
@@ -749,6 +676,7 @@ mod tests {
                 headers,
                 remove_headers: vec!["X-Old".to_string()],
                 body: Some(r#"{"test": 1}"#.to_string()),
+                ..Default::default()
             };
 
             let mut request = RequestData {
@@ -787,6 +715,7 @@ mod tests {
                 headers,
                 remove_headers: vec!["Old".to_string()],
                 body: Some("new body".to_string()),
+                ..Default::default()
             };
 
             let json = serde_json::to_string(&mods).unwrap();
@@ -912,81 +841,10 @@ mod tests {
             assert!(manager.get_history().is_empty());
         }
 
-        #[test]
-        fn test_build_request_bytes() {
-            let manager = ReplayManager::new();
-
-            let mut request = create_test_request();
-            request
-                .headers
-                .insert("Authorization".to_string(), "Bearer token".to_string());
-
-            let bytes = manager.build_request_bytes(&request);
-            let request_str = String::from_utf8_lossy(&bytes);
-
-            assert!(request_str.starts_with("GET /users HTTP/1.1\r\n"));
-            assert!(request_str.contains("Host: api.example.com"));
-            assert!(request_str.contains("Authorization: Bearer token"));
-            assert!(request_str.contains("Connection: close"));
-            assert!(request_str.ends_with("\r\n\r\n"));
-        }
-
-        #[test]
-        fn test_build_request_bytes_with_body() {
-            let manager = ReplayManager::new();
-
-            let request = RequestData {
-                method: HttpMethod::Post,
-                url: "https://example.com/api".to_string(),
-                host: "example.com".to_string(),
-                path: "/api".to_string(),
-                headers: HashMap::new(),
-                body: Some(b"request body data".to_vec()),
-                content_type: None,
-            };
-
-            let bytes = manager.build_request_bytes(&request);
-            let body_start = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
-            let body = &bytes[body_start + 4..];
-
-            assert_eq!(body, b"request body data");
-        }
-
-        #[test]
-        fn test_parse_response() {
-            let manager = ReplayManager::new();
-
-            let response_data = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 17\r\n\r\n{\"status\":\"ok\"}";
-            let response = manager.parse_response(response_data).unwrap();
-
-            assert_eq!(response.status_code, 200);
-            assert_eq!(response.status_message, Some("OK".to_string()));
-            assert_eq!(
-                response.headers.get("Content-Type"),
-                Some(&"application/json".to_string())
-            );
-            assert_eq!(response.body, Some(br#"{"status":"ok"}"#.to_vec()));
-        }
-
-        #[test]
-        fn test_parse_response_error_status() {
-            let manager = ReplayManager::new();
-
-            let response_data =
-                b"HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nNot Found";
-            let response = manager.parse_response(response_data).unwrap();
-
-            assert_eq!(response.status_code, 404);
-            assert_eq!(response.status_message, Some("Not Found".to_string()));
-        }
-
-        #[test]
-        fn test_parse_response_invalid() {
-            let manager = ReplayManager::new();
-
-            let result = manager.parse_response(b"Invalid Response");
-            assert!(result.is_err());
-        }
+        // Note: build_request_bytes and parse_response tests were removed
+        // because the replay engine now uses reqwest instead of manual
+        // HTTP/1.1 parsing. The reqwest library handles request building
+        // and response parsing internally.
 
         #[tokio::test]
         async fn test_replay_nonexistent_request() {

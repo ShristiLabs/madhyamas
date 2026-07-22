@@ -86,6 +86,19 @@ impl TrafficStore {
         conn.execute_batch("PRAGMA journal_mode=WAL;")
             .map_err(Error::Database)?;
 
+        // Set busy timeout to 5 seconds to avoid "database is locked" errors
+        // when multiple threads try to write simultaneously.
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(Error::Database)?;
+
+        // Set synchronous to NORMAL (safe with WAL, much faster than FULL)
+        conn.execute_batch("PRAGMA synchronous=NORMAL;")
+            .map_err(Error::Database)?;
+
+        // Increase cache size for better read performance
+        conn.execute_batch("PRAGMA cache_size=-64000;") // 64MB cache
+            .map_err(Error::Database)?;
+
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS sessions (
@@ -471,6 +484,8 @@ impl TrafficStore {
                     }
                 });
 
+                let request_size = request.size();
+                let response_size = response.as_ref().map(|r| r.size());
                 Ok(TrafficEntry {
                     id,
                     session_id,
@@ -479,6 +494,8 @@ impl TrafficStore {
                     timestamp: DateTime::from_timestamp(timestamp_i64, 0).unwrap_or(Utc::now()),
                     modified: modified != 0,
                     notes,
+                    request_size,
+                    response_size,
                 })
             })
             .map_err(Error::Database)?
@@ -552,6 +569,8 @@ impl TrafficStore {
                     }
                 });
 
+                let request_size = request.size();
+                let response_size = response.as_ref().map(|r| r.size());
                 Ok(TrafficEntry {
                     id,
                     session_id,
@@ -560,6 +579,8 @@ impl TrafficStore {
                     timestamp: DateTime::from_timestamp(timestamp_i64, 0).unwrap_or(Utc::now()),
                     modified: modified != 0,
                     notes,
+                    request_size,
+                    response_size,
                 })
             })
             .ok();
@@ -841,6 +862,8 @@ impl TrafficStore {
                     }
                 });
 
+                let request_size = request.size();
+                let response_size = response.as_ref().map(|r| r.size());
                 Ok(TrafficEntry {
                     id,
                     session_id,
@@ -849,6 +872,8 @@ impl TrafficStore {
                     timestamp: DateTime::from_timestamp(timestamp_i64, 0).unwrap_or(Utc::now()),
                     modified: modified != 0,
                     notes,
+                    request_size,
+                    response_size,
                 })
             })
             .map_err(Error::Database)?

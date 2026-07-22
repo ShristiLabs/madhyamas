@@ -1,11 +1,14 @@
 //! Breakpoint management for pausing and modifying traffic
 
+use super::regex_cache;
 use super::{InterceptDirection, MatchCondition, Modification};
+use crate::persistence::InterceptStore;
 use crate::traffic::{RequestData, ResponseData};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -94,6 +97,8 @@ pub struct BreakpointManager {
     paused: RwLock<HashMap<String, BreakpointState>>,
     /// Maximum number of paused items
     max_paused: usize,
+    /// Optional SQLite persistence backend
+    store: Option<Arc<InterceptStore>>,
 }
 
 impl BreakpointManager {
@@ -102,12 +107,24 @@ impl BreakpointManager {
             rules: RwLock::new(Vec::new()),
             paused: RwLock::new(HashMap::new()),
             max_paused,
+            store: None,
         }
+    }
+
+    /// Attach a SQLite persistence backend.
+    pub fn with_store(mut self, store: Arc<InterceptStore>) -> Self {
+        self.store = Some(store);
+        self
     }
 
     /// Add a breakpoint rule
     pub fn add_rule(&self, rule: BreakpointRule) -> String {
         let id = rule.id.clone();
+        if let Some(store) = &self.store {
+            if let Err(e) = store.save_breakpoint_rule(&rule) {
+                tracing::warn!("Failed to persist breakpoint rule: {}", e);
+            }
+        }
         self.rules.write().push(rule);
         id
     }
@@ -117,6 +134,11 @@ impl BreakpointManager {
         let mut rules = self.rules.write();
         if let Some(pos) = rules.iter().position(|r| r.id == id) {
             rules.remove(pos);
+            if let Some(store) = &self.store {
+                if let Err(e) = store.delete_breakpoint_rule(id) {
+                    tracing::warn!("Failed to delete breakpoint rule from store: {}", e);
+                }
+            }
             true
         } else {
             false
@@ -300,9 +322,9 @@ impl BreakpointManager {
                 } => {
                     if let Some(body) = &request.body {
                         if let Ok(body_str) = std::str::from_utf8(body) {
-                            if let Ok(re) = regex::Regex::new(pattern) {
-                                let new_body = re.replace_all(body_str, replacement.as_str());
-                                request.body = Some(new_body.as_bytes().to_vec());
+                            let new_body = regex_cache::replace_all(pattern, body_str, replacement);
+                            if new_body != body_str {
+                                request.body = Some(new_body.into_bytes());
                             }
                         }
                     }
@@ -311,9 +333,9 @@ impl BreakpointManager {
                     pattern,
                     replacement,
                 } => {
-                    if let Ok(re) = regex::Regex::new(pattern) {
-                        let new_url = re.replace_all(&request.url, replacement.as_str());
-                        request.url = new_url.to_string();
+                    let new_url = regex_cache::replace_all(pattern, &request.url, replacement);
+                    if new_url != request.url {
+                        request.url = new_url;
                     }
                 }
                 Modification::Delay { .. } | Modification::SetStatusCode { .. } => {
@@ -355,9 +377,9 @@ impl BreakpointManager {
                 } => {
                     if let Some(body) = &response.body {
                         if let Ok(body_str) = std::str::from_utf8(body) {
-                            if let Ok(re) = regex::Regex::new(pattern) {
-                                let new_body = re.replace_all(body_str, replacement.as_str());
-                                response.body = Some(new_body.as_bytes().to_vec());
+                            let new_body = regex_cache::replace_all(pattern, body_str, replacement);
+                            if new_body != body_str {
+                                response.body = Some(new_body.into_bytes());
                             }
                         }
                     }
@@ -390,5 +412,37 @@ impl BreakpointManager {
     /// Clear all rules
     pub fn clear(&self) {
         self.rules.write().clear();
+    }
+}
+
+impl crate::persistence::Persistable for BreakpointManager {
+    fn save(&self) -> crate::Result<()> {
+        if let Some(store) = &self.store {
+            let rules = self.rules.read();
+            for rule in rules.iter() {
+                store.save_breakpoint_rule(rule)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn load(&self) -> crate::Result<()> {
+        if let Some(store) = &self.store {
+            let loaded = store.load_breakpoint_rules()?;
+            *self.rules.write() = loaded;
+        }
+        Ok(())
+    }
+
+    fn clear(&self) -> crate::Result<()> {
+        if let Some(store) = &self.store {
+            store.clear_breakpoint_rules()?;
+        }
+        self.rules.write().clear();
+        Ok(())
+    }
+
+    fn size(&self) -> usize {
+        self.rules.read().len()
     }
 }

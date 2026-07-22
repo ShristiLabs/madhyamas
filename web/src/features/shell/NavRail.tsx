@@ -18,6 +18,8 @@ export interface NavView {
   id: string
   label: string
   icon: string
+  /** Mark as experimental — shows a small "beta" indicator in the tooltip */
+  experimental?: boolean
 }
 
 const ICONS: Record<string, LucideIcon> = {
@@ -64,7 +66,14 @@ export function NavRail({ views, activeView, onSelect }: NavRailProps) {
                 </button>
               </TooltipTrigger>
               <TooltipContent side="right" sideOffset={8}>
-                {view.label}
+                <span className="flex items-center gap-1.5">
+                  {view.label}
+                  {view.experimental && (
+                    <span className="rounded bg-amber-500/20 px-1 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                      Beta
+                    </span>
+                  )}
+                </span>
               </TooltipContent>
             </Tooltip>
           )

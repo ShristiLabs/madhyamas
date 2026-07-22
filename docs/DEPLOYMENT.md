@@ -251,10 +251,8 @@ services:
       - "3001:3001"
     volumes:
       - madhyamas-data:/data
-      - ./config.toml:/etc/madhyamas/config.toml:ro
     environment:
       - RUST_LOG=info
-      - MADHYAMAS_CONFIG=/etc/madhyamas/config.toml
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
       interval: 30s
@@ -686,7 +684,6 @@ export RUST_LOG=info
 export RUST_BACKTRACE=1
 
 # Custom config path
-export MADHYAMAS_CONFIG=/etc/madhyamas/config.toml
 
 # Performance tuning
 export TOKIO_WORKER_THREADS=4

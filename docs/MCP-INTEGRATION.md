@@ -84,7 +84,7 @@ Edit your `mcp_config.json` file and add the Madhyamas server:
 {
   "mcpServers": {
     "madhyamas": {
-      "command": "/Users/harikiranbavineni/madhyamas/target/release/madhyamas",
+      "command": "/path/to/madhyamas/target/release/madhyamas",
       "args": ["mcp"],
       "env": {
         "MADHYAMAS_API_URL": "http://localhost:3001"

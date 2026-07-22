@@ -1,10 +1,13 @@
 //! URL and header rewriting rules
 
+use super::regex_cache;
 use super::MatchCondition;
+use crate::persistence::InterceptStore;
 use crate::traffic::{RequestData, ResponseData};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Direction for rewrite rules
@@ -98,18 +101,32 @@ pub enum RewriteAction {
 pub struct RewriteManager {
     /// Active rewrite rules
     rules: RwLock<Vec<RewriteRule>>,
+    /// Optional SQLite persistence backend
+    store: Option<Arc<InterceptStore>>,
 }
 
 impl RewriteManager {
     pub fn new() -> Self {
         Self {
             rules: RwLock::new(Vec::new()),
+            store: None,
         }
+    }
+
+    /// Attach a SQLite persistence backend.
+    pub fn with_store(mut self, store: Arc<InterceptStore>) -> Self {
+        self.store = Some(store);
+        self
     }
 
     /// Add a rewrite rule
     pub fn add_rule(&self, rule: RewriteRule) -> String {
         let id = rule.id.clone();
+        if let Some(store) = &self.store {
+            if let Err(e) = store.save_rewrite_rule(&rule) {
+                tracing::warn!("Failed to persist rewrite rule: {}", e);
+            }
+        }
         self.rules.write().push(rule);
         id
     }
@@ -119,6 +136,11 @@ impl RewriteManager {
         let mut rules = self.rules.write();
         if let Some(pos) = rules.iter().position(|r| r.id == id) {
             rules.remove(pos);
+            if let Some(store) = &self.store {
+                if let Err(e) = store.delete_rewrite_rule(id) {
+                    tracing::warn!("Failed to delete rewrite rule from store: {}", e);
+                }
+            }
             true
         } else {
             false
@@ -226,9 +248,9 @@ impl RewriteManager {
                 pattern,
                 replacement,
             } => {
-                if let Ok(re) = regex::Regex::new(pattern) {
-                    let new_url = re.replace_all(&request.url, replacement.as_str());
-                    request.url = new_url.to_string();
+                let new_url = regex_cache::replace_all(pattern, &request.url, replacement);
+                if new_url != request.url {
+                    request.url = new_url;
 
                     // Update host and path
                     if let Ok(uri) = request.url.parse::<hyper::Uri>() {
@@ -253,9 +275,9 @@ impl RewriteManager {
                 replacement,
             } => {
                 if let Some(value) = request.headers.get(name) {
-                    if let Ok(re) = regex::Regex::new(pattern) {
-                        let new_value = re.replace_all(value, replacement.as_str());
-                        request.headers.insert(name.clone(), new_value.to_string());
+                    let new_value = regex_cache::replace_all(pattern, value, replacement);
+                    if new_value != *value {
+                        request.headers.insert(name.clone(), new_value);
                     }
                 }
             }
@@ -265,9 +287,9 @@ impl RewriteManager {
             } => {
                 if let Some(body) = &request.body {
                     if let Ok(body_str) = std::str::from_utf8(body) {
-                        if let Ok(re) = regex::Regex::new(pattern) {
-                            let new_body = re.replace_all(body_str, replacement.as_str());
-                            request.body = Some(new_body.as_bytes().to_vec());
+                        let new_body = regex_cache::replace_all(pattern, body_str, replacement);
+                        if new_body != body_str {
+                            request.body = Some(new_body.into_bytes());
                         }
                     }
                 }
@@ -276,15 +298,13 @@ impl RewriteManager {
                 // Add or replace query param
                 let separator = if request.path.contains('?') { "&" } else { "?" };
                 // Remove existing param if present
-                if let Ok(re) = regex::Regex::new(&format!(r"[?&]{}=[^&]*", regex::escape(name))) {
-                    request.path = re.replace(&request.path, "").to_string();
-                }
-                request.path = format!("{}{}{}={}", request.path, separator, name, value);
+                let remove_pattern = format!(r"[?&]{}=[^&]*", regex::escape(name));
+                let cleaned = regex_cache::replace_all(&remove_pattern, &request.path, "");
+                request.path = format!("{}{}{}={}", cleaned, separator, name, value);
             }
             RewriteAction::RemoveQueryParam { name } => {
-                if let Ok(re) = regex::Regex::new(&format!(r"[?&]{}=[^&]*", regex::escape(name))) {
-                    request.path = re.replace(&request.path, "").to_string();
-                }
+                let remove_pattern = format!(r"[?&]{}=[^&]*", regex::escape(name));
+                request.path = regex_cache::replace_all(&remove_pattern, &request.path, "");
             }
             RewriteAction::MapToFile { .. } => {
                 // Not applicable to requests
@@ -317,9 +337,9 @@ impl RewriteManager {
                 replacement,
             } => {
                 if let Some(value) = response.headers.get(name) {
-                    if let Ok(re) = regex::Regex::new(pattern) {
-                        let new_value = re.replace_all(value, replacement.as_str());
-                        response.headers.insert(name.clone(), new_value.to_string());
+                    let new_value = regex_cache::replace_all(pattern, value, replacement);
+                    if new_value != *value {
+                        response.headers.insert(name.clone(), new_value);
                     }
                 }
             }
@@ -329,9 +349,9 @@ impl RewriteManager {
             } => {
                 if let Some(body) = &response.body {
                     if let Ok(body_str) = std::str::from_utf8(body) {
-                        if let Ok(re) = regex::Regex::new(pattern) {
-                            let new_body = re.replace_all(body_str, replacement.as_str());
-                            response.body = Some(new_body.as_bytes().to_vec());
+                        let new_body = regex_cache::replace_all(pattern, body_str, replacement);
+                        if new_body != body_str {
+                            response.body = Some(new_body.into_bytes());
                         }
                     }
                 }
@@ -370,6 +390,38 @@ impl RewriteManager {
 impl Default for RewriteManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl crate::persistence::Persistable for RewriteManager {
+    fn save(&self) -> crate::Result<()> {
+        if let Some(store) = &self.store {
+            let rules = self.rules.read();
+            for rule in rules.iter() {
+                store.save_rewrite_rule(rule)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn load(&self) -> crate::Result<()> {
+        if let Some(store) = &self.store {
+            let loaded = store.load_rewrite_rules()?;
+            *self.rules.write() = loaded;
+        }
+        Ok(())
+    }
+
+    fn clear(&self) -> crate::Result<()> {
+        if let Some(store) = &self.store {
+            store.clear_rewrite_rules()?;
+        }
+        self.rules.write().clear();
+        Ok(())
+    }
+
+    fn size(&self) -> usize {
+        self.rules.read().len()
     }
 }
 

@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-
-const API_BASE = '/api';
+import { apiGet, apiPost, apiPostVoid, apiPut, apiDeleteVoid } from './client';
 
 // ==================== gRPC Types ====================
 
@@ -124,9 +123,7 @@ export function useGrpcConnections() {
   return useQuery({
     queryKey: ['grpc-connections'],
     queryFn: async (): Promise<GrpcConnection[]> => {
-      const res = await fetch(`${API_BASE}/grpc/connections`);
-      if (!res.ok) throw new Error('Failed to fetch gRPC connections');
-      return res.json();
+      return apiGet<GrpcConnection[]>('/grpc/connections');
     },
   });
 }
@@ -135,9 +132,7 @@ export function useGrpcStreams() {
   return useQuery({
     queryKey: ['grpc-streams'],
     queryFn: async (): Promise<GrpcStream[]> => {
-      const res = await fetch(`${API_BASE}/grpc/streams`);
-      if (!res.ok) throw new Error('Failed to fetch gRPC streams');
-      return res.json();
+      return apiGet<GrpcStream[]>('/grpc/streams');
     },
   });
 }
@@ -156,9 +151,7 @@ export function useGrpcFrames(filter?: GrpcFilter) {
       if (filter?.offset) params.append('offset', filter.offset.toString());
       if (filter?.status_code) params.append('status_code', filter.status_code.toString());
 
-      const res = await fetch(`${API_BASE}/grpc/frames?${params}`);
-      if (!res.ok) throw new Error('Failed to fetch gRPC frames');
-      return res.json();
+      return apiGet<GrpcFrame[]>(`/grpc/frames?${params}`);
     },
   });
 }
@@ -167,9 +160,7 @@ export function useGrpcStats() {
   return useQuery({
     queryKey: ['grpc-stats'],
     queryFn: async (): Promise<GrpcStats> => {
-      const res = await fetch(`${API_BASE}/grpc/stats`);
-      if (!res.ok) throw new Error('Failed to fetch gRPC stats');
-      return res.json();
+      return apiGet<GrpcStats>('/grpc/stats');
     },
   });
 }
@@ -178,8 +169,7 @@ export function useClearGrpcFrames() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (): Promise<void> => {
-      const res = await fetch(`${API_BASE}/grpc/clear`, { method: 'POST' });
-      if (!res.ok) throw new Error('Failed to clear gRPC frames');
+      return apiPostVoid('/grpc/clear');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['grpc-frames', 'grpc-stats'] });
@@ -193,9 +183,7 @@ export function useScripts() {
   return useQuery({
     queryKey: ['scripts'],
     queryFn: async (): Promise<Script[]> => {
-      const res = await fetch(`${API_BASE}/scripts`);
-      if (!res.ok) throw new Error('Failed to fetch scripts');
-      return res.json();
+      return apiGet<Script[]>('/scripts');
     },
   });
 }
@@ -204,9 +192,7 @@ export function useScriptTemplates() {
   return useQuery({
     queryKey: ['script-templates'],
     queryFn: async (): Promise<ScriptTemplate[]> => {
-      const res = await fetch(`${API_BASE}/scripts/templates`);
-      if (!res.ok) throw new Error('Failed to fetch script templates');
-      return res.json();
+      return apiGet<ScriptTemplate[]>('/scripts/templates');
     },
   });
 }
@@ -215,13 +201,7 @@ export function useCreateScript() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (script: Omit<Script, 'id' | 'created_at' | 'updated_at'>): Promise<{ id: string; script: Script }> => {
-      const res = await fetch(`${API_BASE}/scripts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(script),
-      });
-      if (!res.ok) throw new Error('Failed to create script');
-      return res.json();
+      return apiPost<{ id: string; script: Script }>('/scripts', script);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scripts'] });
@@ -233,12 +213,7 @@ export function useUpdateScript() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, source }: { id: string; source: string }): Promise<void> => {
-      const res = await fetch(`${API_BASE}/scripts/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source }),
-      });
-      if (!res.ok) throw new Error('Failed to update script');
+      return apiPut<void>(`/scripts/${id}`, { source });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scripts'] });
@@ -250,10 +225,7 @@ export function useDeleteScript() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const res = await fetch(`${API_BASE}/scripts/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('Failed to delete script');
+      return apiDeleteVoid(`/scripts/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scripts'] });
@@ -265,12 +237,7 @@ export function useToggleScript() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }): Promise<void> => {
-      const res = await fetch(`${API_BASE}/scripts/${id}/toggle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
-      if (!res.ok) throw new Error('Failed to toggle script');
+      return apiPostVoid(`/scripts/${id}/toggle`, { enabled });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scripts'] });
@@ -284,9 +251,7 @@ export function usePlugins() {
   return useQuery({
     queryKey: ['plugins'],
     queryFn: async (): Promise<Plugin[]> => {
-      const res = await fetch(`${API_BASE}/plugins`);
-      if (!res.ok) throw new Error('Failed to fetch plugins');
-      return res.json();
+      return apiGet<Plugin[]>('/plugins');
     },
   });
 }
@@ -295,9 +260,7 @@ export function usePlugin(id: string) {
   return useQuery({
     queryKey: ['plugin', id],
     queryFn: async (): Promise<Plugin> => {
-      const res = await fetch(`${API_BASE}/plugins/${id}`);
-      if (!res.ok) throw new Error('Failed to fetch plugin');
-      return res.json();
+      return apiGet<Plugin>(`/plugins/${id}`);
     },
     enabled: !!id,
   });
@@ -307,9 +270,7 @@ export function usePluginStats(id: string) {
   return useQuery({
     queryKey: ['plugin-stats', id],
     queryFn: async (): Promise<PluginStats> => {
-      const res = await fetch(`${API_BASE}/plugins/${id}/stats`);
-      if (!res.ok) throw new Error('Failed to fetch plugin stats');
-      return res.json();
+      return apiGet<PluginStats>(`/plugins/${id}/stats`);
     },
     enabled: !!id,
   });
@@ -319,8 +280,7 @@ export function useEnablePlugin() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const res = await fetch(`${API_BASE}/plugins/${id}/enable`, { method: 'POST' });
-      if (!res.ok) throw new Error('Failed to enable plugin');
+      return apiPostVoid(`/plugins/${id}/enable`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['plugins'] });
@@ -332,8 +292,7 @@ export function useDisablePlugin() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const res = await fetch(`${API_BASE}/plugins/${id}/disable`, { method: 'POST' });
-      if (!res.ok) throw new Error('Failed to disable plugin');
+      return apiPostVoid(`/plugins/${id}/disable`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['plugins'] });
@@ -345,8 +304,7 @@ export function useReloadPlugins() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (): Promise<void> => {
-      const res = await fetch(`${API_BASE}/plugins/reload`, { method: 'POST' });
-      if (!res.ok) throw new Error('Failed to reload plugins');
+      return apiPostVoid('/plugins/reload');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['plugins'] });

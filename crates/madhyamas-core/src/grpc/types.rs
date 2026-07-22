@@ -190,6 +190,42 @@ impl GrpcStream {
             status_message: None,
         }
     }
+
+    /// Detect the gRPC message type from the final frame counts.
+    ///
+    /// This should be called once the stream is closed and all frame counts
+    /// are final. The detection is based on the number of request frames
+    /// (`frames_sent`) and response frames (`frames_received`):
+    ///
+    /// - **Unary**: exactly one request frame and at most one response frame.
+    /// - **ServerStream**: one request frame and more than one response frame.
+    /// - **ClientStream**: more than one request frame and at most one
+    ///   response frame.
+    /// - **BidiStream**: more than one request frame and more than one
+    ///   response frame.
+    ///
+    /// HTTP/2 header hints (such as `content-type` starting with
+    /// `application/grpc`) are used only to confirm that the stream is gRPC;
+    /// frame counting is the primary detection mechanism.
+    pub fn detect_message_type(&self) -> GrpcMessageType {
+        // Header hint: if the request metadata does not look like gRPC, we
+        // cannot reliably classify the stream and fall back to Unary.
+        if let Some(content_type) = self.request_metadata.get("content-type") {
+            if !content_type.starts_with("application/grpc") {
+                return GrpcMessageType::Unary;
+            }
+        }
+
+        let multi_request = self.frames_sent > 1;
+        let multi_response = self.frames_received > 1;
+
+        match (multi_request, multi_response) {
+            (false, false) => GrpcMessageType::Unary,
+            (false, true) => GrpcMessageType::ServerStream,
+            (true, false) => GrpcMessageType::ClientStream,
+            (true, true) => GrpcMessageType::BidiStream,
+        }
+    }
 }
 
 /// gRPC stream state

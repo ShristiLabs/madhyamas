@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { CheckCircle, ChevronRight, ChevronLeft, Download, Lightbulb, X } from 'lucide-react'
+import { apiGet, apiPostVoid } from '@/lib/api/client'
 
 interface OnboardingStep {
   id: string
@@ -29,19 +30,14 @@ export function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
 
   useEffect(() => {
     if (isOpen) {
-      fetch('/api/onboarding')
-        .then(res => res.json())
+      apiGet<OnboardingStatus>('/onboarding')
         .then(setStatus)
         .catch(console.error)
     }
   }, [isOpen])
 
   const completeStep = async (stepId: string) => {
-    await fetch('/api/onboarding/complete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ step_id: stepId })
-    })
+    await apiPostVoid('/onboarding/complete', { step_id: stepId })
 
     if (status) {
       setStatus({
@@ -54,7 +50,7 @@ export function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
   }
 
   const skipOnboarding = async () => {
-    await fetch('/api/onboarding/skip', { method: 'POST' })
+    await apiPostVoid('/onboarding/skip')
     onClose()
   }
 

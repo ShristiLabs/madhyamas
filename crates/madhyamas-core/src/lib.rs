@@ -1,14 +1,20 @@
 //! Madhyamas Core - HTTP/HTTPS debugging proxy engine
 
 pub mod config;
+#[cfg(feature = "enterprise")]
 pub mod enterprise;
+pub mod error;
+pub mod extension;
+#[cfg(feature = "grpc")]
 pub mod grpc;
 pub mod intercept;
 pub mod performance;
 pub mod persistence;
+#[cfg(feature = "plugins")]
 pub mod plugin;
 pub mod proxy;
 pub mod replay;
+#[cfg(feature = "scripting")]
 pub mod scripting;
 pub mod session;
 pub mod tls;
@@ -32,25 +38,39 @@ pub use tls::CertificateManager;
 pub use proxy::ProxyEngine;
 
 // Re-exports from websocket
-pub use websocket::{WsConnection, WsDirection, WsFilter, WsManager, WsMessage, WsMessageType};
+pub use websocket::{
+    WsConnection, WsDirection, WsFilter, WsFragmentReassembler, WsManager, WsMessage, WsMessageType,
+};
 
 // Re-exports from intercept
 pub use intercept::{
     BreakpointAction, BreakpointDecision, BreakpointManager, BreakpointRule, ConditionalResponse,
-    InterceptDecision, InterceptDirection, MatchCondition, MockCollection, MockExpiration,
-    MockHitRecord, MockHitStats, MockManager, MockPreviewResult, MockResponse, MockRule,
-    MockRuleVersion, MockTemplates, MockTestResult, PausedTraffic, ProbabilisticResponse,
-    RequestCondition, ResponseConfig, RewriteAction, RewriteDirection, RewriteManager, RewriteRule,
-    RewriteTemplates, ThrottleManager, ThrottleProfile,
+    InterceptAction, InterceptDecision, InterceptDirection, InterceptHandler, MatchCondition,
+    MockCollection, MockExpiration, MockHitRecord, MockHitStats, MockManager, MockPreviewResult,
+    MockResponse, MockRule, MockRuleVersion, MockTemplates, MockTestResult, PausedTraffic,
+    ProbabilisticResponse, RequestCondition, ResponseConfig, RewriteAction, RewriteDirection,
+    RewriteManager, RewriteRule, RewriteTemplates, ThrottleManager, ThrottleProfile,
 };
 
 // Re-exports from persistence
-pub use persistence::InterceptStore;
+pub use persistence::{InterceptStore, Persistable};
+
+// Re-exports from extension
+pub use extension::{
+    Extension, ExtensionContext, ExtensionManager, ExtensionRequest, ExtensionResponse,
+    ExtensionResult,
+};
+#[cfg(feature = "scripting")]
+pub use extension::ScriptExtension;
+#[cfg(feature = "plugins")]
+pub use extension::PluginExtension;
 
 // Re-exports from grpc
+#[cfg(feature = "grpc")]
 pub use grpc::{GrpcConnection, GrpcDirection, GrpcFilter, GrpcFrame, GrpcManager, GrpcStream};
 
 // Re-exports from scripting
+#[cfg(feature = "scripting")]
 pub use scripting::{Script, ScriptConfig, ScriptRuntime, ScriptTemplates};
 
 // Re-exports from session
@@ -60,7 +80,15 @@ pub use session::{SessionExport, SessionManager, SessionMetadata, SessionPreset,
 pub use replay::{ReplayManager, ReplayResult, RequestModifications, SavedRequest};
 
 // Re-exports from plugin
+#[cfg(feature = "plugins")]
 pub use plugin::PluginManager;
+
+// Re-exports from performance
+pub use performance::{
+    Alert, AlertConfig, AlertLevel, GarbageCollectionConfig, HealthCheck, HealthStatus,
+    MemoryManager, MemoryPressure, MemoryStats, Metrics, MetricsCollector, PerformanceMonitor,
+    PerformanceStats,
+};
 
 /// Result type
 pub type Result<T> = std::result::Result<T, Error>;
@@ -84,4 +112,7 @@ pub enum Error {
     Config(String),
     #[error("Channel error: {0}")]
     Channel(String),
+    #[cfg(feature = "enterprise")]
+    #[error("Enterprise error: {0}")]
+    Enterprise(#[from] enterprise::EnterpriseError),
 }

@@ -156,7 +156,7 @@ if ps -p $PID > /dev/null; then
     echo "Services:"
     echo "  • Web UI/API:    http://localhost:$API_PORT"
     echo "  • HTTP Proxy:    http://localhost:$PROXY_PORT"
-    echo "  • HTTPS Proxy:   https://localhost:8443"
+    echo "  • HTTPS Proxy:   http://localhost:$PROXY_PORT (HTTP and HTTPS on same port)"
     echo ""
     echo "Process:"
     echo "  • PID:           $PID"

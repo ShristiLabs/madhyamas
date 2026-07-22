@@ -27,7 +27,8 @@ hyper = { version = "1.2", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "cors", "trace", "set-header"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "trace", "set-header", "limit"] }
+tower_governor = "0.8"
 
 # TLS
 rustls = { version = "0.23", default-features = false, features = [
@@ -52,12 +53,12 @@ clap = { version = "4.5", features = ["derive", "env"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Configuration
-config = "0.15"
-
 # Error handling
 thiserror = "2.0"
 anyhow = "1.0"
+
+# Validation
+validator = { version = "0.20", features = ["derive"] }
 
 # Utilities
 uuid = { version = "1.7", features = ["v4", "serde"] }
@@ -73,16 +74,21 @@ regex = "1.10"
 rand = "0.9"
 sha1 = "0.10"
 url = "2.5"
+jsonwebtoken = "9"
 jsonpath_lib = "0.3"
 time = "0.3.47"
 toml = "1.0"
 urlencoding = "2.1"
 dirs = "5.0"
-reqwest = { version = "0.13", features = ["json"] }
+semver = "1.0"
+reqwest = { version = "0.13", features = ["json", "gzip", "deflate", "brotli"] }
 
 # Decompression (for decoding gzip/deflate/brotli response bodies)
 flate2 = "1.0"
 brotli = "6.0"
+
+# System information (memory/CPU usage for performance monitoring)
+sysinfo = "0.30"
 
 # Internal crates
 madhyamas-core = { path = "crates/madhyamas-core" }

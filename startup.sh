@@ -89,30 +89,9 @@ if [ "$CLEAN_BUILD" = true ]; then
     echo -e "${GREEN}✓ Cleanup complete${NC}"
 fi
 
-# Build web assets
-if [ ! -d "web/dist" ] || [ ! -f "web/dist/index.html" ] || [ "$CLEAN_BUILD" = true ]; then
-    echo -e "${YELLOW}Building frontend assets...${NC}"
-    if [ -d "web" ]; then
-        cd web
-        if [ -f "package.json" ]; then
-            # Install dependencies (fresh install if clean build)
-            if [ ! -d "node_modules" ] || [ "$CLEAN_BUILD" = true ]; then
-                echo "  • Installing npm dependencies..."
-                npm install
-            fi
-            # Build web assets
-            echo "  • Building web assets..."
-            npm run build
-            echo -e "${GREEN}✓ Frontend build complete${NC}"
-        fi
-        cd ..
-    else
-        echo -e "${RED}Error: web directory not found${NC}"
-        exit 1
-    fi
-else
-    echo -e "${GREEN}✓ Web assets already built (use --clean to rebuild)${NC}"
-fi
+# Note: Frontend build is handled by Docker (Dockerfile frontend-builder stage).
+# No local build needed — Docker builds web assets and embeds them into the binary.
+echo -e "${GREEN}✓ Frontend build will be handled by Docker${NC}"
 
 # Create certs directory if it doesn't exist
 mkdir -p certs
@@ -181,7 +160,7 @@ if docker compose ps | grep -q "Up"; then
     echo "Services:"
     echo "  • Web UI/API:    http://localhost:3001"
     echo "  • HTTP Proxy:    http://localhost:8888"
-    echo "  • HTTPS Proxy:   https://localhost:8443"
+    echo "  • HTTPS Proxy:   http://localhost:8888 (HTTP and HTTPS on same port)"
     echo ""
     if [[ -n "$HOST_IP" ]]; then
         echo -e "${BLUE}Mobile Device Setup:${NC}"

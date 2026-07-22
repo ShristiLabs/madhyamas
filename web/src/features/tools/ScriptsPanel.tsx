@@ -1,4 +1,8 @@
 import { useState } from 'react';
+import Editor from 'react-simple-code-editor';
+import Prism from 'prismjs';
+import 'prismjs/components/prism-javascript';
+import 'prismjs/themes/prism-tomorrow.css';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -108,11 +112,23 @@ export function ScriptsPanel() {
                     </Button>
                   </div>
                 </div>
-                <textarea
-                  className="w-full h-48 p-2 text-xs font-mono bg-muted rounded border resize-none"
-                  value={editingSource}
-                  onChange={(e) => setEditingSource(e.target.value)}
-                />
+                <div className="w-full h-48 rounded border bg-muted overflow-auto">
+                  <Editor
+                    value={editingSource}
+                    onValueChange={(code) => setEditingSource(code)}
+                    highlight={(code) =>
+                      Prism.highlight(code, Prism.languages.javascript, 'javascript')
+                    }
+                    padding={8}
+                    className="w-full min-h-full text-xs font-mono"
+                    textareaClassName="outline-none"
+                    style={{
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                      fontSize: 12,
+                      minHeight: '100%',
+                    }}
+                  />
+                </div>
               </div>
             ) : filteredScripts.length === 0 ? (
               <div className="text-xs text-muted-foreground text-center py-4">

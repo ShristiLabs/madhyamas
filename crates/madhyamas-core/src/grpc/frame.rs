@@ -38,7 +38,10 @@ impl GrpcFrameHeader {
     }
 }
 
-/// Parse a complete gRPC frame from bytes
+/// Parse a complete gRPC frame from bytes.
+///
+/// If the frame is compressed (gzip), the payload is automatically
+/// decompressed before being stored in the `GrpcFrame`.
 pub fn parse_frame(
     data: &[u8],
     stream_id: &str,
@@ -56,15 +59,34 @@ pub fn parse_frame(
     }
 
     let frame_data = &data[GrpcFrameHeader::SIZE..total_len];
+
+    // Decompress gzip-compressed frames
+    let payload = if header.compressed {
+        decompress_gzip(frame_data)?
+    } else {
+        frame_data.to_vec()
+    };
+
     let frame = GrpcFrame::new(
         stream_id,
         connection_id,
         direction,
-        frame_data.to_vec(),
+        payload,
         header.compressed,
     );
 
     Ok(Some((frame, total_len)))
+}
+
+/// Decompress a gzip-compressed gRPC message payload.
+fn decompress_gzip(data: &[u8]) -> crate::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut decoder = flate2::read::GzDecoder::new(data);
+    let mut out = Vec::with_capacity(data.len() * 2);
+    decoder
+        .read_to_end(&mut out)
+        .map_err(|e| crate::Error::Proxy(format!("gRPC gzip decompression failed: {}", e)))?;
+    Ok(out)
 }
 
 /// Build a gRPC frame from data

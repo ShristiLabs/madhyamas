@@ -37,21 +37,32 @@ cargo build --release
 4. Install the root CA certificate when prompted
 
 ## Configuration
-Configuration is stored in `~/.madhyamas/config.toml`:
-```tom
-[general]
-api_port = 3001
-proxy_port = 8888
-log_level = "info"
 
-[tls]
-cert_dir = "~/.madhyamas/certs"
-auto_install_cert = true
+> **Note:** Configuration file (`config.toml`) support is not yet implemented. Madhyamas is configured via CLI flags and environment variables.
 
-[storage]
-data_dir = "~/.madhyamas/data"
-max_entries = 100000
+### CLI Flags
+
 ```
+madhyamas [OPTIONS]
+
+Options:
+  -p, --proxy-port <PORT>     Port for the proxy server [default: 8888]
+  -a, --api-port <PORT>       Port for the web UI API [default: 3001]
+  -H, --host <HOST>           Host to bind to [default: 127.0.0.1]
+  -v, --verbose               Enable verbose logging
+      --no-https              Disable HTTPS interception
+  -h, --help                  Print help
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUST_LOG` | `info` | Logging level |
+| `MADHYAMAS_HOST` | `127.0.0.1` | Bind host |
+| `MADHYAMAS_API_PORT` | `3001` | API/Web UI port |
+| `MADHYAMAS_PROXY_PORT` | `8888` | Proxy port |
+| `MADHYAMAS_PUBLIC_IP` | auto-detected | Public IP for display |
 
 ## Basic Usage
 ### View Traffic

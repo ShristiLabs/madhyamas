@@ -42,6 +42,32 @@ pub enum McpError {
     Parse(String),
 }
 
+impl madhyamas_core::error::AppError for McpError {
+    fn error_code(&self) -> &str {
+        match self {
+            McpError::JsonRpc(_) => "MCP_JSON_RPC",
+            McpError::Http(_) => "MCP_HTTP",
+            McpError::ToolExecution(_) => "MCP_TOOL_EXECUTION",
+            McpError::InvalidParams(_) => "MCP_INVALID_PARAMS",
+            McpError::NotFound(_) => "MCP_NOT_FOUND",
+            McpError::Parse(_) => "MCP_PARSE",
+        }
+    }
+
+    fn is_retryable(&self) -> bool {
+        match self {
+            // Transient transport failures may succeed on retry.
+            McpError::Http(_) | McpError::JsonRpc(_) => true,
+            // Invalid input, missing resources, parse failures, and tool
+            // execution errors are unlikely to resolve without changes.
+            McpError::ToolExecution(_)
+            | McpError::InvalidParams(_)
+            | McpError::NotFound(_)
+            | McpError::Parse(_) => false,
+        }
+    }
+}
+
 // ============ JSON-RPC 2.0 Types ============
 
 /// JSON-RPC request

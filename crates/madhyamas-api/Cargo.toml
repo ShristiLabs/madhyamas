@@ -4,6 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["grpc", "scripting", "plugins", "enterprise"]
+## gRPC API routes and handlers
+grpc = ["madhyamas-core/grpc"]
+## Scripting API routes and handlers
+scripting = ["madhyamas-core/scripting"]
+## Plugin API routes and handlers
+plugins = ["madhyamas-core/plugins"]
+## Enterprise API routes and handlers (auth, RBAC, audit, onboarding)
+enterprise = ["madhyamas-core/enterprise"]
+
 [dependencies]
 madhyamas-core.workspace = true
 tokio.workspace = true
@@ -13,6 +24,7 @@ hyper.workspace = true
 hyper-util.workspace = true
 tower.workspace = true
 tower-http.workspace = true
+tower_governor.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
@@ -24,3 +36,6 @@ bytes.workspace = true
 futures.workspace = true
 rust-embed.workspace = true
 mime_guess.workspace = true
+url.workspace = true
+parking_lot.workspace = true
+validator.workspace = true
