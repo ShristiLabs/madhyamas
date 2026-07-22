@@ -13,7 +13,7 @@ scripting = []
 ## Plugin system for extending Madhyamas with custom code
 plugins = []
 ## Enterprise features: auth, RBAC, audit logs, onboarding
-enterprise = []
+enterprise = ["dep:jsonwebtoken"]
 
 [dependencies]
 tokio.workspace = true
@@ -42,7 +42,7 @@ regex.workspace = true
 rand.workspace = true
 sha1.workspace = true
 url.workspace = true
-jsonwebtoken.workspace = true
+jsonwebtoken = { workspace = true, optional = true }
 jsonpath_lib.workspace = true
 reqwest.workspace = true
 toml.workspace = true

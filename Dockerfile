@@ -41,8 +41,8 @@ RUN echo "fn main() {}" > crates/madhyamas-mcp/src/main.rs
 # Copy web dist for rust-embed (needed at compile time)
 COPY --from=frontend-builder /app/web/dist ./web/dist
 
-# Build dependencies
-RUN cargo build --release
+# Build dependencies (only the madhyamas package, not all crates)
+RUN cargo build --release -p madhyamas --locked
 
 # Copy actual source files
 COPY crates/madhyamas/src ./crates/madhyamas/src
@@ -55,7 +55,7 @@ COPY crates/madhyamas-mcp/src ./crates/madhyamas-mcp/src
 RUN find crates -name "*.rs" -exec touch {} \;
 
 # Build the unified binary (includes proxy + web UI + MCP + CLI)
-RUN cargo build --release -p madhyamas
+RUN cargo build --release -p madhyamas --locked
 
 # Runtime stage
 FROM alpine:3.19

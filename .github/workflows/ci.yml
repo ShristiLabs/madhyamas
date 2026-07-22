@@ -11,10 +11,54 @@ env:
 
 jobs:
   # =============================================================================
+  # Build frontend once — shared across all downstream jobs via artifact
+  # =============================================================================
+  build-frontend:
+    name: Build frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Type check (tsc --noEmit)
+        working-directory: web
+        run: npm run typecheck
+
+      - name: Lint
+        working-directory: web
+        run: npm run lint
+
+      - name: Build frontend (full — with tsc type-check)
+        working-directory: web
+        run: npm run build
+
+      - name: Test
+        working-directory: web
+        run: npm test -- --passWithNoTests || echo "Tests passed or no tests"
+
+      - name: Upload frontend build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+          retention-days: 3
+
+  # =============================================================================
   # Rust checks: format, clippy, build, test on multiple OS/toolchains
   # =============================================================================
   rust-checks:
     name: Rust ${{ matrix.rust }} on ${{ matrix.os }}
+    needs: build-frontend
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -33,29 +77,16 @@ jobs:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
 
-      - name: Cache cargo registry
-        uses: actions/cache@v5
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          key: ${{ matrix.os }}-${{ matrix.rust }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
         with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build frontend (required for rust-embed)
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
+          name: frontend-dist
+          path: web/dist/
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -63,56 +94,18 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Build
-        run: cargo build --verbose
+      - name: Build (ci-release profile)
+        run: cargo build --verbose --profile ci-release
+
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
 
       - name: Run tests
         env:
           RUST_BACKTRACE: 1
-        run: cargo test --verbose
-
-  # =============================================================================
-  # Frontend checks
-  # =============================================================================
-  frontend-checks:
-    name: Frontend Build & Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install dependencies
-        working-directory: web
-        run: npm ci
-
-      - name: Type check
-        working-directory: web
-        run: npm run typecheck || npm run type-check || echo "No typecheck script"
-
-      - name: Lint
-        working-directory: web
-        run: npm run lint
-
-      - name: Build
-        working-directory: web
-        run: npm run build
-
-      - name: Test
-        working-directory: web
-        run: npm test -- --passWithNoTests || echo "Tests passed or no tests"
-
-      - name: Upload frontend build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-dist
-          path: web/dist/
-          retention-days: 3
+        run: cargo nextest run --profile ci-release --verbose
 
   # =============================================================================
   # Security audit
@@ -170,10 +163,11 @@ jobs:
   # =============================================================================
   # Cross-compile builds for all platforms
   # Single unified binary: proxy + web UI (embedded) + MCP + CLI
+  # Uses ci-release profile (thin LTO, parallel codegen) for faster builds.
   # =============================================================================
   build-binaries:
     name: Build madhyamas for ${{ matrix.target }}
-    needs: [rust-checks, frontend-checks]
+    needs: [rust-checks, build-frontend]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -241,37 +235,24 @@ jobs:
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           fi
 
-      - name: Cache cargo registry
-        uses: actions/cache@v5
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.target }}-cargo-
+          key: ${{ matrix.target }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
         with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build frontend
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
+          name: frontend-dist
+          path: web/dist/
 
       - name: Determine short SHA
         id: sha
         shell: bash
         run: echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
 
-      - name: Build binary (release)
-        run: cargo build --release --target ${{ matrix.target }} -p madhyamas
+      - name: Build binary (ci-release profile)
+        run: cargo build --profile ci-release --target ${{ matrix.target }} -p madhyamas
 
       - name: Package (Unix)
         if: matrix.os != 'windows-latest'
@@ -279,7 +260,7 @@ jobs:
         run: |
           ARTIFACT_NAME="madhyamas-${{ steps.sha.outputs.SHORT_SHA }}-${{ matrix.target }}"
           mkdir -p dist/$ARTIFACT_NAME
-          cp target/${{ matrix.target }}/release/madhyamas dist/$ARTIFACT_NAME/
+          cp target/${{ matrix.target }}/ci-release/madhyamas dist/$ARTIFACT_NAME/
           cd dist
           tar -czvf $ARTIFACT_NAME.tar.gz $ARTIFACT_NAME
           if command -v sha256sum &> /dev/null; then
@@ -294,7 +275,7 @@ jobs:
         run: |
           $ARTIFACT_NAME = "madhyamas-${{ steps.sha.outputs.SHORT_SHA }}-${{ matrix.target }}"
           New-Item -ItemType Directory -Path "dist\$ARTIFACT_NAME" -Force
-          Copy-Item "target\${{ matrix.target }}\release\madhyamas.exe" "dist\$ARTIFACT_NAME\"
+          Copy-Item "target\${{ matrix.target }}\ci-release\madhyamas.exe" "dist\$ARTIFACT_NAME\"
           cd dist
           7z a "$ARTIFACT_NAME.zip" "$ARTIFACT_NAME"
           $hash = Get-FileHash "$ARTIFACT_NAME.zip" -Algorithm SHA256

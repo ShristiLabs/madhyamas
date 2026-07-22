@@ -104,3 +104,12 @@ mime_guess = "2"
 lto = true
 strip = true
 codegen-units = 1
+
+# Fast profile for CI snapshot builds — thin LTO + parallel codegen
+# cuts build time ~50% vs the release profile with minimal binary-size/runtime impact.
+# Tagged releases use the strict [profile.release] above.
+[profile.ci-release]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+opt-level = 2

@@ -53,3 +53,7 @@ docker-compose*.yml
 # Packaging
 packaging/
 scripts/
+
+# Static site & Android (not needed in Docker image)
+site/
+android/

@@ -10,10 +10,50 @@ env:
 
 jobs:
   # =============================================================================
+  # Build frontend once — shared across all downstream jobs via artifact
+  # =============================================================================
+  build-frontend:
+    name: Build frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Type check
+        working-directory: web
+        run: npm run typecheck
+
+      - name: Lint
+        working-directory: web
+        run: npm run lint
+
+      - name: Build frontend (full — with tsc type-check)
+        working-directory: web
+        run: npm run build
+
+      - name: Upload frontend build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+          retention-days: 3
+
+  # =============================================================================
   # Test gate — run tests before any build/publish steps
   # =============================================================================
   test-gate:
     name: Test Gate
+    needs: build-frontend
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,29 +63,16 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo registry
-        uses: actions/cache@v5
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-testgate-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-testgate-
+          key: test-gate
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
         with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build frontend (required for rust-embed)
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
+          name: frontend-dist
+          path: web/dist/
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -53,10 +80,15 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Run tests
         env:
           RUST_BACKTRACE: 1
-        run: cargo test --verbose
+        run: cargo nextest run --verbose
 
   # =============================================================================
   # Build the unified binary for all platforms
@@ -132,29 +164,16 @@ jobs:
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           fi
 
-      - name: Cache cargo registry
-        uses: actions/cache@v5
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.target }}-cargo-
+          key: ${{ matrix.target }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
         with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build frontend
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
+          name: frontend-dist
+          path: web/dist/
 
       - name: Extract version
         id: version
@@ -295,11 +314,11 @@ jobs:
         run: |
           dnf install -y rpm-build rpmdevtools rust cargo openssl-devel gcc nodejs npm
 
-      - name: Build frontend
+      - name: Build frontend (skip tsc — already checked in test-gate)
         working-directory: web
         run: |
           npm ci
-          npm run build
+          npm run build:fast
 
       - name: Setup RPM build environment
         run: rpmdev-setuptree
