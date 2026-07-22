@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="madhyamas_primary">#1a73e8</color>
+    <color name="madhyamas_primary_dark">#0d47a1</color>
+    <color name="madhyamas_accent">#4285f4</color>
+    <color name="madhyamas_bg">#fafafa</color>
+    <color name="madhyamas_surface">#ffffff</color>
+    <color name="madhyamas_error">#d32f2f</color>
+    <color name="madhyamas_success">#388e3c</color>
+    <color name="madhyamas_warning">#f57c00</color>
+</resources>

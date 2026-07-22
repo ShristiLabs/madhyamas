@@ -228,6 +228,29 @@ Madhyamas stores all runtime data in `~/.madhyamas/` by default:
 
 ### Mobile Device Setup (Android/iOS)
 
+#### Option A: Madhyamas VPN App (Android, no root)
+
+An Android companion app uses VpnService to transparently route traffic
+to the Madhyamas proxy — no manual proxy configuration needed.
+
+1. Build and install the companion app:
+   ```bash
+   cd android
+   echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
+   ./gradlew assembleDebug
+   adb install app/build/outputs/apk/debug/app-debug.apk
+   ```
+2. Open the app → Settings → set proxy host to your computer's IP
+3. Tap "Install CA Certificate" to install the Madhyamas CA
+4. Select apps to intercept (or leave on "All Apps")
+5. Tap "Start VPN" and approve the VPN connection dialog
+
+For apps with certificate pinning, see
+[docs/ANDROID_CERT_PINNING.md](docs/ANDROID_CERT_PINNING.md) for bypass
+guides (Frida, APK patching, Magisk modules, Flutter-specific approaches).
+
+#### Option B: Manual Proxy Configuration
+
 1. Connect your mobile device to the same network as the machine running Madhyamas
 2. Configure the device's Wi-Fi proxy to use the machine's IP and port 8888
 3. Install the CA certificate on the device:
@@ -422,6 +445,7 @@ madhyamas/
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── src/
+├── android/                   # Android VPN companion app (Kotlin)
 ├── docs/                      # Documentation
 ├── docker/                    # Docker setup
 └── README.md

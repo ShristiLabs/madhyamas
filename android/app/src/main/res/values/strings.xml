@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Madhyamas VPN</string>
+    <string name="vpn_channel_name">VPN Connection</string>
+    <string name="vpn_channel_desc">Madhyamas VPN service is active</string>
+    <string name="cert_channel_name">Certificate</string>
+    <string name="cert_channel_desc">CA certificate installation status</string>
+</resources>

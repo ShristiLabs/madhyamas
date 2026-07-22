@@ -1,0 +1,20 @@
+#!/bin/sh
+# Gradle wrapper bootstrap script
+# Downloads gradle-wrapper.jar if not present
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+JAR="$DIR/gradle/wrapper/gradle-wrapper.jar"
+
+if [ ! -f "$JAR" ]; then
+    echo "Downloading gradle-wrapper.jar..."
+    if command -v curl >/dev/null 2>&1; then
+        curl -sL "https://raw.githubusercontent.com/gradle/gradle/v8.9/gradle/wrapper/gradle-wrapper.jar" -o "$JAR"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "https://raw.githubusercontent.com/gradle/gradle/v8.9/gradle/wrapper/gradle-wrapper.jar" -O "$JAR"
+    else
+        echo "Error: curl or wget required to download gradle-wrapper.jar"
+        exit 1
+    fi
+fi
+
+exec java -classpath "$JAR" org.gradle.wrapper.GradleWrapperMain "$@"
