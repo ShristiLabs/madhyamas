@@ -182,6 +182,7 @@ ul { list-style: none; padding: 0; }
   border-bottom: 1px solid var(--border);
   background: var(--bg);
 }
+.nav__mobile[hidden] { display: none; }
 .nav__mobile a { padding: 10px 0; color: var(--text-soft); font-weight: 500; }
 .nav__mobile .btn { margin-top: 8px; justify-content: center; }
 
