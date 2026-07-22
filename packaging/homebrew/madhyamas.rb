@@ -1,5 +1,5 @@
-# Homebrew Formula for Madhyamas (Main Server)
-# This is the main proxy server with embedded web UI
+# Homebrew Formula for Madhyamas
+# Single unified binary: proxy server + web UI (embedded) + MCP + CLI
 #
 # Install: brew install madhyamas/tap/madhyamas
 
@@ -34,13 +34,8 @@ class Madhyamas < Formula
   depends_on "openssl@3"
 
   def install
+    # Single binary — web UI is embedded, no external assets needed
     bin.install "madhyamas"
-
-    # Install web assets alongside the binary
-    (share/"madhyamas/web").install Dir["web/*"] if Dir.exist?("web")
-
-    # Generate shell completions
-    generate_completions_from_executable(bin/"madhyamas", "completion", "--shell", shells: [:bash, :zsh, :fish])
   end
 
   def caveats
@@ -48,19 +43,22 @@ class Madhyamas < Formula
       Madhyamas has been installed!
 
       To start the proxy server:
-        madhyamas start
+        madhyamas
+      # or: madhyamas serve
 
       To start as a background service:
         brew services start madhyamas
 
-      Web UI will be available at:
-        http://localhost:3000
+      Web UI: http://localhost:3001
+      Proxy:  localhost:8888
 
-      Proxy server listens on:
-        localhost:8888
+      Other modes:
+        madhyamas mcp              # Run as MCP server
+        madhyamas traffic list     # CLI commands
+        madhyamas --help           # See all options
 
       To trust the Madhyamas CA certificate (required for HTTPS):
-        madhyamas cert trust
+        Install the cert from ~/.madhyamas/certs/madhyamas-ca.pem
 
       For more information:
         https://github.com/madhyamas/madhyamas#readme
@@ -68,7 +66,7 @@ class Madhyamas < Formula
   end
 
   service do
-    run [opt_bin/"madhyamas", "start"]
+    run [opt_bin/"madhyamas"]
     keep_alive true
     log_path var/"log/madhyamas.log"
     error_log_path var/"log/madhyamas.error.log"

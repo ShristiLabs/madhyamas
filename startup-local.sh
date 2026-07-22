@@ -64,11 +64,14 @@ if [ "$CLEAN_BUILD" = true ]; then
     echo -e "${GREEN}✓ Cleanup complete${NC}"
 fi
 
-# Build web assets
-if [ ! -d "web/dist" ] || [ ! -f "web/dist/index.html" ] || [ "$CLEAN_BUILD" = true ]; then
-    echo -e "${YELLOW}Building frontend assets...${NC}"
-    if [ -d "web" ]; then
-        cd web
+# Build web assets (embedded into the binary at compile time via rust-embed)
+WEB_SRC_DIR="web"
+WEB_DIST_DIR="${WEB_SRC_DIR}/dist"
+
+if [ ! -d "$WEB_DIST_DIR" ] || [ ! -f "$WEB_DIST_DIR/index.html" ] || [ "$CLEAN_BUILD" = true ]; then
+    echo -e "${YELLOW}Building frontend assets ($WEB_SRC_DIR)...${NC}"
+    if [ -d "$WEB_SRC_DIR" ]; then
+        cd "$WEB_SRC_DIR"
         if [ -f "package.json" ]; then
             # Install dependencies (fresh install if clean build)
             if [ ! -d "node_modules" ] || [ "$CLEAN_BUILD" = true ]; then
@@ -82,11 +85,11 @@ if [ ! -d "web/dist" ] || [ ! -f "web/dist/index.html" ] || [ "$CLEAN_BUILD" = t
         fi
         cd ..
     else
-        echo -e "${RED}Error: web directory not found${NC}"
+        echo -e "${RED}Error: $WEB_SRC_DIR directory not found${NC}"
         exit 1
     fi
 else
-    echo -e "${GREEN}✓ Web assets already built (use --clean to rebuild)${NC}"
+    echo -e "${GREEN}✓ Web assets already built ($WEB_DIST_DIR, use --clean to rebuild)${NC}"
 fi
 
 # Build Rust binary
@@ -138,6 +141,7 @@ echo -e "${BLUE}Command: $CMD${NC}"
 echo ""
 
 # Run in background and save PID
+# Web UI assets are embedded in the binary — no MADHYAMAS_WEB_DIR needed.
 nohup $CMD > ~/.madhyamas/logs/madhyamas.log 2>&1 &
 PID=$!
 echo $PID > ~/.madhyamas/madhyamas.pid
@@ -167,6 +171,7 @@ if ps -p $PID > /dev/null; then
     echo "  • MADHYAMAS_HOST=$HOST"
     echo "  • MADHYAMAS_API_PORT=$API_PORT"
     echo "  • MADHYAMAS_PROXY_PORT=$PROXY_PORT"
+    echo "  • MADHYAMAS_WEB_DIR=$WEB_DIST_DIR"
     if [ -n "$MADHYAMAS_PUBLIC_IP" ]; then
         echo "  • MADHYAMAS_PUBLIC_IP=$MADHYAMAS_PUBLIC_IP"
     fi

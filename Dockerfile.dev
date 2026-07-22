@@ -20,25 +20,29 @@ COPY crates/madhyamas-core/Cargo.toml ./crates/madhyamas-core/
 COPY crates/madhyamas-api/Cargo.toml ./crates/madhyamas-api/
 COPY crates/madhyamas-cli/Cargo.toml ./crates/madhyamas-cli/
 COPY crates/madhyamas-mcp/Cargo.toml ./crates/madhyamas-mcp/
+COPY crates/madhyamas/Cargo.toml ./crates/madhyamas/
 
 # Pre-build dependencies
-RUN mkdir -p crates/madhyamas-core/src crates/madhyamas-api/src crates/madhyamas-cli/src crates/madhyamas-mcp/src
+RUN mkdir -p crates/madhyamas/src crates/madhyamas-core/src crates/madhyamas-api/src crates/madhyamas-cli/src crates/madhyamas-mcp/src
+RUN echo "fn main() {}" > crates/madhyamas/src/main.rs
 RUN echo "fn main() {}" > crates/madhyamas-core/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-api/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-cli/src/main.rs
-RUN echo "fn main() {}" > crates/madhyamas-mcp/src/lib.rs
+RUN echo "pub fn dummy() {}" > crates/madhyamas-cli/src/lib.rs
+RUN echo "pub fn dummy() {}" > crates/madhyamas-mcp/src/lib.rs
+RUN echo "fn main() {}" > crates/madhyamas-mcp/src/main.rs
 RUN cargo build && rm -rf target/debug/deps
 
 # Copy source files
 COPY . .
 
-# Install frontend dependencies
+# Install frontend dependencies and build (needed for rust-embed)
 WORKDIR /app/web
-RUN npm install
+RUN npm install && npm run build
 
 WORKDIR /app
 
-EXPOSE 3001 8888 8443 5173
+EXPOSE 3001 8888 5173
 
-# Start both backend and frontend
-CMD ["sh", "-c", "cargo watch -x 'run -- start' & cd web && npm run dev -- --host 0.0.0.0"]
+# Start both backend (with embedded web) and frontend dev server
+CMD ["sh", "-c", "cargo watch -w crates -w web/dist -x 'run --bin madhyamas' & cd web && npm run dev -- --host 0.0.0.0"]

@@ -4,13 +4,21 @@ This directory contains packaging configurations for distributing Madhyamas acro
 
 ## Package Structure
 
-Madhyamas is distributed as three separate packages:
+Madhyamas is distributed as a **single unified binary** that includes the proxy server, web UI (embedded), MCP server, and CLI:
 
 | Package | Description | Contains |
 |---------|-------------|----------|
-| **madhyamas** | Main proxy server with web UI | madhyamas-core + madhyamas-api + web UI |
-| **madhyamas-cli** | Command-line interface | CLI tool for interacting with Madhyamas |
-| **madhyamas-mcp** | MCP Server | Model Context Protocol server for AI agents |
+| **madhyamas** | Unified binary | Proxy server + web UI + MCP server + CLI |
+
+### Subcommands
+
+```bash
+madhyamas              # Start proxy server with web UI (default)
+madhyamas serve        # Same as above
+madhyamas mcp          # Run as MCP server (stdio)
+madhyamas traffic list # CLI command
+madhyamas --help       # See all commands
+```
 
 ## Installation Methods
 
@@ -20,10 +28,8 @@ Madhyamas is distributed as three separate packages:
 # Add the Madhyamas tap
 brew tap madhyamas/tap
 
-# Install packages
-brew install madhyamas           # Main server
-brew install madhyamas-cli       # CLI tool
-brew install madhyamas-mcp       # MCP server
+# Install
+brew install madhyamas
 ```
 
 ### Windows
@@ -33,10 +39,7 @@ Download the `.msi` installer from the [releases page](https://github.com/madhya
 
 #### Chocolatey
 ```powershell
-# Install packages
 choco install madhyamas
-choco install madhyamas-cli
-choco install madhyamas-mcp
 ```
 
 ### Linux
@@ -44,8 +47,6 @@ choco install madhyamas-mcp
 #### Snap (Ubuntu, Debian, etc.)
 ```bash
 sudo snap install madhyamas
-sudo snap install madhyamas-cli
-sudo snap install madhyamas-mcp
 ```
 
 #### DNF/YUM (Fedora, RHEL, CentOS)
@@ -53,18 +54,14 @@ sudo snap install madhyamas-mcp
 # Add the repository
 sudo dnf config-manager --add-repo https://rpm.madhyamas.io/madhyamas.repo
 
-# Install packages
+# Install
 sudo dnf install madhyamas
-sudo dnf install madhyamas-cli
-sudo dnf install madhyamas-mcp
 ```
 
 #### AUR (Arch Linux)
 ```bash
 # Using yay
 yay -S madhyamas
-yay -S madhyamas-cli
-yay -S madhyamas-mcp
 
 # Or using paru
 paru -S madhyamas
@@ -75,15 +72,13 @@ paru -S madhyamas
 ```
 packaging/
 ├── homebrew/           # Homebrew formulas for macOS/Linux
-│   ├── madhyamas.rb
-│   ├── madhyamas-cli.rb
-│   └── madhyamas-mcp.rb
+│   └── madhyamas.rb
 ├── windows/            # Windows packaging
 │   ├── msi/            # WiX MSI installer
-│   └── chocolatey/     # Chocolatey packages
+│   └── chocolatey/     # Chocolatey package
 ├── linux/
-│   ├── snap/           # Snap packages
-│   ├── rpm/            # RPM specs for DNF/YUM
+│   ├── snap/           # Snap package
+│   ├── rpm/            # RPM spec for DNF/YUM
 │   └── aur/            # Arch User Repository
 └── scripts/            # Build and release scripts
 ```
@@ -95,11 +90,9 @@ See the GitHub Actions workflow in `.github/workflows/release.yml` for automated
 ### Manual Build
 
 ```bash
-# Build all packages
-./packaging/scripts/build-all.sh
+# Build the unified binary
+cargo build --release -p madhyamas
 
-# Build specific platform
-./packaging/scripts/build-macos.sh
-./packaging/scripts/build-windows.sh
-./packaging/scripts/build-linux.sh
+# Build for specific targets
+./packaging/scripts/build-all.sh
 ```

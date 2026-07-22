@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 GITHUB_REPO="madhyamas/madhyamas"
 
-echo "Fetching checksums for v$VERSION..."
+echo "Fetching checksums for v$VERSION (unified binary)..."
 
 # Function to get checksum from GitHub release
 get_checksum() {
@@ -23,27 +23,22 @@ get_checksum() {
     curl -sL "$url" | sha256sum | cut -d' ' -f1
 }
 
-# Define all artifacts
+# Define all artifacts (single unified binary)
 declare -A CHECKSUMS
 
-# Main package
+# macOS
 CHECKSUMS["madhyamas-x86_64-apple-darwin"]=$(get_checksum "madhyamas-v$VERSION-x86_64-apple-darwin.tar.gz")
 CHECKSUMS["madhyamas-aarch64-apple-darwin"]=$(get_checksum "madhyamas-v$VERSION-aarch64-apple-darwin.tar.gz")
+
+# Linux
 CHECKSUMS["madhyamas-x86_64-unknown-linux-gnu"]=$(get_checksum "madhyamas-v$VERSION-x86_64-unknown-linux-gnu.tar.gz")
 CHECKSUMS["madhyamas-aarch64-unknown-linux-gnu"]=$(get_checksum "madhyamas-v$VERSION-aarch64-unknown-linux-gnu.tar.gz")
+CHECKSUMS["madhyamas-armv7-unknown-linux-gnueabihf"]=$(get_checksum "madhyamas-v$VERSION-armv7-unknown-linux-gnueabihf.tar.gz")
+CHECKSUMS["madhyamas-arm-unknown-linux-gnueabihf"]=$(get_checksum "madhyamas-v$VERSION-arm-unknown-linux-gnueabihf.tar.gz")
+CHECKSUMS["madhyamas-riscv64gc-unknown-linux-gnu"]=$(get_checksum "madhyamas-v$VERSION-riscv64gc-unknown-linux-gnu.tar.gz")
+
+# Windows
 CHECKSUMS["madhyamas-x86_64-pc-windows-msvc"]=$(get_checksum "madhyamas-v$VERSION-x86_64-pc-windows-msvc.zip")
-
-# CLI package
-CHECKSUMS["madhyamas-cli-x86_64-apple-darwin"]=$(get_checksum "madhyamas-cli-v$VERSION-x86_64-apple-darwin.tar.gz")
-CHECKSUMS["madhyamas-cli-aarch64-apple-darwin"]=$(get_checksum "madhyamas-cli-v$VERSION-aarch64-apple-darwin.tar.gz")
-CHECKSUMS["madhyamas-cli-x86_64-unknown-linux-gnu"]=$(get_checksum "madhyamas-cli-v$VERSION-x86_64-unknown-linux-gnu.tar.gz")
-CHECKSUMS["madhyamas-cli-x86_64-pc-windows-msvc"]=$(get_checksum "madhyamas-cli-v$VERSION-x86_64-pc-windows-msvc.zip")
-
-# MCP package
-CHECKSUMS["madhyamas-mcp-x86_64-apple-darwin"]=$(get_checksum "madhyamas-mcp-v$VERSION-x86_64-apple-darwin.tar.gz")
-CHECKSUMS["madhyamas-mcp-aarch64-apple-darwin"]=$(get_checksum "madhyamas-mcp-v$VERSION-aarch64-apple-darwin.tar.gz")
-CHECKSUMS["madhyamas-mcp-x86_64-unknown-linux-gnu"]=$(get_checksum "madhyamas-mcp-v$VERSION-x86_64-unknown-linux-gnu.tar.gz")
-CHECKSUMS["madhyamas-mcp-x86_64-pc-windows-msvc"]=$(get_checksum "madhyamas-mcp-v$VERSION-x86_64-pc-windows-msvc.zip")
 
 echo "Checksums fetched. Update packaging files manually with these values:"
 echo ""

@@ -2,12 +2,17 @@
 
 use reqwest::Client;
 use serde::{de::DeserializeOwned, Deserialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::breakpoints;
+use super::grpc;
 use super::mocks;
+use super::plugins;
 use super::replay;
+use super::rewrites;
+use super::scripts;
 use super::sessions;
+use super::throttle;
 use super::traffic;
 use crate::types::{ContentBlock, McpError};
 
@@ -440,6 +445,30 @@ impl ToolExecutor {
                 }])
             }
 
+            "madhyamas_export_session" => {
+                let args: ExportSessionArgs = self.parse_args(&arguments)?;
+                let result = sessions::export_session(
+                    &self.client,
+                    &self.api_url,
+                    &args.id,
+                    args.format.as_deref(),
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            "madhyamas_import_session" => {
+                let args: ImportSessionArgs = self.parse_args(&arguments)?;
+                let result =
+                    sessions::import_session(&self.client, &self.api_url, args.session_data)
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
             // Configuration
             "madhyamas_get_config" => {
                 let result = self.get_config().await?;
@@ -466,6 +495,233 @@ impl ToolExecutor {
 
             "madhyamas_toggle_capture" => {
                 let result = self.toggle_capture().await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            // Throttle tools
+            "madhyamas_get_throttle" => {
+                let result = throttle::get_throttle(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_set_throttle" => {
+                let args: SetThrottleArgs = self.parse_args(&arguments)?;
+                let profile = json!({
+                    "name": args.name.unwrap_or_else(|| "Custom".to_string()),
+                    "download_bps": args.download_bps.unwrap_or(0),
+                    "upload_bps": args.upload_bps.unwrap_or(0),
+                    "latency_ms": args.delay_ms.unwrap_or(0),
+                    "jitter_ms": args.jitter_ms.unwrap_or(0),
+                    "packet_loss_percent": args.packet_loss_percent.unwrap_or(0),
+                });
+                let result =
+                    throttle::set_throttle(&self.client, &self.api_url, profile, args.enabled)
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_toggle_throttle" => {
+                let args: ToggleArgs = self.parse_args(&arguments)?;
+                let result =
+                    throttle::set_throttle_enabled(&self.client, &self.api_url, args.enabled)
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_throttle_presets" => {
+                let result = throttle::get_throttle_presets(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            // Rewrite tools
+            "madhyamas_list_rewrites" => {
+                let result = rewrites::list_rewrites(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_create_rewrite" => {
+                let args: CreateRewriteArgs = self.parse_args(&arguments)?;
+                let result = rewrites::create_rewrite(
+                    &self.client,
+                    &self.api_url,
+                    &args.name,
+                    args.condition,
+                    &args.direction,
+                    args.rewrites,
+                    args.enabled,
+                    args.priority,
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_delete_rewrite" => {
+                let args: IdArgs = self.parse_args(&arguments)?;
+                let result =
+                    rewrites::delete_rewrite(&self.client, &self.api_url, &args.id).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_toggle_rewrite" => {
+                let args: ToggleArgs = self.parse_args(&arguments)?;
+                let result =
+                    rewrites::toggle_rewrite(&self.client, &self.api_url, &args.id, args.enabled)
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_rewrite_templates" => {
+                let result = rewrites::get_rewrite_templates(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            // gRPC tools
+            "madhyamas_get_grpc_connections" => {
+                let result = grpc::get_grpc_connections(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_grpc_streams" => {
+                let result = grpc::get_grpc_streams(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_grpc_frames" => {
+                let args: GrpcFramesArgs = self.parse_args(&arguments)?;
+                let result =
+                    grpc::get_grpc_frames(&self.client, &self.api_url, args.filter.as_deref())
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_grpc_stats" => {
+                let result = grpc::get_grpc_stats(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_clear_grpc" => {
+                let result = grpc::clear_grpc_frames(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            // Script tools
+            "madhyamas_list_scripts" => {
+                let result = scripts::list_scripts(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_create_script" => {
+                let args: CreateScriptArgs = self.parse_args(&arguments)?;
+                let result = scripts::create_script(
+                    &self.client,
+                    &self.api_url,
+                    &args.name,
+                    &args.source,
+                    args.hook.as_deref(),
+                    args.enabled,
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_script" => {
+                let args: IdArgs = self.parse_args(&arguments)?;
+                let result = scripts::get_script(&self.client, &self.api_url, &args.id).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_update_script" => {
+                let args: UpdateScriptArgs = self.parse_args(&arguments)?;
+                let result =
+                    scripts::update_script(&self.client, &self.api_url, &args.id, args.script)
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_delete_script" => {
+                let args: IdArgs = self.parse_args(&arguments)?;
+                let result = scripts::delete_script(&self.client, &self.api_url, &args.id).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_toggle_script" => {
+                let args: ToggleArgs = self.parse_args(&arguments)?;
+                let result =
+                    scripts::toggle_script(&self.client, &self.api_url, &args.id, args.enabled)
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_script_templates" => {
+                let result = scripts::get_script_templates(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
+            // Plugin tools
+            "madhyamas_list_plugins" => {
+                let result = plugins::list_plugins(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_plugin" => {
+                let args: IdArgs = self.parse_args(&arguments)?;
+                let result = plugins::get_plugin(&self.client, &self.api_url, &args.id).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_enable_plugin" => {
+                let args: IdArgs = self.parse_args(&arguments)?;
+                let result = plugins::enable_plugin(&self.client, &self.api_url, &args.id).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_disable_plugin" => {
+                let args: IdArgs = self.parse_args(&arguments)?;
+                let result = plugins::disable_plugin(&self.client, &self.api_url, &args.id).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_plugin_stats" => {
+                let args: IdArgs = self.parse_args(&arguments)?;
+                let result =
+                    plugins::get_plugin_stats(&self.client, &self.api_url, &args.id).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_reload_plugins" => {
+                let result = plugins::reload_plugins(&self.client, &self.api_url).await?;
                 Ok(vec![ContentBlock::Text {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
@@ -809,4 +1065,73 @@ struct ImportMocksArgs {
 #[derive(Debug, Clone, Deserialize)]
 struct RecordingArgs {
     enabled: bool,
+}
+
+// Session Export/Import Arguments
+#[derive(Debug, Clone, Deserialize)]
+struct ExportSessionArgs {
+    id: String,
+    #[serde(default)]
+    format: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ImportSessionArgs {
+    session_data: Value,
+}
+
+// Throttle Arguments
+#[derive(Debug, Clone, Deserialize)]
+struct SetThrottleArgs {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    download_bps: Option<u64>,
+    #[serde(default)]
+    upload_bps: Option<u64>,
+    #[serde(default)]
+    delay_ms: Option<u64>,
+    #[serde(default)]
+    jitter_ms: Option<u64>,
+    #[serde(default)]
+    packet_loss_percent: Option<u8>,
+    #[serde(default)]
+    enabled: Option<bool>,
+}
+
+// Rewrite Arguments
+#[derive(Debug, Clone, Deserialize)]
+struct CreateRewriteArgs {
+    name: String,
+    condition: Value,
+    direction: String,
+    rewrites: Value,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    priority: Option<u32>,
+}
+
+// gRPC Arguments
+#[derive(Debug, Clone, Deserialize)]
+struct GrpcFramesArgs {
+    #[serde(default)]
+    filter: Option<String>,
+}
+
+// Script Arguments
+#[derive(Debug, Clone, Deserialize)]
+struct CreateScriptArgs {
+    name: String,
+    source: String,
+    #[serde(default)]
+    hook: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateScriptArgs {
+    id: String,
+    script: Value,
 }

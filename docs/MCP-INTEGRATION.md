@@ -35,32 +35,20 @@ The Madhyamas MCP server provides the following tools:
 ### Option 1: Build from Source (Recommended for Development)
 
 ```bash
-# Build the MCP binary
-cargo build --release -p madhyamas-mcp
+# Build the unified binary
+cargo build --release -p madhyamas
 
-# The binary will be at: target/release/madhyamas-mcp
+# Run as MCP server: target/release/madhyamas mcp
 ```
 
-### Option 2: Extract from Docker
-
-```bash
-# Run the extraction script
-./scripts/extract-mcp.sh
-
-# The binary will be at: bin/madhyamas-mcp
-```
-
-### Option 3: Use Docker Directly
+### Option 2: Use Docker
 
 ```bash
 # Build the Docker image
 docker compose build madhyamas
 
-# Extract the binary
-docker create --name temp madhyamas:latest
-docker cp temp:/usr/local/bin/madhyamas-mcp ./madhyamas-mcp
-docker rm temp
-chmod +x ./madhyamas-mcp
+# The binary inside the container is at /usr/local/bin/madhyamas
+# Run MCP mode: docker run --rm madhyamas:latest mcp
 ```
 
 ## Windsurf Integration
@@ -80,7 +68,8 @@ Edit your `mcp_config.json` file and add the Madhyamas server:
 {
   "mcpServers": {
     "madhyamas": {
-      "command": "/absolute/path/to/madhyamas-mcp",
+      "command": "/absolute/path/to/madhyamas",
+      "args": ["mcp"],
       "env": {
         "MADHYAMAS_API_URL": "http://localhost:3001"
       }
@@ -95,7 +84,8 @@ Edit your `mcp_config.json` file and add the Madhyamas server:
 {
   "mcpServers": {
     "madhyamas": {
-      "command": "/Users/harikiranbavineni/product-design-skill/madhyamas/target/release/madhyamas-mcp",
+      "command": "/Users/harikiranbavineni/madhyamas/target/release/madhyamas",
+      "args": ["mcp"],
       "env": {
         "MADHYAMAS_API_URL": "http://localhost:3001"
       }
@@ -141,7 +131,8 @@ Claude Desktop stores MCP configuration in:
 {
   "mcpServers": {
     "madhyamas": {
-      "command": "/absolute/path/to/madhyamas-mcp",
+      "command": "/absolute/path/to/madhyamas",
+      "args": ["mcp"],
       "env": {
         "MADHYAMAS_API_URL": "http://localhost:3001"
       }
@@ -170,7 +161,8 @@ If running Madhyamas in Docker, the MCP server needs to connect to the Docker co
 {
   "mcpServers": {
     "madhyamas": {
-      "command": "/path/to/madhyamas-mcp",
+      "command": "/path/to/madhyamas",
+      "args": ["mcp"],
       "env": {
         "MADHYAMAS_API_URL": "http://localhost:3001"
       }
@@ -193,12 +185,12 @@ Since Docker exposes port 3001 to localhost, the MCP server running on your host
 
 1. Restart your AI assistant after config changes
 2. Verify JSON syntax in config file
-3. Check that the binary has execute permissions: `chmod +x madhyamas-mcp`
+3. Check that the binary has execute permissions: `chmod +x madhyamas`
 
 ### Permission Denied
 
 ```bash
-chmod +x /path/to/madhyamas-mcp
+chmod +x /path/to/madhyamas
 ```
 
 ### Connection Refused

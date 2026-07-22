@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "CLI tool for interacting with Madhyamas proxy server"
 
+[lib]
+name = "madhyamas_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "madhyamas-cli"
 path = "src/main.rs"

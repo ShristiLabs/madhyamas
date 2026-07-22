@@ -1,9 +1,12 @@
 //! Main proxy engine
 
 use crate::config::ProxyConfig;
+use crate::grpc::{is_grpc_content_type, is_grpc_path, parse_frame, GrpcDirection, GrpcManager};
 use crate::intercept::{
     BreakpointDecision, BreakpointManager, MockManager, RewriteManager, ThrottleManager,
 };
+use crate::plugin::{PluginContext, PluginHook, PluginManager};
+use crate::scripting::{ScriptContext, ScriptHook, ScriptRuntime};
 use crate::tls::CertificateManager;
 use crate::traffic::{RequestData, ResponseData, TrafficEntry, TrafficStore};
 use crate::websocket::{is_websocket_upgrade, WsDirection, WsManager, WsMessageType, WsPayload};
@@ -27,6 +30,12 @@ pub struct ProxyEngine {
     throttle_manager: Option<Arc<ThrottleManager>>,
     /// WebSocket traffic manager
     ws_manager: Option<Arc<WsManager>>,
+    /// gRPC traffic manager
+    grpc_manager: Option<Arc<GrpcManager>>,
+    /// JavaScript scripting runtime
+    script_runtime: Option<Arc<ScriptRuntime>>,
+    /// Plugin manager
+    plugin_manager: Option<Arc<PluginManager>>,
     /// Channel to broadcast traffic updates to WebSocket clients
     traffic_tx: broadcast::Sender<TrafficEntry>,
     /// Whether the proxy is running
@@ -51,6 +60,9 @@ impl ProxyEngine {
             breakpoint_manager: None,
             throttle_manager: None,
             ws_manager: None,
+            grpc_manager: None,
+            script_runtime: None,
+            plugin_manager: None,
             traffic_tx,
             running: RwLock::new(false),
         }))
@@ -107,6 +119,24 @@ impl ProxyEngine {
     /// Set the WebSocket manager
     pub fn with_ws_manager(mut self: Arc<Self>, manager: Arc<WsManager>) -> Arc<Self> {
         Arc::get_mut(&mut self).unwrap().ws_manager = Some(manager);
+        self
+    }
+
+    /// Set the gRPC manager
+    pub fn with_grpc_manager(mut self: Arc<Self>, manager: Arc<GrpcManager>) -> Arc<Self> {
+        Arc::get_mut(&mut self).unwrap().grpc_manager = Some(manager);
+        self
+    }
+
+    /// Set the script runtime
+    pub fn with_script_runtime(mut self: Arc<Self>, runtime: Arc<ScriptRuntime>) -> Arc<Self> {
+        Arc::get_mut(&mut self).unwrap().script_runtime = Some(runtime);
+        self
+    }
+
+    /// Set the plugin manager
+    pub fn with_plugin_manager(mut self: Arc<Self>, manager: Arc<PluginManager>) -> Arc<Self> {
+        Arc::get_mut(&mut self).unwrap().plugin_manager = Some(manager);
         self
     }
 
@@ -313,6 +343,12 @@ impl ProxyEngine {
                 rewrite_manager.rewrite_request(&mut request_data);
             }
 
+            // Run script and plugin request hooks
+            self.run_request_hooks(&request_data);
+
+            // Detect and record gRPC traffic
+            let grpc_stream = self.detect_and_record_grpc_request(&request_data);
+
             // Check for mock response
             let mut handled = false;
             if let Some(ref mock_manager) = self.mock_manager {
@@ -438,6 +474,12 @@ impl ProxyEngine {
                         if let Some(ref rewrite_manager) = self.rewrite_manager {
                             rewrite_manager.rewrite_response(&request_data, &mut response);
                         }
+
+                        // Run script and plugin response hooks
+                        self.run_response_hooks(&request_data, &response);
+
+                        // Record gRPC response frames
+                        self.record_grpc_response(&request_data, &response, grpc_stream.as_ref());
 
                         // Check for breakpoint on response
                         if let Some(ref breakpoint_manager) = self.breakpoint_manager {
@@ -585,6 +627,12 @@ impl ProxyEngine {
             rewrite_manager.rewrite_request(&mut request_data);
         }
 
+        // Run script and plugin request hooks
+        self.run_request_hooks(&request_data);
+
+        // Detect and record gRPC traffic
+        let grpc_stream = self.detect_and_record_grpc_request(&request_data);
+
         // Check for mock response
         if let Some(ref mock_manager) = self.mock_manager {
             if let Some(mock) = mock_manager.find_matching_mock(&request_data) {
@@ -713,6 +761,12 @@ impl ProxyEngine {
                 if let Some(ref rewrite_manager) = self.rewrite_manager {
                     rewrite_manager.rewrite_response(&request_data, &mut response);
                 }
+
+                // Run script and plugin response hooks
+                self.run_response_hooks(&request_data, &response);
+
+                // Record gRPC response frames
+                self.record_grpc_response(&request_data, &response, grpc_stream.as_ref());
 
                 // Check for breakpoint on response
                 if let Some(ref breakpoint_manager) = self.breakpoint_manager {
@@ -1703,6 +1757,207 @@ impl ProxyEngine {
 
             if fin {
                 debug!("WebSocket {:?} frame: {} bytes", direction, data.len());
+            }
+        }
+    }
+
+    /// Run script and plugin request hooks (on_request) before the request is
+    /// forwarded to the upstream server.
+    fn run_request_hooks(&self, request_data: &RequestData) {
+        // Script on_request hook
+        if let Some(ref script_runtime) = self.script_runtime {
+            let session_id = self.traffic_store.current_session_id();
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let mut context = ScriptContext::new(&request_id, &session_id, ScriptHook::OnRequest)
+                .with_request(request_data);
+            let results = script_runtime.execute_hook(ScriptHook::OnRequest.as_str(), &mut context);
+            for result in &results {
+                if let Some(ref err) = result.error {
+                    debug!("Script on_request error: {}", err);
+                } else {
+                    debug!(
+                        "Script on_request executed (modified={}, continue={})",
+                        result.modified, result.continue_
+                    );
+                }
+            }
+        }
+
+        // Plugin on_request hook
+        if let Some(ref plugin_manager) = self.plugin_manager {
+            if plugin_manager.is_enabled() {
+                let session_id = self.traffic_store.current_session_id();
+                let request_id = uuid::Uuid::new_v4().to_string();
+                let mut context =
+                    PluginContext::new("", PluginHook::OnRequest).with_request(request_data);
+                context.request_id = Some(request_id);
+                context.session_id = Some(session_id);
+                let results = plugin_manager.execute_hook(PluginHook::OnRequest, context);
+                for (plugin_id, result) in &results {
+                    if let Some(ref err) = result.error {
+                        debug!("Plugin {} on_request error: {}", plugin_id, err);
+                    } else {
+                        debug!("Plugin {} on_request executed", plugin_id);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Run script and plugin response hooks (on_response) after a response is
+    /// received from the upstream server.
+    fn run_response_hooks(&self, request_data: &RequestData, response: &ResponseData) {
+        // Script on_response hook
+        if let Some(ref script_runtime) = self.script_runtime {
+            let session_id = self.traffic_store.current_session_id();
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let mut context = ScriptContext::new(&request_id, &session_id, ScriptHook::OnResponse)
+                .with_request(request_data)
+                .with_response(response);
+            let results =
+                script_runtime.execute_hook(ScriptHook::OnResponse.as_str(), &mut context);
+            for result in &results {
+                if let Some(ref err) = result.error {
+                    debug!("Script on_response error: {}", err);
+                } else {
+                    debug!(
+                        "Script on_response executed (modified={}, continue={})",
+                        result.modified, result.continue_
+                    );
+                }
+            }
+        }
+
+        // Plugin on_response hook
+        if let Some(ref plugin_manager) = self.plugin_manager {
+            if plugin_manager.is_enabled() {
+                let session_id = self.traffic_store.current_session_id();
+                let request_id = uuid::Uuid::new_v4().to_string();
+                let mut context = PluginContext::new("", PluginHook::OnResponse)
+                    .with_request(request_data)
+                    .with_response(response);
+                context.request_id = Some(request_id);
+                context.session_id = Some(session_id);
+                let results = plugin_manager.execute_hook(PluginHook::OnResponse, context);
+                for (plugin_id, result) in &results {
+                    if let Some(ref err) = result.error {
+                        debug!("Plugin {} on_response error: {}", plugin_id, err);
+                    } else {
+                        debug!("Plugin {} on_response executed", plugin_id);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Detect gRPC traffic on a request and register the connection/stream and
+    /// record request frames with the gRPC manager. Returns the
+    /// `(connection_id, stream_id)` so the response path can reuse the same
+    /// stream, or `None` if no gRPC manager is attached or the request is not
+    /// gRPC.
+    fn detect_and_record_grpc_request(
+        &self,
+        request_data: &RequestData,
+    ) -> Option<(String, String)> {
+        let grpc_manager = self.grpc_manager.as_ref()?;
+
+        let content_type = request_data.content_type.as_deref();
+        let is_grpc = is_grpc_content_type(content_type) || is_grpc_path(&request_data.path);
+        if !is_grpc {
+            return None;
+        }
+
+        debug!(
+            "gRPC request detected: {} {}",
+            request_data.method, request_data.url
+        );
+
+        let conn_id = grpc_manager.register_connection("client", &request_data.host);
+        let stream_id = grpc_manager.register_stream(&conn_id, Some(&request_data.path));
+
+        // Record request metadata (HTTP/2 headers / pseudo-headers)
+        grpc_manager.update_stream_metadata(
+            &stream_id,
+            GrpcDirection::Request,
+            request_data.headers.clone(),
+        );
+
+        // Parse and record gRPC frames from the request body
+        if let Some(ref body) = request_data.body {
+            let mut offset = 0;
+            while offset < body.len() {
+                match parse_frame(
+                    &body[offset..],
+                    &stream_id,
+                    &conn_id,
+                    GrpcDirection::Request,
+                ) {
+                    Ok(Some((frame, consumed))) => {
+                        grpc_manager.record_frame(frame);
+                        offset += consumed;
+                    }
+                    _ => break,
+                }
+            }
+        }
+
+        Some((conn_id, stream_id))
+    }
+
+    /// Record gRPC response frames for a detected gRPC stream. If no stream
+    /// info is provided (the request wasn't detected as gRPC), a new stream is
+    /// registered only when the response itself looks like gRPC.
+    fn record_grpc_response(
+        &self,
+        request_data: &RequestData,
+        response: &ResponseData,
+        stream: Option<&(String, String)>,
+    ) {
+        let grpc_manager = match self.grpc_manager {
+            Some(ref m) => m,
+            None => return,
+        };
+
+        let (conn_id, stream_id) = match stream {
+            Some((c, s)) => (c.clone(), s.clone()),
+            None => {
+                let content_type = response.content_type.as_deref();
+                if !is_grpc_content_type(content_type) && !is_grpc_path(&request_data.path) {
+                    return;
+                }
+                debug!(
+                    "gRPC response detected (no request stream): {} {}",
+                    request_data.method, request_data.url
+                );
+                let conn_id = grpc_manager.register_connection("client", &request_data.host);
+                let stream_id = grpc_manager.register_stream(&conn_id, Some(&request_data.path));
+                (conn_id, stream_id)
+            }
+        };
+
+        // Record response metadata
+        grpc_manager.update_stream_metadata(
+            &stream_id,
+            GrpcDirection::Response,
+            response.headers.clone(),
+        );
+
+        // Parse and record gRPC frames from the response body
+        if let Some(ref body) = response.body {
+            let mut offset = 0;
+            while offset < body.len() {
+                match parse_frame(
+                    &body[offset..],
+                    &stream_id,
+                    &conn_id,
+                    GrpcDirection::Response,
+                ) {
+                    Ok(Some((frame, consumed))) => {
+                        grpc_manager.record_frame(frame);
+                        offset += consumed;
+                    }
+                    _ => break,
+                }
             }
         }
     }

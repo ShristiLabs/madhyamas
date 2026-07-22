@@ -313,10 +313,24 @@ export function useCreateMock() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (mock: Omit<MockRule, 'id' | 'hit_count'>): Promise<MockRule> => {
+      // Transform MockRule → CreateMockRequest expected by the backend.
+      // The backend expects { name, condition, response: MockResponse, enabled?, priority? }
+      // but the UI model uses response_config: ResponseConfig (which wraps MockResponse).
+      const rc = mock.response_config;
+      const response: MockResponse = rc.response ?? rc.default_response ?? rc.responses?.[0] ?? {
+        status_code: 200,
+      };
+      const body = {
+        name: mock.name,
+        condition: mock.condition,
+        response,
+        enabled: mock.enabled,
+        priority: mock.priority,
+      };
       const res = await fetch(`${API_BASE}/mocks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(mock),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error('Failed to create mock');
       return res.json();

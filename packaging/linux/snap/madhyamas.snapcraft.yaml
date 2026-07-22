@@ -2,18 +2,19 @@ name: madhyamas
 version: '0.1.0'
 summary: Open-source HTTP/HTTPS debugging proxy with web-based UI
 description: |
-  Madhyamas is a high-performance, cross-platform HTTP/HTTPS debugging proxy 
-  built in Rust with a modern web-based UI. It's the free, open-source 
+  Madhyamas is a high-performance, cross-platform HTTP/HTTPS debugging proxy
+  built in Rust with a modern web-based UI. It's the free, open-source
   alternative to tools like Charles Proxy and Fiddler.
 
   Features:
   - HTTP/HTTPS traffic interception and inspection
   - Automatic TLS certificate generation
-  - Modern React-based web UI
+  - Modern React-based web UI (embedded in binary)
   - Request/response filtering and search
   - Session management for organized debugging
   - WebSocket support
   - MCP integration for AI agents
+  - CLI commands for scripting and automation
 
 base: core22
 confinement: strict
@@ -32,8 +33,6 @@ apps:
       - network
       - network-bind
       - home
-    environment:
-      MADHYAMAS_WEB_DIR: $SNAP/share/madhyamas/web
 
 parts:
   madhyamas:
@@ -46,22 +45,18 @@ parts:
       - nodejs
       - npm
     override-build: |
-      # Build the main binary (includes core + api)
-      cargo build --release -p madhyamas-cli
-
-      # Build frontend
+      # Build frontend (embedded into binary via rust-embed)
       cd web
       npm ci
       npm run build
       cd ..
 
-      # Install binary
+      # Build the unified binary (proxy + web UI + MCP + CLI)
+      cargo build --release -p madhyamas
+
+      # Install binary (web UI is embedded — no external assets needed)
       mkdir -p $SNAPCRAFT_PART_INSTALL/bin
       cp target/release/madhyamas $SNAPCRAFT_PART_INSTALL/bin/madhyamas
-
-      # Install web assets
-      mkdir -p $SNAPCRAFT_PART_INSTALL/share/madhyamas/web
-      cp -r web/dist/* $SNAPCRAFT_PART_INSTALL/share/madhyamas/web/
 
 slots:
   madhyamas-data:

@@ -22,3 +22,5 @@ uuid.workspace = true
 chrono.workspace = true
 bytes.workspace = true
 futures.workspace = true
+rust-embed.workspace = true
+mime_guess.workspace = true

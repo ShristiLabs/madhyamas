@@ -1,174 +1,91 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { TrafficView } from "./components/TrafficView";
-import { CertificateHelper } from "./components/CertificateHelper";
-import { ConfigDialog } from "./components/ConfigDialog";
-import { Toaster } from "./components/ui/toaster";
-import { Button } from "./components/ui/button";
-import {
-  Moon,
-  Sun,
-  Settings,
-  SlidersHorizontal,
-  CircleDot,
-  CircleSlash,
-} from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { Toaster } from "@/components/ui/toaster"
+import { AppHeader } from "@/features/shell/AppHeader"
+import { NavRail, type NavView } from "@/features/shell/NavRail"
+import { TrafficView } from "@/features/traffic/TrafficView"
+import { lazy, Suspense, useEffect, useState } from "react"
+import { Loader2 } from "lucide-react"
+
+// Lazy-load tool views — they get the full main area.
+const BreakpointsPanel = lazy(() => import("@/features/tools/BreakpointsPanel").then((m) => ({ default: m.BreakpointsPanel })))
+const ThrottlePanel = lazy(() => import("@/features/tools/ThrottlePanel").then((m) => ({ default: m.ThrottlePanel })))
+const MocksPanel = lazy(() => import("@/features/tools/MocksPanel").then((m) => ({ default: m.MocksPanel })))
+const RewritesPanel = lazy(() => import("@/features/tools/RewritesPanel").then((m) => ({ default: m.RewritesPanel })))
+const ReplayPanel = lazy(() => import("@/features/tools/ReplayPanel").then((m) => ({ default: m.ReplayPanel })))
+const GrpcPanel = lazy(() => import("@/features/tools/GrpcPanel").then((m) => ({ default: m.GrpcPanel })))
+const ScriptsPanel = lazy(() => import("@/features/tools/ScriptsPanel").then((m) => ({ default: m.ScriptsPanel })))
+const PluginsPanel = lazy(() => import("@/features/tools/PluginsPanel").then((m) => ({ default: m.PluginsPanel })))
+const SessionsPanel = lazy(() => import("@/features/sessions/SessionsPanel").then((m) => ({ default: m.SessionsPanel })))
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,
-      staleTime: 1000,
-    },
+    queries: { refetchOnWindowFocus: false, staleTime: 1000 },
   },
-});
+})
 
-function App() {
+function useTheme() {
   const [isDark, setIsDark] = useState(() => {
-    if (typeof window !== "undefined") {
-      return document.documentElement.classList.contains("dark");
-    }
-    return false;
-  });
-  const [proxyAddress, setProxyAddress] = useState("localhost:8888");
-  const [captureEnabled, setCaptureEnabled] = useState(true);
-  const [captureLoading, setCaptureLoading] = useState(false);
+    if (typeof window === "undefined") return true
+    return document.documentElement.classList.contains("dark")
+  })
 
   useEffect(() => {
-    if (isDark) {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  }, [isDark]);
+    const root = document.documentElement
+    root.classList.toggle("dark", isDark)
+    root.classList.toggle("light", !isDark)
+  }, [isDark])
 
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const theme = (e as CustomEvent<string>).detail;
-      if (theme === "dark") setIsDark(true);
-      else if (theme === "light") setIsDark(false);
-      else {
-        setIsDark(window.matchMedia("(prefers-color-scheme: dark)").matches);
-      }
-    };
-    window.addEventListener("madhyamas-theme-change", handler);
-    return () => window.removeEventListener("madhyamas-theme-change", handler);
-  }, []);
+  return { isDark, toggle: () => setIsDark((d) => !d) }
+}
 
-  useEffect(() => {
-    fetch("/api/capture")
-      .then((r) => r.json())
-      .then((d) => setCaptureEnabled(d.capture_enabled ?? true))
-      .catch(() => {});
-  }, []);
+const TOOL_VIEWS: NavView[] = [
+  { id: "traffic", label: "Traffic", icon: "Activity" },
+  { id: "breakpoints", label: "Breakpoints", icon: "Pause" },
+  { id: "throttle", label: "Throttle", icon: "Gauge" },
+  { id: "mocks", label: "Mocks", icon: "Theater" },
+  { id: "rewrites", label: "Rewrites", icon: "Pencil" },
+  { id: "replay", label: "Replay", icon: "RotateCcw" },
+  { id: "grpc", label: "gRPC", icon: "Zap" },
+  { id: "scripts", label: "Scripts", icon: "Code" },
+  { id: "plugins", label: "Plugins", icon: "Puzzle" },
+  { id: "sessions", label: "Sessions", icon: "FolderTree" },
+]
 
-  const handleToggleCapture = useCallback(async () => {
-    setCaptureLoading(true);
-    try {
-      const res = await fetch("/api/capture/toggle", { method: "POST" });
-      const data = await res.json();
-      setCaptureEnabled(data.capture_enabled);
-    } catch {
-      // ignore
-    } finally {
-      setCaptureLoading(false);
-    }
-  }, []);
+function PanelFallback() {
+  return (
+    <div className="flex h-full items-center justify-center text-muted-foreground">
+      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+    </div>
+  )
+}
 
-  useEffect(() => {
-    const fetchProxyConfig = async () => {
-      try {
-        const response = await fetch("/api/config");
-        if (response.ok) {
-          const config = await response.json();
-          const host = config.host || "localhost";
-          const port = config.proxy_port || 8888;
-          setProxyAddress(`${host}:${port}`);
-        }
-      } catch {
-        // ignore
-      }
-    };
-    fetchProxyConfig();
-  }, []);
+export default function App() {
+  const { isDark, toggle } = useTheme()
+  const [activeView, setActiveView] = useState<NavView["id"]>("traffic")
 
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="h-screen flex flex-col bg-background">
-        <header className="border-b px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-sm">
-                M
-              </span>
-            </div>
-            <h1 className="text-xl font-semibold">Madhyamas</h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-mono px-2.5 py-1 rounded-md bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-              Proxy: {proxyAddress}
-            </span>
-            <button
-              onClick={handleToggleCapture}
-              disabled={captureLoading}
-              title={
-                captureEnabled
-                  ? "Recording — click to enable passthrough"
-                  : "Passthrough — click to resume recording"
-              }
-              className={[
-                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors select-none",
-                captureEnabled
-                  ? "bg-green-50 dark:bg-green-950 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-900"
-                  : "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900",
-                captureLoading
-                  ? "opacity-50 cursor-not-allowed"
-                  : "cursor-pointer",
-              ].join(" ")}
-            >
-              {captureEnabled ? (
-                <CircleDot className="h-3.5 w-3.5" />
-              ) : (
-                <CircleSlash className="h-3.5 w-3.5" />
-              )}
-              {captureEnabled ? "Recording" : "Passthrough"}
-            </button>
-            <CertificateHelper
-              trigger={
-                <Button variant="ghost" size="sm">
-                  <Settings className="h-4 w-4 mr-1" />
-                  Setup
-                </Button>
-              }
-            />
-            <ConfigDialog
-              trigger={
-                <Button variant="ghost" size="sm">
-                  <SlidersHorizontal className="h-4 w-4 mr-1" />
-                  Config
-                </Button>
-              }
-            />
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsDark(!isDark)}
-            >
-              {isDark ? (
-                <Sun className="h-4 w-4" />
-              ) : (
-                <Moon className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
-        </header>
-        <main className="flex-1 overflow-hidden">
-          <TrafficView />
-        </main>
+      <div className="flex h-full flex-col bg-background text-foreground">
+        <AppHeader isDark={isDark} onToggleTheme={toggle} />
+        <div className="flex min-h-0 flex-1">
+          <NavRail views={TOOL_VIEWS} activeView={activeView} onSelect={setActiveView} />
+          <main className="min-w-0 flex-1 overflow-hidden">
+            <Suspense fallback={<PanelFallback />}>
+              {activeView === "traffic" && <TrafficView />}
+              {activeView === "breakpoints" && <BreakpointsPanel />}
+              {activeView === "throttle" && <ThrottlePanel />}
+              {activeView === "mocks" && <MocksPanel />}
+              {activeView === "rewrites" && <RewritesPanel />}
+              {activeView === "replay" && <ReplayPanel selectedEntry={null} />}
+              {activeView === "grpc" && <GrpcPanel />}
+              {activeView === "scripts" && <ScriptsPanel />}
+              {activeView === "plugins" && <PluginsPanel />}
+              {activeView === "sessions" && <SessionsPanel />}
+            </Suspense>
+          </main>
+        </div>
       </div>
       <Toaster />
     </QueryClientProvider>
-  );
+  )
 }
-
-export default App;

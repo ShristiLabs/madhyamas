@@ -5,7 +5,9 @@
 HTTP/HTTPS debugging proxy in Rust with React web UI. Alternative to Charles Proxy/Fiddler.
 
 - **Language**: Rust (backend), TypeScript/React (frontend)
-- **Architecture**: Workspace with 4 crates (core, api, cli, mcp)
+- **Architecture**: Workspace with 5 crates (core, api, cli, mcp, main binary)
+- **Binary**: Single unified `madhyamas` binary (proxy + web UI + MCP + CLI)
+- **Web UI**: Embedded at compile time via `rust-embed` — no external files needed
 - **License**: Dual MIT OR Apache-2.0
 
 ## Project Structure
@@ -13,22 +15,50 @@ HTTP/HTTPS debugging proxy in Rust with React web UI. Alternative to Charles Pro
 ```
 madhyamas/
 ├── crates/
-│   ├── madhyamas-core/      # Core proxy engine, TLS, traffic storage
-│   ├── madhyamas-api/       # REST/WebSocket API server (axum)
-│   ├── madhyamas-cli/       # CLI entry point
-│   └── madhyamas-mcp/       # MCP server for AI agent integration
-├── web/                      # React + TypeScript frontend (Vite)
-├── docs/                     # Documentation
-├── docker/                   # Docker setup
-└── Cargo.toml               # Workspace configuration
+│   ├── madhyamas/          # Unified binary (subcommands: serve/mcp/cli)
+│   ├── madhyamas-core/     # Core proxy engine, TLS, traffic storage
+│   ├── madhyamas-api/      # REST/WebSocket API + embedded web assets (axum)
+│   ├── madhyamas-cli/      # CLI library (re-exported by main binary)
+│   └── madhyamas-mcp/      # MCP server library (re-exported by main binary)
+├── web/                    # React + TypeScript frontend (Vite)
+├── docs/                   # Documentation
+├── docker/                 # Docker setup
+└── Cargo.toml              # Workspace configuration
+```
+
+## Unified Binary Usage
+
+```bash
+# Start proxy server with web UI (default)
+madhyamas
+# or: madhyamas serve
+
+# Run as MCP server (stdio transport)
+madhyamas mcp
+
+# CLI commands
+madhyamas traffic list
+madhyamas mocks list
+madhyamas breakpoints list
+madhyamas sessions list
+madhyamas throttle get
+madhyamas rewrites list
+madhyamas grpc status
+madhyamas scripts list
+madhyamas plugins list
+madhyamas export har --output traffic.har
+madhyamas --help  # See all commands
 ```
 
 ## Core Technologies
 
-**Backend**: axum, hyper, tokio, rustls, rcgen, rusqlite, serde, clap, tracing
+**Backend**: axum, hyper, tokio, rustls, rcgen, rusqlite, serde, clap, tracing, rust-embed
 **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, TanStack Query, Zustand
 
 ## Important Files & Modules
+
+### Main Binary (`madhyamas`)
+- `main.rs` - Unified entry point with subcommands (serve/mcp/cli)
 
 ### Core Crate (`madhyamas-core`)
 - `lib.rs` - Public API exports, error types
@@ -39,15 +69,18 @@ madhyamas/
 
 ### API Crate (`madhyamas-api`)
 - `lib.rs` - API server setup
+- `embedded_assets.rs` - rust-embed web UI serving (compiled into binary)
 - `routes.rs` - Route definitions
 - `handlers/` - Request handlers
 
 ### CLI Crate (`madhyamas-cli`)
-- `main.rs` - Entry point, CLI argument parsing
+- `lib.rs` - Exports `Commands` enum and `ApiClient`
+- `commands/` - CLI subcommands (traffic, mocks, breakpoints, etc.)
 
 ### MCP Crate (`madhyamas-mcp`)
-- `main.rs` - MCP server entry point (stdio transport)
-- `lib.rs` - MCP tools for AI agent integration with Madhyamas API
+- `lib.rs` - Exports `McpServer` and `McpConfig`
+- `server.rs` - MCP server (stdio transport)
+- `tools/` - MCP tools for AI agent integration
 
 ## Development Workflow
 
@@ -62,29 +95,32 @@ madhyamas/
 ./stop-local.sh        # Stop local instance
 
 # Manual commands
-cargo build --release
-RUST_LOG=debug cargo run
+cargo build --release -p madhyamas   # Build unified binary
+RUST_LOG=debug cargo run --bin madhyamas
 cargo test
 cargo fmt --all && cargo clippy --all-targets --all-features
 
-# Frontend
+# Frontend (must build before Rust — assets are embedded at compile time)
 cd web && npm run build
 ```
 
 ## Configuration
 
-**CLI Flags**: `--proxy-port`, `--api-port`, `--host`, `--public-ip`
+**CLI Flags**: `--proxy-port`, `--api-port`, `--host`, `--public-ip`, `--verbose`, `--no-https`
 
 **Environment Variables**:
 - `RUST_LOG` - Logging level (trace/debug/info/warn/error)
-- `MADHYAMAS_HOST` - Bind host (default: 0.0.0.0)
+- `MADHYAMAS_HOST` - Bind host (default: 127.0.0.1)
 - `MADHYAMAS_API_PORT` - API port (default: 3001)
 - `MADHYAMAS_PROXY_PORT` - Proxy port (default: 8888)
 - `MADHYAMAS_PUBLIC_IP` - Public IP shown to users for remote access
+- `MADHYAMAS_API_URL` - API URL for CLI/MCP modes (default: http://127.0.0.1:3001)
+- `MADHYAMAS_WEB_DIR` - Override web asset directory (dev only; defaults to embedded)
 
 **Data Directory**: `~/.madhyamas/` (certs, logs, traffic.db)
 
 **API Endpoints**:
+- `GET /health` - Health check
 - `GET /api/config` - Returns config with detected/host IP for display
 
 ## AI Assistant Guidelines
@@ -115,7 +151,7 @@ new-dep.workspace = true
 ```
 
 ### Debugging
-- `RUST_LOG=debug cargo run -- --verbose`
+- `RUST_LOG=debug cargo run --bin madhyamas -- --verbose`
 - `cargo test -- --nocapture` for test output
 - Check database schema matches code expectations
 
@@ -123,6 +159,7 @@ new-dep.workspace = true
 - **Certificate Errors**: Install CA cert in system trust store
 - **Port Conflicts**: Check ports 8888/3001 available
 - **Database Locked**: Only one instance at a time
+- **Web UI not updating**: Rebuild frontend (`cd web && npm run build`) then rebuild Rust
 
 ## Resources
 

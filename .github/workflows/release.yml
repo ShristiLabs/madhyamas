@@ -10,167 +10,51 @@ env:
 
 jobs:
   # =============================================================================
-  # Build all binaries for all platforms
+  # Build the unified binary for all platforms
+  # Single binary includes: proxy server + web UI (embedded) + MCP + CLI
   # =============================================================================
   build-binaries:
-    name: Build ${{ matrix.package }} for ${{ matrix.target }}
+    name: Build madhyamas for ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Madhyamas Main (with web UI) - Linux
-          - package: madhyamas
-            target: x86_64-unknown-linux-gnu
+          # Linux
+          - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
-            build_web: true
-          - package: madhyamas
-            target: aarch64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
-            build_web: true
             cross: true
-          - package: madhyamas
-            target: armv7-unknown-linux-gnueabihf
+            cross_arch: aarch64
+          - target: armv7-unknown-linux-gnueabihf
             os: ubuntu-latest
             archive: tar.gz
-            build_web: true
             cross: true
             cross_arch: armv7
-          - package: madhyamas
-            target: arm-unknown-linux-gnueabihf
+          - target: arm-unknown-linux-gnueabihf
             os: ubuntu-latest
             archive: tar.gz
-            build_web: true
             cross: true
             cross_arch: armv6
-          - package: madhyamas
-            target: riscv64gc-unknown-linux-gnu
+          - target: riscv64gc-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
-            build_web: true
             cross: true
             cross_arch: riscv64
-          # Madhyamas Main - macOS
-          - package: madhyamas
-            target: x86_64-apple-darwin
+          # macOS
+          - target: x86_64-apple-darwin
             os: macos-14
             archive: tar.gz
-            build_web: true
-          - package: madhyamas
-            target: aarch64-apple-darwin
+          - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
-            build_web: true
-          # Madhyamas Main - Windows
-          - package: madhyamas
-            target: x86_64-pc-windows-msvc
+          # Windows
+          - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
-            build_web: true
-
-          # Madhyamas CLI - Linux
-          - package: madhyamas-cli
-            target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            archive: tar.gz
-            build_web: false
-          - package: madhyamas-cli
-            target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            archive: tar.gz
-            build_web: false
-            cross: true
-          - package: madhyamas-cli
-            target: armv7-unknown-linux-gnueabihf
-            os: ubuntu-latest
-            archive: tar.gz
-            build_web: false
-            cross: true
-            cross_arch: armv7
-          - package: madhyamas-cli
-            target: arm-unknown-linux-gnueabihf
-            os: ubuntu-latest
-            archive: tar.gz
-            build_web: false
-            cross: true
-            cross_arch: armv6
-          - package: madhyamas-cli
-            target: riscv64gc-unknown-linux-gnu
-            os: ubuntu-latest
-            archive: tar.gz
-            build_web: false
-            cross: true
-            cross_arch: riscv64
-          # Madhyamas CLI - macOS
-          - package: madhyamas-cli
-            target: x86_64-apple-darwin
-            os: macos-14
-            archive: tar.gz
-            build_web: false
-          - package: madhyamas-cli
-            target: aarch64-apple-darwin
-            os: macos-latest
-            archive: tar.gz
-            build_web: false
-          # Madhyamas CLI - Windows
-          - package: madhyamas-cli
-            target: x86_64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
-            build_web: false
-
-          # Madhyamas MCP - Linux
-          - package: madhyamas-mcp
-            target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            archive: tar.gz
-            build_web: false
-          - package: madhyamas-mcp
-            target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            archive: tar.gz
-            build_web: false
-            cross: true
-          - package: madhyamas-mcp
-            target: armv7-unknown-linux-gnueabihf
-            os: ubuntu-latest
-            archive: tar.gz
-            build_web: false
-            cross: true
-            cross_arch: armv7
-          - package: madhyamas-mcp
-            target: arm-unknown-linux-gnueabihf
-            os: ubuntu-latest
-            archive: tar.gz
-            build_web: false
-            cross: true
-            cross_arch: armv6
-          - package: madhyamas-mcp
-            target: riscv64gc-unknown-linux-gnu
-            os: ubuntu-latest
-            archive: tar.gz
-            build_web: false
-            cross: true
-            cross_arch: riscv64
-          # Madhyamas MCP - macOS
-          - package: madhyamas-mcp
-            target: x86_64-apple-darwin
-            os: macos-14
-            archive: tar.gz
-            build_web: false
-          - package: madhyamas-mcp
-            target: aarch64-apple-darwin
-            os: macos-latest
-            archive: tar.gz
-            build_web: false
-          # Madhyamas MCP - Windows
-          - package: madhyamas-mcp
-            target: x86_64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
-            build_web: false
 
     steps:
       - uses: actions/checkout@v4
@@ -205,12 +89,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.package }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.target }}-${{ matrix.package }}-cargo-
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       - name: Setup Node.js
-        if: matrix.build_web
         uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -218,7 +101,6 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Build frontend
-        if: matrix.build_web
         working-directory: web
         run: |
           npm ci
@@ -230,35 +112,17 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Build binary
-        run: cargo build --release --target ${{ matrix.target }} -p ${{ matrix.package }}
-
-      - name: Determine binary name
-        id: binary
-        shell: bash
-        run: |
-          # Binary name matches package name for all packages
-          echo "NAME=${{ matrix.package }}" >> $GITHUB_OUTPUT
+        run: cargo build --release --target ${{ matrix.target }} -p madhyamas
 
       - name: Package (Unix)
         if: matrix.os != 'windows-latest'
         shell: bash
         run: |
-          ARTIFACT_NAME="${{ matrix.package }}-v${{ steps.version.outputs.VERSION }}-${{ matrix.target }}"
+          ARTIFACT_NAME="madhyamas-v${{ steps.version.outputs.VERSION }}-${{ matrix.target }}"
           mkdir -p dist/$ARTIFACT_NAME
-
-          # Copy binary
-          cp target/${{ matrix.target }}/release/${{ steps.binary.outputs.NAME }} dist/$ARTIFACT_NAME/
-
-          # Copy web assets for main package
-          if [ "${{ matrix.build_web }}" = "true" ]; then
-            cp -r web/dist dist/$ARTIFACT_NAME/web
-          fi
-
-          # Create archive
+          cp target/${{ matrix.target }}/release/madhyamas dist/$ARTIFACT_NAME/
           cd dist
           tar -czvf $ARTIFACT_NAME.tar.gz $ARTIFACT_NAME
-
-          # Generate checksum (use shasum on macOS, sha256sum on Linux)
           if command -v sha256sum &> /dev/null; then
             sha256sum $ARTIFACT_NAME.tar.gz > $ARTIFACT_NAME.tar.gz.sha256
           else
@@ -269,30 +133,19 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $ARTIFACT_NAME = "${{ matrix.package }}-v${{ steps.version.outputs.VERSION }}-${{ matrix.target }}"
+          $ARTIFACT_NAME = "madhyamas-v${{ steps.version.outputs.VERSION }}-${{ matrix.target }}"
           New-Item -ItemType Directory -Path "dist\$ARTIFACT_NAME" -Force
-
-          # Copy binary
-          Copy-Item "target\${{ matrix.target }}\release\${{ steps.binary.outputs.NAME }}.exe" "dist\$ARTIFACT_NAME\"
-
-          # Copy web assets for main package
-          if ("${{ matrix.build_web }}" -eq "true") {
-            Copy-Item -Recurse "web\dist" "dist\$ARTIFACT_NAME\web"
-          }
-
-          # Create archive
+          Copy-Item "target\${{ matrix.target }}\release\madhyamas.exe" "dist\$ARTIFACT_NAME\"
           cd dist
           7z a "$ARTIFACT_NAME.zip" "$ARTIFACT_NAME"
-
-          # Generate checksum
           $hash = Get-FileHash "$ARTIFACT_NAME.zip" -Algorithm SHA256
           "$($hash.Hash)  $ARTIFACT_NAME.zip" | Out-File "$ARTIFACT_NAME.zip.sha256" -Encoding ASCII
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.package }}-${{ matrix.target }}
-          path: dist/${{ matrix.package }}-v*.*
+          name: madhyamas-${{ matrix.target }}
+          path: dist/madhyamas-v*.*
 
   # =============================================================================
   # Build Windows MSI Installer
@@ -304,10 +157,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Windows artifacts
+      - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          pattern: "*-x86_64-pc-windows-msvc"
+          name: madhyamas-x86_64-pc-windows-msvc
           path: artifacts
 
       - name: Extract version
@@ -316,29 +169,17 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Install WiX Toolset
-        run: |
-          dotnet tool install --global wix
+        run: dotnet tool install --global wix
 
       - name: Prepare MSI source files
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path "msi-source\bin" -Force
-
-          # Extract all packages
           $artifacts = Get-ChildItem -Path "artifacts" -Recurse -Filter "*.zip"
           foreach ($artifact in $artifacts) {
             7z x $artifact.FullName -o"temp" -y
           }
-
-          # Copy binaries
           Copy-Item "temp\madhyamas-*\madhyamas.exe" "msi-source\bin\" -ErrorAction SilentlyContinue
-          Copy-Item "temp\madhyamas-cli-*\madhyamas-cli.exe" "msi-source\bin\" -ErrorAction SilentlyContinue
-          Copy-Item "temp\madhyamas-mcp-*\madhyamas-mcp.exe" "msi-source\bin\" -ErrorAction SilentlyContinue
-
-          # Copy web assets
-          if (Test-Path "temp\madhyamas-*\web") {
-            Copy-Item -Recurse "temp\madhyamas-*\web" "msi-source\"
-          }
 
       - name: Build MSI
         shell: pwsh
@@ -359,14 +200,11 @@ jobs:
           path: dist/madhyamas-v*.msi*
 
   # =============================================================================
-  # Build Snap packages
+  # Build Snap package
   # =============================================================================
   build-snap:
-    name: Build Snap Package (${{ matrix.package }})
+    name: Build Snap Package
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        package: [madhyamas, madhyamas-cli, madhyamas-mcp]
     steps:
       - uses: actions/checkout@v4
 
@@ -374,13 +212,9 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Select snapcraft file
+      - name: Copy snapcraft file
         run: |
-          if [ "${{ matrix.package }}" = "madhyamas" ]; then
-            cp packaging/linux/snap/snapcraft.yaml snap/snapcraft.yaml
-          else
-            cp packaging/linux/snap/${{ matrix.package }}.snapcraft.yaml snap/snapcraft.yaml
-          fi
+          cp packaging/linux/snap/snapcraft.yaml snap/snapcraft.yaml
           mkdir -p snap
 
       - name: Build Snap
@@ -389,33 +223,33 @@ jobs:
 
       - name: Rename snap file
         run: |
-          mv ${{ steps.snapcraft.outputs.snap }} ${{ matrix.package }}-v${{ steps.version.outputs.VERSION }}.snap
+          mv ${{ steps.snapcraft.outputs.snap }} madhyamas-v${{ steps.version.outputs.VERSION }}.snap
 
       - name: Upload Snap artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.package }}-snap
-          path: ${{ matrix.package }}-v*.snap
+          name: madhyamas-snap
+          path: madhyamas-v*.snap
 
   # =============================================================================
-  # Build RPM packages
+  # Build RPM package
   # =============================================================================
   build-rpm:
-    name: Build RPM Package (${{ matrix.package }})
+    name: Build RPM Package
     runs-on: ubuntu-latest
     container: fedora:latest
-    strategy:
-      matrix:
-        package: [madhyamas, madhyamas-cli, madhyamas-mcp]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install build dependencies
         run: |
-          dnf install -y rpm-build rpmdevtools rust cargo openssl-devel gcc
-          if [ "${{ matrix.package }}" = "madhyamas" ]; then
-            dnf install -y nodejs npm
-          fi
+          dnf install -y rpm-build rpmdevtools rust cargo openssl-devel gcc nodejs npm
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
 
       - name: Setup RPM build environment
         run: rpmdev-setuptree
@@ -426,7 +260,7 @@ jobs:
 
       - name: Copy spec file
         run: |
-          cp packaging/linux/rpm/${{ matrix.package }}.spec ~/rpmbuild/SPECS/
+          cp packaging/linux/rpm/madhyamas.spec ~/rpmbuild/SPECS/
           if [ -f packaging/linux/rpm/madhyamas.service ]; then
             cp packaging/linux/rpm/madhyamas.service ~/rpmbuild/SOURCES/
           fi
@@ -438,8 +272,7 @@ jobs:
             --exclude='.git' --exclude='target' --exclude='node_modules' .
 
       - name: Build RPM
-        run: |
-          rpmbuild -ba ~/rpmbuild/SPECS/${{ matrix.package }}.spec
+        run: rpmbuild -ba ~/rpmbuild/SPECS/madhyamas.spec
 
       - name: Copy RPM to dist
         run: |
@@ -449,7 +282,7 @@ jobs:
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.package }}-rpm
+          name: madhyamas-rpm
           path: dist/*.rpm
 
   # =============================================================================
@@ -469,9 +302,6 @@ jobs:
         with:
           path: artifacts
 
-      - name: Display structure of downloaded files
-        run: find artifacts -type f | head -100
-
       - name: Extract version
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
@@ -489,14 +319,15 @@ jobs:
           body: |
             ## Madhyamas v${{ steps.version.outputs.VERSION }}
 
+            **Single unified binary** — proxy server, web UI, MCP server, and CLI in one executable.
+            Web UI assets are embedded in the binary — no external files needed.
+
             ### Installation
 
             #### macOS (Homebrew)
             ```bash
             brew tap madhyamas/tap
             brew install madhyamas
-            brew install madhyamas-cli  # Optional CLI
-            brew install madhyamas-mcp  # Optional MCP server
             ```
 
             #### Windows (Chocolatey)
@@ -517,49 +348,41 @@ jobs:
             sudo dnf install ./madhyamas-${{ steps.version.outputs.VERSION }}-1.x86_64.rpm
             ```
 
+            ### Usage
+
+            ```bash
+            # Start proxy server with web UI (default)
+            ./madhyamas
+            # or: ./madhyamas serve
+
+            # Web UI: http://localhost:3001
+            # Proxy:  localhost:8888
+
+            # Run as MCP server (stdio transport)
+            ./madhyamas mcp
+
+            # CLI commands
+            ./madhyamas traffic list
+            ./madhyamas mocks list
+            ./madhyamas breakpoints list
+            ./madhyamas sessions list
+            ./madhyamas throttle get
+            # ... and more (run ./madhyamas --help)
+            ```
+
             ### Downloads
 
-            #### Madhyamas (Main Server + Web UI)
             | Platform | Download |
             |----------|----------|
             | Linux x64 | `madhyamas-v${{ steps.version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz` |
             | Linux ARM64 | `madhyamas-v${{ steps.version.outputs.VERSION }}-aarch64-unknown-linux-gnu.tar.gz` |
             | Linux ARMv7 (Pi 2/3/4 32-bit) | `madhyamas-v${{ steps.version.outputs.VERSION }}-armv7-unknown-linux-gnueabihf.tar.gz` |
+            | Linux ARMv6 (Pi 1/Zero 32-bit) | `madhyamas-v${{ steps.version.outputs.VERSION }}-arm-unknown-linux-gnueabihf.tar.gz` |
+            | Linux RISC-V 64 | `madhyamas-v${{ steps.version.outputs.VERSION }}-riscv64gc-unknown-linux-gnu.tar.gz` |
             | macOS Intel | `madhyamas-v${{ steps.version.outputs.VERSION }}-x86_64-apple-darwin.tar.gz` |
             | macOS Apple Silicon | `madhyamas-v${{ steps.version.outputs.VERSION }}-aarch64-apple-darwin.tar.gz` |
             | Windows x64 | `madhyamas-v${{ steps.version.outputs.VERSION }}-x86_64-pc-windows-msvc.zip` |
             | Windows MSI | `madhyamas-v${{ steps.version.outputs.VERSION }}-x64.msi` |
-
-            #### Madhyamas CLI
-            | Platform | Download |
-            |----------|----------|
-            | Linux x64 | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz` |
-            | Linux ARM64 | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-aarch64-unknown-linux-gnu.tar.gz` |
-            | Linux ARMv7 (Pi 2/3/4 32-bit) | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-armv7-unknown-linux-gnueabihf.tar.gz` |
-            | macOS Intel | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-x86_64-apple-darwin.tar.gz` |
-            | macOS Apple Silicon | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-aarch64-apple-darwin.tar.gz` |
-            | Windows x64 | `madhyamas-cli-v${{ steps.version.outputs.VERSION }}-x86_64-pc-windows-msvc.zip` |
-
-            #### Madhyamas MCP Server
-            | Platform | Download |
-            |----------|----------|
-            | Linux x64 | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz` |
-            | Linux ARM64 | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-aarch64-unknown-linux-gnu.tar.gz` |
-            | Linux ARMv7 (Pi 2/3/4 32-bit) | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-armv7-unknown-linux-gnueabihf.tar.gz` |
-            | macOS Intel | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-x86_64-apple-darwin.tar.gz` |
-            | macOS Apple Silicon | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-aarch64-apple-darwin.tar.gz` |
-            | Windows x64 | `madhyamas-mcp-v${{ steps.version.outputs.VERSION }}-x86_64-pc-windows-msvc.zip` |
-
-            ### Quick Start
-            ```bash
-            # Extract and run
-            tar -xzf madhyamas-v${{ steps.version.outputs.VERSION }}-*.tar.gz
-            cd madhyamas-v${{ steps.version.outputs.VERSION }}-*/
-            ./madhyamas start
-
-            # Web UI: http://localhost:3000
-            # Proxy: localhost:8888
-            ```
 
             ### Changes
             See [CHANGELOG.md](CHANGELOG.md) for details.
@@ -584,23 +407,16 @@ jobs:
       - name: Download release checksums
         run: |
           mkdir -p checksums
-          for pkg in madhyamas madhyamas-cli madhyamas-mcp; do
-            for target in x86_64-apple-darwin aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
-              curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/${pkg}-v${{ steps.version.outputs.VERSION }}-${target}.tar.gz.sha256" -o "checksums/${pkg}-${target}.sha256" || true
-            done
+          for target in x86_64-apple-darwin aarch64-apple-darwin; do
+            curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/madhyamas-v${{ steps.version.outputs.VERSION }}-${target}.tar.gz.sha256" -o "checksums/madhyamas-${target}.sha256" || true
           done
 
-      - name: Update Homebrew formulas
+      - name: Update Homebrew formula
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-
-          # Update version in formulas
           for formula in packaging/homebrew/*.rb; do
             sed -i "s/version \"[^\"]*\"/version \"$VERSION\"/" "$formula"
           done
-
-          # Update checksums (read from downloaded files)
-          # This is a placeholder - actual implementation would parse sha256 files
 
       - name: Push to Homebrew tap
         if: github.repository == 'madhyamas/madhyamas'
@@ -608,9 +424,6 @@ jobs:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           echo "Would push updated formulas to homebrew-tap repository"
-          # git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/madhyamas/homebrew-tap.git
-          # cp packaging/homebrew/*.rb homebrew-tap/Formula/
-          # cd homebrew-tap && git add . && git commit -m "Update to v${{ steps.version.outputs.VERSION }}" && git push
 
   publish-chocolatey:
     name: Publish to Chocolatey
@@ -624,37 +437,21 @@ jobs:
         shell: bash
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Download Windows artifacts
-        run: |
-          mkdir -p artifacts
-          $packages = @("madhyamas", "madhyamas-cli", "madhyamas-mcp")
-          foreach ($pkg in $packages) {
-            $url = "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/${pkg}-v${{ steps.version.outputs.VERSION }}-x86_64-pc-windows-msvc.zip.sha256"
-            Invoke-WebRequest -Uri $url -OutFile "artifacts/${pkg}.sha256" -ErrorAction SilentlyContinue
-          }
-
-      - name: Update Chocolatey packages
+      - name: Update Chocolatey package
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.VERSION }}"
-
-          # Update nuspec versions
           Get-ChildItem -Path "packaging/windows/chocolatey" -Recurse -Filter "*.nuspec" | ForEach-Object {
             (Get-Content $_.FullName) -replace '<version>[^<]*</version>', "<version>$version</version>" | Set-Content $_.FullName
           }
-
-          # Update install script URLs and checksums
           Get-ChildItem -Path "packaging/windows/chocolatey" -Recurse -Filter "chocolateyinstall.ps1" | ForEach-Object {
             (Get-Content $_.FullName) -replace '__VERSION__', $version | Set-Content $_.FullName
           }
 
-      - name: Pack Chocolatey packages
+      - name: Pack Chocolatey package
         shell: pwsh
         run: |
-          $packages = @("madhyamas", "madhyamas-cli", "madhyamas-mcp")
-          foreach ($pkg in $packages) {
-            choco pack "packaging/windows/chocolatey/$pkg/$pkg.nuspec" --outputdirectory dist
-          }
+          choco pack "packaging/windows/chocolatey/madhyamas/madhyamas.nuspec" --outputdirectory dist
 
       - name: Publish to Chocolatey
         if: github.repository == 'madhyamas/madhyamas'
@@ -671,10 +468,10 @@ jobs:
     needs: build-snap
     runs-on: ubuntu-latest
     steps:
-      - name: Download Snap artifacts
+      - name: Download Snap artifact
         uses: actions/download-artifact@v4
         with:
-          pattern: "*-snap"
+          name: madhyamas-snap
           path: snaps
 
       - name: Publish to Snap Store
@@ -757,4 +554,7 @@ jobs:
           cargo publish -p madhyamas-api --token $CRATES_TOKEN || true
           sleep 30
           cargo publish -p madhyamas-cli --token $CRATES_TOKEN || true
+          sleep 30
           cargo publish -p madhyamas-mcp --token $CRATES_TOKEN || true
+          sleep 30
+          cargo publish -p madhyamas --token $CRATES_TOKEN || true

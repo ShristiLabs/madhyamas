@@ -1,63 +1,105 @@
-//! Madhyamas - HTTP/HTTPS Debugging Proxy Server
+//! Madhyamas — Unified HTTP/HTTPS Debugging Proxy
 //!
-//! This is the main server binary that includes the API server and serves the web UI.
+//! Single binary that combines:
+//! - **Proxy server + Web UI** (`madhyamas` or `madhyamas serve`)
+//! - **MCP server** (`madhyamas mcp`)
+//! - **CLI commands** (`madhyamas traffic list`, `madhyamas mocks create`, etc.)
+//!
+//! Web UI assets are embedded at compile time — no external files needed.
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::sync::Arc;
 
 use madhyamas_api::create_router;
-use madhyamas_core::{CertificateManager, ProxyConfig, ProxyEngine, TrafficStore};
+use madhyamas_core::{
+    BreakpointManager, CertificateManager, GrpcManager, MockManager, PluginManager, ProxyConfig,
+    ProxyEngine, RewriteManager, ScriptRuntime, ThrottleManager, TrafficStore,
+};
 
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
+// Re-export CLI commands from the madhyamas-cli library
+use madhyamas_cli::Commands as CliCommands;
+
+// Re-export MCP server from the madhyamas-mcp library
+use madhyamas_mcp::{McpConfig, McpServer};
+
 #[derive(Parser, Debug)]
 #[command(name = "madhyamas")]
 #[command(author = "Madhyamas Team", version, about, long_about = None)]
-#[command(about = "HTTP/HTTPS Debugging Proxy Server with Web UI")]
+#[command(about = "HTTP/HTTPS Debugging Proxy — unified binary (proxy + web UI + MCP + CLI)")]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    // ── Proxy server options (used when no subcommand or `serve`) ──
     /// Port for the proxy server
-    #[arg(short, long, default_value = "8888")]
+    #[arg(short, long, default_value = "8888", global = true)]
     proxy_port: u16,
 
     /// Port for the web UI API
-    #[arg(short, long, default_value = "3001")]
+    #[arg(short, long, default_value = "3001", global = true)]
     api_port: u16,
 
     /// Host to bind to
-    #[arg(long, default_value = "127.0.0.1")]
+    #[arg(long, default_value = "127.0.0.1", global = true)]
     host: String,
 
     /// Public IP address to show to users (optional)
-    /// If not set, the frontend will auto-detect the local network IP
-    /// Use this when hosting on a remote server or specific network interface
-    #[arg(long, env = "MADHYAMAS_PUBLIC_IP")]
+    #[arg(long, env = "MADHYAMAS_PUBLIC_IP", global = true)]
     public_ip: Option<String>,
 
     /// Certificate storage path (defaults to ~/.madhyamas/certs)
-    #[arg(long)]
+    #[arg(long, global = true)]
     cert_path: Option<String>,
 
     /// Database path for traffic storage (defaults to ~/.madhyamas/traffic.db)
-    #[arg(long)]
+    #[arg(long, global = true)]
     db_path: Option<String>,
 
     /// Log file path (defaults to ~/.madhyamas/logs)
-    #[arg(long)]
+    #[arg(long, global = true)]
     log_path: Option<String>,
 
     /// Enable verbose logging
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     verbose: bool,
 
     /// Maximum requests to keep in memory
-    #[arg(long, default_value = "10000")]
+    #[arg(long, default_value = "10000", global = true)]
     max_requests: usize,
 
     /// Disable HTTPS interception
-    #[arg(long)]
+    #[arg(long, global = true)]
     no_https: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Start the proxy server with web UI (default action)
+    Serve,
+
+    /// Run as an MCP (Model Context Protocol) server via stdio
+    #[command(name = "mcp")]
+    Mcp {
+        /// API server URL to connect to
+        #[arg(
+            long,
+            env = "MADHYAMAS_API_URL",
+            default_value = "http://127.0.0.1:3001"
+        )]
+        api_url: String,
+
+        /// Request timeout in seconds
+        #[arg(long, env = "MADHYAMAS_TIMEOUT", default_value_t = 30)]
+        timeout_secs: u64,
+    },
+
+    /// CLI commands for interacting with a running Madhyamas server
+    #[command(flatten)]
+    Cli(CliCommands),
 }
 
 #[tokio::main]
@@ -67,20 +109,67 @@ async fn main() -> Result<()> {
         .install_default()
         .expect("Failed to install rustls CryptoProvider");
 
+    let args = Args::parse();
+
     // Initialize logging
-    let level = if cfg!(debug_assertions) {
+    let level = if args.verbose || cfg!(debug_assertions) {
         Level::DEBUG
     } else {
         Level::INFO
     };
-    let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
-    let _ = tracing::subscriber::set_global_default(subscriber);
 
+    match args.command {
+        Some(Command::Mcp {
+            api_url,
+            timeout_secs,
+        }) => {
+            // MCP mode: log to stderr to avoid corrupting stdio JSON-RPC
+            let subscriber = FmtSubscriber::builder()
+                .with_max_level(level)
+                .with_target(false)
+                .with_thread_ids(false)
+                .with_writer(std::io::stderr)
+                .finish();
+            let _ = tracing::subscriber::set_global_default(subscriber);
+
+            info!("Starting Madhyamas MCP Server");
+            info!("API URL: {}", api_url);
+
+            let config = McpConfig {
+                api_url,
+                timeout_secs,
+            };
+            let server = McpServer::new(config).expect("Failed to create MCP server");
+            if let Err(e) = server.run() {
+                eprintln!("MCP server error: {}", e);
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+
+        Some(Command::Cli(cli_cmd)) => {
+            // CLI mode: standard logging
+            let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
+            let _ = tracing::subscriber::set_global_default(subscriber);
+
+            let api_url = std::env::var("MADHYAMAS_API_URL")
+                .unwrap_or_else(|_| format!("http://{}:{}", args.host, args.api_port));
+            cli_cmd.execute(api_url).await
+        }
+
+        Some(Command::Serve) | None => {
+            // Proxy server mode (default)
+            let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
+            let _ = tracing::subscriber::set_global_default(subscriber);
+
+            run_proxy_server(args).await
+        }
+    }
+}
+
+async fn run_proxy_server(args: Args) -> Result<()> {
     info!("Starting Madhyamas...");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
-
-    // Parse command line arguments
-    let args = Args::parse();
 
     // Create configuration with defaults, then override with CLI args
     let defaults = ProxyConfig::default();
@@ -107,15 +196,30 @@ async fn main() -> Result<()> {
 
     // Initialize traffic store
     let traffic_store = TrafficStore::new(config.db_path.clone())?;
-    // Apply configured max body size (default 20 MB)
     traffic_store.set_max_body_size(config.max_body_size);
 
     info!("Starting proxy engine...");
     let cert_manager_for_api = cert_manager.clone();
-    let proxy_engine =
-        ProxyEngine::new(config.clone(), cert_manager, traffic_store.clone()).await?;
 
-    // Clone for the proxy task
+    // Create shared intercept managers
+    let mock_manager = Arc::new(MockManager::new());
+    let rewrite_manager = Arc::new(RewriteManager::new());
+    let breakpoint_manager = Arc::new(BreakpointManager::new(100));
+    let throttle_manager = Arc::new(ThrottleManager::new());
+    let grpc_manager = Arc::new(GrpcManager::default());
+    let script_runtime = Arc::new(ScriptRuntime::default());
+    let plugin_manager = Arc::new(PluginManager::default());
+
+    let proxy_engine = ProxyEngine::new(config.clone(), cert_manager, traffic_store.clone())
+        .await?
+        .with_mock_manager(mock_manager.clone())
+        .with_rewrite_manager(rewrite_manager.clone())
+        .with_breakpoint_manager(breakpoint_manager.clone())
+        .with_throttle_manager(throttle_manager.clone())
+        .with_grpc_manager(grpc_manager.clone())
+        .with_script_runtime(script_runtime.clone())
+        .with_plugin_manager(plugin_manager.clone());
+
     let proxy_engine_clone = proxy_engine.clone();
     let proxy_task = tokio::spawn(async move {
         if let Err(e) = proxy_engine_clone.start().await {
@@ -123,15 +227,19 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Create API state with certificate manager for cert download
     let api_state = madhyamas_api::AppState::new(traffic_store.clone())
         .with_cert_manager(cert_manager_for_api)
-        .with_proxy_config(Arc::new(config.clone()));
+        .with_proxy_config(Arc::new(config.clone()))
+        .with_mock_manager(mock_manager)
+        .with_rewrite_manager(rewrite_manager)
+        .with_breakpoint_manager(breakpoint_manager)
+        .with_throttle_manager(throttle_manager)
+        .with_grpc_manager(grpc_manager)
+        .with_script_runtime(script_runtime)
+        .with_plugin_manager(plugin_manager);
 
-    // Create the API router
     let app = create_router(api_state);
 
-    // Start the API server
     let api_addr = config.api_addr();
     info!("Starting API server on {}", api_addr);
 
@@ -149,9 +257,11 @@ async fn main() -> Result<()> {
         "  Certificate location: {}",
         config.ca_cert_path().display()
     );
+    info!("");
+    info!("Other modes:");
+    info!("  MCP server:  madhyamas mcp");
+    info!("  CLI:         madhyamas traffic list  (or mocks/breakpoints/sessions/...)");
 
-    // Drop the proxy_task handle since we don't need to join it
-    // (it runs until the program exits)
     drop(proxy_task);
 
     axum::serve(listener, app).await?;

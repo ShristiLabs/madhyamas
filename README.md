@@ -79,28 +79,36 @@ Download the latest release for your platform from the [Releases](https://github
 
 ### Snapshot Builds
 
-Snapshot builds are automatically generated from the latest `main` branch and are available as CI artifacts. These builds include all three binaries for each supported platform.
+Snapshot builds are automatically generated from the latest `main` branch and are available as CI artifacts. A single unified binary is built for each supported platform — it includes the proxy server, web UI (embedded), MCP server, and CLI.
 
-#### Available Binaries
+#### Available Binary
 
 | Binary          | Description                   | Use Case                                          |
 | --------------- | ----------------------------- | ------------------------------------------------- |
-| `madhyamas`     | Main server with API + Web UI | Full debugging proxy with browser-based interface |
-| `madhyamas-cli` | Command-line interface        | Scripting, automation, and headless operation     |
-| `madhyamas-mcp` | MCP server for AI agents      | Integration with Claude and other AI assistants   |
+| `madhyamas`     | Unified binary (proxy + web UI + MCP + CLI) | Full debugging proxy with browser-based interface, CLI, and AI agent integration |
+
+#### Subcommands
+
+```bash
+madhyamas              # Start proxy server with web UI (default)
+madhyamas serve        # Same as above
+madhyamas mcp          # Run as MCP server (stdio)
+madhyamas traffic list # CLI command
+madhyamas --help       # See all commands
+```
 
 #### Platform Support
 
-| Platform                | Target                          | Architecture                              | Binaries                                                  | Install Instructions                                                       |
-| ----------------------- | ------------------------------- | ----------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------- |
-| **Linux x86_64**        | `x86_64-unknown-linux-gnu`      | Intel/AMD 64-bit                          | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas* /usr/local/bin/`        |
-| **Linux ARM64**         | `aarch64-unknown-linux-gnu`     | ARM 64-bit (Pi 4/5, AWS Graviton)         | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas* /usr/local/bin/`        |
-| **Linux ARMv7**         | `armv7-unknown-linux-gnueabihf` | ARM 32-bit (Pi 2/3/4 32-bit)              | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas* /usr/local/bin/`        |
-| **Linux ARMv6**         | `arm-unknown-linux-gnueabihf`   | ARM 32-bit (Pi Zero/Zero W)               | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas* /usr/local/bin/`        |
-| **Linux RISC-V 64**     | `riscv64gc-unknown-linux-gnu`   | RISC-V 64-bit (LicheeRV Nano, VisionFive) | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas* /usr/local/bin/`        |
-| **macOS Intel**         | `x86_64-apple-darwin`           | Intel Mac                                 | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && mv madhyamas* /usr/local/bin/`             |
-| **macOS Apple Silicon** | `aarch64-apple-darwin`          | M1/M2/M3 Mac                              | `madhyamas`, `madhyamas-cli`, `madhyamas-mcp`             | `tar -xzf madhyamas-*.tar.gz && mv madhyamas* /usr/local/bin/`             |
-| **Windows x64**         | `x86_64-pc-windows-msvc`        | Intel/AMD 64-bit                          | `madhyamas.exe`, `madhyamas-cli.exe`, `madhyamas-mcp.exe` | Extract ZIP, add folder to `PATH` or move to `C:\Program Files\Madhyamas\` |
+| Platform                | Target                          | Architecture                              | Binary            | Install Instructions                                                       |
+| ----------------------- | ------------------------------- | ----------------------------------------- | ----------------- | -------------------------------------------------------------------------- |
+| **Linux x86_64**        | `x86_64-unknown-linux-gnu`      | Intel/AMD 64-bit                          | `madhyamas`       | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas /usr/local/bin/`         |
+| **Linux ARM64**         | `aarch64-unknown-linux-gnu`     | ARM 64-bit (Pi 4/5, AWS Graviton)         | `madhyamas`       | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas /usr/local/bin/`         |
+| **Linux ARMv7**         | `armv7-unknown-linux-gnueabihf` | ARM 32-bit (Pi 2/3/4 32-bit)              | `madhyamas`       | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas /usr/local/bin/`         |
+| **Linux ARMv6**         | `arm-unknown-linux-gnueabihf`   | ARM 32-bit (Pi Zero/Zero W)               | `madhyamas`       | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas /usr/local/bin/`         |
+| **Linux RISC-V 64**     | `riscv64gc-unknown-linux-gnu`   | RISC-V 64-bit (LicheeRV Nano, VisionFive) | `madhyamas`       | `tar -xzf madhyamas-*.tar.gz && sudo mv madhyamas /usr/local/bin/`         |
+| **macOS Intel**         | `x86_64-apple-darwin`           | Intel Mac                                 | `madhyamas`       | `tar -xzf madhyamas-*.tar.gz && mv madhyamas /usr/local/bin/`              |
+| **macOS Apple Silicon** | `aarch64-apple-darwin`          | M1/M2/M3 Mac                              | `madhyamas`       | `tar -xzf madhyamas-*.tar.gz && mv madhyamas /usr/local/bin/`              |
+| **Windows x64**         | `x86_64-pc-windows-msvc`        | Intel/AMD 64-bit                          | `madhyamas.exe`   | Extract ZIP, add folder to `PATH` or move to `C:\Program Files\Madhyamas\` |
 
 #### Downloading Snapshot Builds
 
@@ -233,11 +241,14 @@ Madhyamas includes a built-in MCP (Model Context Protocol) server that allows AI
 ### Running the MCP Server
 
 ```bash
-# Build and run the MCP server
-cargo run --bin madhyamas-mcp
+# Run the MCP server (stdio transport)
+madhyamas mcp
 
 # Or with custom API URL
-MADHYAMAS_API_URL=http://localhost:3001 cargo run --bin madhyamas-mcp
+MADHYAMAS_API_URL=http://localhost:3001 madhyamas mcp
+
+# During development
+cargo run --bin madhyamas -- mcp
 ```
 
 ### Configuring Claude Desktop
@@ -248,7 +259,8 @@ Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/
 {
   "mcpServers": {
     "madhyamas": {
-      "command": "/path/to/madhyamas-mcp"
+      "command": "/path/to/madhyamas",
+      "args": ["mcp"]
     }
   }
 }
@@ -329,10 +341,12 @@ All commands support `--json` flag for machine-readable output.
 madhyamas/
 ├── Cargo.toml                 # Workspace configuration
 ├── crates/
-│   ├── madhyamas-core/       # Core proxy engine (Rust)
-│   ├── madhyamas-api/        # REST/WebSocket API (Rust)
-│   └── madhyamas-cli/        # CLI entry point (Rust)
-├── web/                        # React frontend
+│   ├── madhyamas/             # Unified binary (proxy + web UI + MCP + CLI)
+│   ├── madhyamas-core/        # Core proxy engine (Rust)
+│   ├── madhyamas-api/         # REST/WebSocket API + embedded web assets (Rust)
+│   ├── madhyamas-cli/         # CLI library (re-exported by main binary)
+│   └── madhyamas-mcp/         # MCP server library (re-exported by main binary)
+├── web/                       # React frontend (embedded at compile time)
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── src/

@@ -775,6 +775,390 @@ impl ToolRegistry {
                     "properties": {}
                 }),
             },
+
+            // Throttle tools
+            Tool {
+                name: "madhyamas_get_throttle".to_string(),
+                description: "Get the current network throttle profile, including download/upload bandwidth limits, latency, jitter, and packet loss.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_set_throttle".to_string(),
+                description: "Set a custom network throttle profile to simulate slow or unreliable network conditions. Optionally enable/disable throttling at the same time.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "download_bps": {
+                            "type": "integer",
+                            "description": "Download bandwidth in bytes per second (0 = unlimited)"
+                        },
+                        "upload_bps": {
+                            "type": "integer",
+                            "description": "Upload bandwidth in bytes per second (0 = unlimited)"
+                        },
+                        "delay_ms": {
+                            "type": "integer",
+                            "description": "Latency in milliseconds"
+                        },
+                        "jitter_ms": {
+                            "type": "integer",
+                            "description": "Jitter in milliseconds"
+                        },
+                        "packet_loss_percent": {
+                            "type": "integer",
+                            "description": "Packet loss percentage (0-100)"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Profile name"
+                        },
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Whether to enable throttling immediately"
+                        }
+                    }
+                }),
+            },
+            Tool {
+                name: "madhyamas_toggle_throttle".to_string(),
+                description: "Enable or disable network throttling without changing the active profile.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "true to enable throttling, false to disable"
+                        }
+                    },
+                    "required": ["enabled"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_throttle_presets".to_string(),
+                description: "List available predefined throttle profiles (e.g., GPRS, EDGE, 3G, 4G LTE) for quick network simulation.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+
+            // Rewrite tools
+            Tool {
+                name: "madhyamas_list_rewrites".to_string(),
+                description: "List all URL/header rewrite rules currently configured.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_create_rewrite".to_string(),
+                description: "Create a rewrite rule to modify URLs, headers, or bodies of matching requests/responses.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name for the rewrite rule"
+                        },
+                        "condition": {
+                            "type": "object",
+                            "description": "Match condition (e.g., {\"type\": \"url_pattern\", \"pattern\": \"https://api.example.com/.*\"})"
+                        },
+                        "direction": {
+                            "type": "string",
+                            "enum": ["request", "response", "both"],
+                            "description": "Which direction to apply rewrites (default: request)"
+                        },
+                        "rewrites": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                            "description": "List of rewrite actions to apply (e.g., {\"type\": \"set_header\", \"name\": \"X-Custom\", \"value\": \"test\"})"
+                        },
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Whether the rule is enabled (default: true)"
+                        },
+                        "priority": {
+                            "type": "integer",
+                            "description": "Priority (lower = higher priority, default: 100)"
+                        }
+                    },
+                    "required": ["name", "condition", "direction", "rewrites"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_delete_rewrite".to_string(),
+                description: "Delete a rewrite rule.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the rewrite rule to delete"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_toggle_rewrite".to_string(),
+                description: "Enable or disable a rewrite rule.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the rewrite rule to toggle"
+                        },
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "true to enable, false to disable"
+                        }
+                    },
+                    "required": ["id", "enabled"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_rewrite_templates".to_string(),
+                description: "Get predefined rewrite rule templates for common scenarios.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+
+            // gRPC tools
+            Tool {
+                name: "madhyamas_get_grpc_connections".to_string(),
+                description: "List all captured gRPC connections.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_grpc_streams".to_string(),
+                description: "List all gRPC streams observed by the proxy.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_grpc_frames".to_string(),
+                description: "Get captured gRPC frames, optionally filtered.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "filter": {
+                            "type": "string",
+                            "description": "Optional filter expression for frames"
+                        }
+                    }
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_grpc_stats".to_string(),
+                description: "Get aggregated gRPC traffic statistics.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_clear_grpc".to_string(),
+                description: "Clear all captured gRPC frames and reset statistics.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+
+            // Script tools
+            Tool {
+                name: "madhyamas_list_scripts".to_string(),
+                description: "List all registered scripts.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_create_script".to_string(),
+                description: "Create a new script that runs on specified request/response hooks.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name for the script"
+                        },
+                        "source": {
+                            "type": "string",
+                            "description": "The script source code"
+                        },
+                        "hook": {
+                            "type": "string",
+                            "description": "Hook to attach the script to (e.g., on_request, on_response)"
+                        },
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Whether the script is enabled immediately (default: true)"
+                        }
+                    },
+                    "required": ["name", "source"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_script".to_string(),
+                description: "Get details of a specific script.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the script to retrieve"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_update_script".to_string(),
+                description: "Update an existing script with new source/configuration.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the script to update"
+                        },
+                        "script": {
+                            "type": "object",
+                            "description": "The full script object to update"
+                        }
+                    },
+                    "required": ["id", "script"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_delete_script".to_string(),
+                description: "Delete a script.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the script to delete"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_toggle_script".to_string(),
+                description: "Enable or disable a script.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the script to toggle"
+                        },
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "true to enable, false to disable"
+                        }
+                    },
+                    "required": ["id", "enabled"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_script_templates".to_string(),
+                description: "Get predefined script templates for common scenarios.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+
+            // Plugin tools
+            Tool {
+                name: "madhyamas_list_plugins".to_string(),
+                description: "List all loaded plugins.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_plugin".to_string(),
+                description: "Get details of a specific plugin.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the plugin to retrieve"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_enable_plugin".to_string(),
+                description: "Enable a plugin.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the plugin to enable"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_disable_plugin".to_string(),
+                description: "Disable a plugin.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the plugin to disable"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_plugin_stats".to_string(),
+                description: "Get runtime statistics for a specific plugin.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the plugin"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_reload_plugins".to_string(),
+                description: "Reload all plugins from disk.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
         ];
 
         Self { tools }

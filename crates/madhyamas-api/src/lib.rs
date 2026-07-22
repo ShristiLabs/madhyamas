@@ -1,5 +1,6 @@
 //! Madhyamas API - REST and WebSocket API for the web UI
 
+pub mod embedded_assets;
 pub mod handlers;
 pub mod intercept_handlers;
 pub mod phase3_handlers;
@@ -15,7 +16,6 @@ use madhyamas_core::{
 };
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
@@ -133,8 +133,9 @@ pub fn create_router(state: AppState) -> Router<()> {
         // Top-level health check for quick status
         .route("/health", axum::routing::get(|| async { "OK" }))
         .nest("/api", routes::create_routes())
-        // Serve static files from web/dist
-        .fallback_service(ServeDir::new("web/dist").fallback(ServeDir::new("web/dist/index.html")))
+        // Serve embedded web assets (compiled into the binary via rust-embed).
+        // Falls back to disk-based serving via MADHYAMAS_WEB_DIR for dev.
+        .fallback(embedded_assets::embedded_fallback)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

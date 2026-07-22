@@ -3,49 +3,65 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
+  /* Dark-first devtools theme (default) */
+  :root,
+  .dark {
+    --background: 222 22% 7%;          /* #0b0e14 deep slate */
+    --foreground: 213 27% 90%;
+    --card: 222 20% 9%;                /* #11151e */
+    --card-foreground: 213 27% 90%;
+    --popover: 222 22% 8%;
+    --popover-foreground: 213 27% 90%;
+    --primary: 199 89% 56%;            /* cyan-blue accent */
+    --primary-foreground: 222 47% 11%;
+    --secondary: 222 16% 14%;
+    --secondary-foreground: 213 27% 90%;
+    --muted: 222 16% 13%;
+    --muted-foreground: 220 12% 58%;
+    --accent: 222 18% 16%;
+    --accent-foreground: 213 27% 90%;
+    --destructive: 0 72% 51%;
     --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.5rem;
+    --success: 142 71% 45%;
+    --success-foreground: 210 40% 98%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 222 47% 11%;
+    --border: 222 14% 18%;
+    --input: 222 14% 18%;
+    --ring: 199 89% 56%;
+    --sidebar: 222 22% 6%;
+    --sidebar-foreground: 213 27% 80%;
+    --radius: 0.375rem;
   }
 
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+  /* Light theme */
+  .light {
+    --background: 0 0% 100%;
+    --foreground: 222 22% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 22% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 22% 14%;
+    --primary: 199 89% 48%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 22% 14%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 220 14% 94%;
+    --accent-foreground: 222 22% 14%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 71% 38%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 45%;
+    --warning-foreground: 222 47% 11%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 199 89% 48%;
+    --sidebar: 220 20% 98%;
+    --sidebar-foreground: 222 22% 30%;
+    --radius: 0.375rem;
   }
 }
 
@@ -53,44 +69,64 @@
   * {
     @apply border-border;
   }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans antialiased;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 }
 
-/* Custom scrollbar */
+/* Thin, unobtrusive scrollbars (devtools style) */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
-
 ::-webkit-scrollbar-track {
-  background: hsl(var(--muted));
-  border-radius: 4px;
+  background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--muted-foreground));
+  background: hsl(var(--muted-foreground) / 0.3);
   border-radius: 4px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--foreground));
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
 }
 
-/* Traffic list item status colors */
-.status-2xx { @apply text-green-600 dark:text-green-400; }
-.status-3xx { @apply text-blue-600 dark:text-blue-400; }
-.status-4xx { @apply text-orange-600 dark:text-orange-400; }
-.status-5xx { @apply text-red-600 dark:text-red-400; }
+/* Traffic status + method color coding */
+.status-2xx { @apply text-success; }
+.status-3xx { @apply text-primary; }
+.status-4xx { @apply text-warning; }
+.status-5xx { @apply text-destructive; }
 
-.method-get { @apply text-green-600 dark:text-green-400; }
-.method-post { @apply text-orange-600 dark:text-orange-400; }
-.method-put { @apply text-blue-600 dark:text-blue-400; }
-.method-patch { @apply text-purple-600 dark:text-purple-400; }
-.method-delete { @apply text-red-600 dark:text-red-400; }
+.method-get    { @apply text-success; }
+.method-post   { @apply text-warning; }
+.method-put    { @apply text-primary; }
+.method-patch  { @apply text-purple-500; }
+.method-delete { @apply text-destructive; }
+.method-head   { @apply text-muted-foreground; }
+.method-options { @apply text-muted-foreground; }
 
-/* Respect user's motion preferences */
+/* Status badge backgrounds */
+.badge-2xx { @apply bg-success/15 text-success border-success/30; }
+.badge-3xx { @apply bg-primary/15 text-primary border-primary/30; }
+.badge-4xx { @apply bg-warning/15 text-warning border-warning/30; }
+.badge-5xx { @apply bg-destructive/15 text-destructive border-destructive/30; }
+
+/* Utility: dense panel surface */
+.surface-panel {
+  @apply bg-card border border-border;
+}
+
+/* Respect reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

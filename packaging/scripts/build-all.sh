@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build all Madhyamas packages for release
+# Build the unified Madhyamas binary for release
 # Usage: ./build-all.sh <version>
 
 set -e
@@ -9,36 +9,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUTPUT_DIR="$ROOT_DIR/dist"
 
-echo "Building Madhyamas v$VERSION"
-echo "================================"
+echo "Building Madhyamas v$VERSION (unified binary)"
+echo "=============================================="
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
-# Build frontend first
+# Build frontend first (embedded into binary via rust-embed)
 echo "Building frontend..."
 cd "$ROOT_DIR/web"
 npm ci
 npm run build
 
-# Build all Rust binaries
-echo "Building Rust binaries..."
+# Build the unified binary (proxy + web UI + MCP + CLI)
+echo "Building unified binary..."
 cd "$ROOT_DIR"
-
-# Main binary (madhyamas)
-cargo build --release -p madhyamas-cli
+cargo build --release -p madhyamas
 cp target/release/madhyamas "$OUTPUT_DIR/"
-
-# CLI binary
-cargo build --release -p madhyamas-cli
-cp target/release/madhyamas-cli "$OUTPUT_DIR/"
-
-# MCP binary
-cargo build --release -p madhyamas-mcp
-cp target/release/madhyamas-mcp "$OUTPUT_DIR/"
-
-# Copy web assets
-cp -r web/dist "$OUTPUT_DIR/web"
 
 echo ""
 echo "Build complete! Artifacts in: $OUTPUT_DIR"

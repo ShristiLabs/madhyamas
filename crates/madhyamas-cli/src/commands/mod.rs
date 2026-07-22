@@ -6,17 +6,29 @@ use clap::Subcommand;
 mod breakpoints;
 mod capture;
 mod config;
+mod export;
+mod grpc;
 mod mocks;
+mod plugins;
 mod replay;
+mod rewrites;
+mod scripts;
 mod sessions;
+mod throttle;
 mod traffic;
 
 use self::breakpoints::BreakpointCommands;
 use self::capture::CaptureCommands;
 use self::config::ConfigCommands;
+use self::export::ExportCommands;
+use self::grpc::GrpcCommands;
 use self::mocks::MockCommands;
+use self::plugins::PluginCommands;
 use self::replay::ReplayCommands;
+use self::rewrites::RewriteCommands;
+use self::scripts::ScriptCommands;
 use self::sessions::SessionCommands;
+use self::throttle::ThrottleCommands;
 use self::traffic::TrafficCommands;
 
 /// Common API client for CLI commands
@@ -145,6 +157,24 @@ pub enum Commands {
     /// Capture mode commands (recording vs passthrough)
     #[command(subcommand)]
     Capture(CaptureCommands),
+    /// Throttle commands (bandwidth/latency limiting)
+    #[command(subcommand)]
+    Throttle(ThrottleCommands),
+    /// Rewrite rule commands
+    #[command(subcommand)]
+    Rewrites(RewriteCommands),
+    /// gRPC inspection commands
+    #[command(subcommand)]
+    Grpc(GrpcCommands),
+    /// Script commands
+    #[command(subcommand)]
+    Scripts(ScriptCommands),
+    /// Plugin commands
+    #[command(subcommand)]
+    Plugins(PluginCommands),
+    /// Export commands (HAR, cURL)
+    #[command(subcommand)]
+    Export(ExportCommands),
 }
 
 impl Commands {
@@ -157,6 +187,12 @@ impl Commands {
             Commands::Replay(cmd) => cmd.execute(api_url).await,
             Commands::Config(cmd) => cmd.execute(api_url).await,
             Commands::Capture(cmd) => cmd.execute(api_url).await,
+            Commands::Throttle(cmd) => cmd.execute(api_url).await,
+            Commands::Rewrites(cmd) => cmd.execute(api_url).await,
+            Commands::Grpc(cmd) => cmd.execute(api_url).await,
+            Commands::Scripts(cmd) => cmd.execute(api_url).await,
+            Commands::Plugins(cmd) => cmd.execute(api_url).await,
+            Commands::Export(cmd) => cmd.execute(api_url).await,
         }
     }
 }

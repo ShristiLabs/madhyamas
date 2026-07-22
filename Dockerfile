@@ -1,5 +1,5 @@
 # Madhyamas Docker Image
-# Multi-stage build for optimized image size
+# Multi-stage build — single unified binary with embedded web UI
 
 # Frontend build stage
 FROM node:20-alpine AS frontend-builder
@@ -34,8 +34,12 @@ RUN echo "fn main() {}" > crates/madhyamas/src/main.rs
 RUN echo "fn main() {}" > crates/madhyamas-core/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-api/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-cli/src/main.rs
+RUN echo "pub fn dummy() {}" > crates/madhyamas-cli/src/lib.rs
 RUN echo "pub fn dummy() {}" > crates/madhyamas-mcp/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-mcp/src/main.rs
+
+# Copy web dist for rust-embed (needed at compile time)
+COPY --from=frontend-builder /app/web/dist ./web/dist
 
 # Build dependencies
 RUN cargo build --release
@@ -50,8 +54,8 @@ COPY crates/madhyamas-mcp/src ./crates/madhyamas-mcp/src
 # Touch source files to invalidate cache and force rebuild
 RUN find crates -name "*.rs" -exec touch {} \;
 
-# Build the application (main server, CLI, and MCP)
-RUN cargo build --release -p madhyamas -p madhyamas-cli -p madhyamas-mcp
+# Build the unified binary (includes proxy + web UI + MCP + CLI)
+RUN cargo build --release -p madhyamas
 
 # Runtime stage
 FROM alpine:3.19
@@ -63,13 +67,8 @@ RUN addgroup -S madhyamas && adduser -S madhyamas -G madhyamas
 
 WORKDIR /app
 
-# Copy binaries from builder
+# Copy the single unified binary (web UI is embedded)
 COPY --from=builder /app/target/release/madhyamas /usr/local/bin/madhyamas
-COPY --from=builder /app/target/release/madhyamas-cli /usr/local/bin/madhyamas-cli
-COPY --from=builder /app/target/release/madhyamas-mcp /usr/local/bin/madhyamas-mcp
-
-# Copy web assets (built separately)
-COPY --from=frontend-builder /app/web/dist ./web/dist
 
 # Create directories for data
 RUN mkdir -p /data/certs /data/sessions && chown -R madhyamas:madhyamas /data
@@ -81,11 +80,10 @@ EXPOSE 3001 8888
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3001/api/health || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
 
 # Default configuration
 ENV MADHYAMAS_PROXY_PORT=8888
-ENV MADHYAMAS_PROXY_TLS_PORT=8443
 ENV MADHYAMAS_API_PORT=3001
 ENV MADHYAMAS_DATA_DIR=/data
 ENV MADHYAMAS_LOG_LEVEL=info
