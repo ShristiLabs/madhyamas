@@ -107,7 +107,7 @@ export function useTrafficWebSocket(
     [onTrafficUpdate]
   );
 
-  const handleConnect = useCallback((clientId: string) => {
+  const handleConnect = useCallback((_clientId: string) => {
     setIsLoading(true); // Will be set to false when InitialTraffic arrives
   }, []);
 
