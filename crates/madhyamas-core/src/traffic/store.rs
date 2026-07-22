@@ -18,6 +18,9 @@ pub struct TrafficStore {
     capture_enabled: AtomicBool,
     /// Broadcast sender for traffic events (WebSocket real-time updates)
     event_sender: broadcast::Sender<TrafficEvent>,
+    /// Maximum body size to store in bytes. Bodies larger than this are
+    /// truncated before being written to the database. Default: 20 MB.
+    max_body_size: std::sync::atomic::AtomicUsize,
 }
 
 impl TrafficStore {
@@ -31,6 +34,7 @@ impl TrafficStore {
             current_session_id: Mutex::new(String::new()),
             capture_enabled: AtomicBool::new(true),
             event_sender,
+            max_body_size: std::sync::atomic::AtomicUsize::new(20 * 1024 * 1024),
         });
 
         store.create_tables()?;
@@ -49,6 +53,7 @@ impl TrafficStore {
             current_session_id: Mutex::new(String::new()),
             capture_enabled: AtomicBool::new(true),
             event_sender,
+            max_body_size: std::sync::atomic::AtomicUsize::new(20 * 1024 * 1024),
         });
 
         store.create_tables()?;
@@ -223,6 +228,31 @@ impl TrafficStore {
         self.capture_enabled.store(enabled, Ordering::Relaxed);
     }
 
+    /// Set the maximum body size (in bytes) to store. Bodies larger than
+    /// this are truncated before being written to the database.
+    pub fn set_max_body_size(&self, max: usize) {
+        self.max_body_size.store(max, Ordering::Relaxed);
+    }
+
+    /// Get the current maximum body size (in bytes).
+    pub fn max_body_size(&self) -> usize {
+        self.max_body_size.load(Ordering::Relaxed)
+    }
+
+    /// Truncate a body to the configured maximum size (in-place via clone).
+    fn clamp_body(&self, body: &Option<Vec<u8>>) -> Option<Vec<u8>> {
+        let max = self.max_body_size.load(Ordering::Relaxed);
+        body.as_ref().map(|b| {
+            if b.len() > max {
+                let mut truncated = b.clone();
+                truncated.truncate(max);
+                truncated
+            } else {
+                b.clone()
+            }
+        })
+    }
+
     /// Store a request
     pub fn store_request(&self, entry: &TrafficEntry) -> crate::Result<()> {
         if !self.capture_enabled.load(Ordering::Relaxed) {
@@ -230,7 +260,7 @@ impl TrafficStore {
         }
         let conn = self.conn.lock();
         let headers = serde_json::to_string(&entry.request.headers).unwrap_or_default();
-        let body = entry.request.body.as_ref();
+        let body = self.clamp_body(&entry.request.body);
         let content_type = entry.request.content_type.as_ref();
 
         conn.execute(
@@ -277,7 +307,7 @@ impl TrafficStore {
         }
         let conn = self.conn.lock();
         let headers = serde_json::to_string(&response.headers).unwrap_or_default();
-        let body = response.body.as_ref();
+        let body = self.clamp_body(&response.body);
         let content_type = response.content_type.as_ref();
 
         conn.execute(

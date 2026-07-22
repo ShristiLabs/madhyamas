@@ -47,6 +47,10 @@ pub struct ProxyConfig {
 
     /// Enable HTTPS interception
     pub intercept_https: bool,
+
+    /// Maximum body size to capture in bytes (default 20 MB).
+    /// Bodies larger than this are truncated when stored.
+    pub max_body_size: usize,
 }
 
 impl Default for ProxyConfig {
@@ -63,6 +67,7 @@ impl Default for ProxyConfig {
             verbose: false,
             max_requests: 10000,
             intercept_https: true,
+            max_body_size: 20 * 1024 * 1024, // 20 MB
         }
     }
 }

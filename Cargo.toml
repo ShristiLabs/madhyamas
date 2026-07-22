@@ -80,6 +80,10 @@ urlencoding = "2.1"
 dirs = "5.0"
 reqwest = { version = "0.13", features = ["json"] }
 
+# Decompression (for decoding gzip/deflate/brotli response bodies)
+flate2 = "1.0"
+brotli = "6.0"
+
 # Internal crates
 madhyamas-core = { path = "crates/madhyamas-core" }
 madhyamas-api = { path = "crates/madhyamas-api" }

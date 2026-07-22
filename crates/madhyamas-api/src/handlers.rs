@@ -285,7 +285,8 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse
         "host": display_host,
         "public_ip": config.public_ip,
         "intercept_https": config.intercept_https,
-        "max_requests": config.max_requests
+        "max_requests": config.max_requests,
+        "max_body_size": config.max_body_size
     }))
 }
 
@@ -315,6 +316,7 @@ pub struct PatchConfigRequest {
     pub max_requests: Option<usize>,
     pub verbose: Option<bool>,
     pub public_ip: Option<serde_json::Value>,
+    pub max_body_size: Option<usize>,
 }
 
 /// Update runtime configuration fields
@@ -346,6 +348,11 @@ pub async fn patch_config(
     if let Some(v) = req.public_ip {
         config.public_ip = v.as_str().map(|s| s.to_string());
     }
+    if let Some(v) = req.max_body_size {
+        config.max_body_size = v;
+        // Apply to the traffic store immediately
+        state.traffic_store.set_max_body_size(v);
+    }
 
     (
         StatusCode::OK,
@@ -356,6 +363,7 @@ pub async fn patch_config(
             "public_ip": config.public_ip,
             "intercept_https": config.intercept_https,
             "max_requests": config.max_requests,
+            "max_body_size": config.max_body_size,
             "verbose": config.verbose
         })),
     )

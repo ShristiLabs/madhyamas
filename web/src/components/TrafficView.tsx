@@ -3,6 +3,7 @@ import {
   useTraffic,
   useTrafficCount,
   useClearTraffic,
+  useTrafficEntry,
 } from "@/hooks/useTraffic";
 import { TrafficList } from "./TrafficList";
 import { TrafficDetail } from "./TrafficDetail";
@@ -86,10 +87,20 @@ export function TrafficView() {
     return applyFilters(traffic, activeFilters);
   }, [traffic, activeFilters]);
 
-  const selectedEntry = useMemo(() => {
+  // Look up the selected entry in the current traffic list (used as a
+  // fallback and to know whether the entry exists).
+  const listEntry = useMemo(() => {
     if (!traffic || !selectedId) return null;
     return traffic.find((t: TrafficEntry) => t.id === selectedId) || null;
   }, [traffic, selectedId]);
+
+  // Fetch the full entry (with bodies/headers) from the REST API. The
+  // WebSocket snapshots intentionally exclude bodies to save bandwidth,
+  // so we must fetch the full entry to display request/response bodies.
+  const { data: fullEntry } = useTrafficEntry(selectedId);
+
+  // Prefer the fully-fetched entry; fall back to the list entry while loading
+  const selectedEntry: TrafficEntry | null = fullEntry ?? listEntry ?? null;
 
   const handleClear = useCallback(
     async (clearAll: boolean) => {

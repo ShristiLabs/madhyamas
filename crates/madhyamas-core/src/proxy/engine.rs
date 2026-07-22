@@ -283,6 +283,16 @@ impl ProxyEngine {
                 }
             };
 
+            // Read the full request body from the TLS stream. The initial
+            // read above may not have captured the entire body, which would
+            // cause the upstream to wait forever and time out.
+            {
+                let headers = request_data.headers.clone();
+                request_data.body = self
+                    .read_full_request_body(tls_stream, request_data.body.take(), &headers)
+                    .await?;
+            }
+
             // Check for WebSocket upgrade (breaks the keep-alive loop)
             if is_websocket_upgrade(&request_data.headers) {
                 return self
@@ -497,7 +507,19 @@ impl ProxyEngine {
                     }
                     Err(e) => {
                         warn!("Failed to forward request to {}: {}", request_data.url, e);
-                        return Ok(());
+                        // Store error response so request doesn't remain in "pending" state
+                        if should_capture {
+                            let error_response = ResponseData {
+                                status_code: 502,
+                                status_message: Some("Bad Gateway".to_string()),
+                                headers: std::collections::HashMap::new(),
+                                body: Some(format!("Proxy error: {}", e).into_bytes()),
+                                content_type: Some("text/plain".to_string()),
+                                duration_ms: start.elapsed().as_millis() as u64,
+                            };
+                            self.traffic_store
+                                .store_response(&entry.id, &error_response)?;
+                        }
                     }
                 }
             }
@@ -539,6 +561,17 @@ impl ProxyEngine {
 
         // Create request data
         let mut request_data = self.parse_http_request(initial_data, host, port)?;
+
+        // Read the full request body from the client. The initial read in
+        // handle_connection may not have captured the entire body (especially
+        // for POST/PUT with large bodies), which would cause the upstream to
+        // wait forever for the remaining bytes and time out.
+        {
+            let headers = request_data.headers.clone();
+            request_data.body = self
+                .read_full_request_body(&mut client_socket, request_data.body.take(), &headers)
+                .await?;
+        }
 
         // Check for WebSocket upgrade
         if is_websocket_upgrade(&request_data.headers) {
@@ -743,6 +776,19 @@ impl ProxyEngine {
             }
             Err(e) => {
                 warn!("Failed to forward HTTP request: {}", e);
+                // Store error response so request doesn't remain in "pending" state
+                if should_capture {
+                    let error_response = ResponseData {
+                        status_code: 502,
+                        status_message: Some("Bad Gateway".to_string()),
+                        headers: std::collections::HashMap::new(),
+                        body: Some(format!("Proxy error: {}", e).into_bytes()),
+                        content_type: Some("text/plain".to_string()),
+                        duration_ms: start.elapsed().as_millis() as u64,
+                    };
+                    self.traffic_store
+                        .store_response(&entry.id, &error_response)?;
+                }
             }
         }
 
@@ -788,19 +834,34 @@ impl ProxyEngine {
             }
         }
 
+        // Detect chunked transfer encoding
+        let is_chunked = headers.iter().any(|(k, v)| {
+            k.eq_ignore_ascii_case("transfer-encoding") && v.eq_ignore_ascii_case("chunked")
+        });
+
+        // Find where headers end and body begins
+        let header_end = data
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map(|p| p + 4);
+
         // Extract body if present
         let body = if content_length > 0 {
-            let header_end = data
-                .windows(4)
-                .position(|w| w == b"\r\n\r\n")
-                .map(|p| p + 4);
-
+            // Content-Length based body: only take up to content_length bytes
+            // (the initial read may contain less than the full body, or may
+            // contain pipelined request data beyond the body)
             if let Some(start) = header_end {
-                let body_data = &data[start..];
-                Some(body_data.to_vec())
+                let available = data.len().saturating_sub(start);
+                let take = available.min(content_length);
+                Some(data[start..start + take].to_vec())
             } else {
                 None
             }
+        } else if is_chunked {
+            // Chunked transfer encoding: extract raw chunked data after headers.
+            // The body may be incomplete in the initial read; the caller will
+            // read more data and decode the chunks.
+            header_end.map(|start| data[start..].to_vec())
         } else {
             None
         };
@@ -860,14 +921,22 @@ impl ProxyEngine {
         let request_bytes = self.build_http_request(request_data);
         upstream_stream.write_all(&request_bytes).await?;
 
-        // Read ALL response data (loop until upstream closes connection)
+        // Read ALL response data (loop until upstream closes connection).
+        // We send Connection: close so the upstream should close after the
+        // response. An idle timeout guards against servers that don't honor it.
         let mut response_buf = Vec::new();
         let mut chunk = vec![0u8; 65536];
         loop {
-            match upstream_stream.read(&mut chunk).await {
-                Ok(0) => break,
-                Ok(n) => response_buf.extend_from_slice(&chunk[..n]),
-                Err(_) => break,
+            let read_result = tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                upstream_stream.read(&mut chunk),
+            )
+            .await;
+            match read_result {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => response_buf.extend_from_slice(&chunk[..n]),
+                Ok(Err(_)) => break,
+                Err(_) => break, // timed out
             }
         }
 
@@ -901,14 +970,22 @@ impl ProxyEngine {
         let request_bytes = self.build_http_request(request_data);
         upstream_write.write_all(&request_bytes).await?;
 
-        // Read ALL response data (loop until upstream closes connection)
+        // Read ALL response data (loop until upstream closes connection).
+        // We send Connection: close so the upstream should close after the
+        // response. An idle timeout guards against servers that don't honor it.
         let mut response_buf = Vec::new();
         let mut chunk = vec![0u8; 65536];
         loop {
-            match upstream_read.read(&mut chunk).await {
-                Ok(0) => break,
-                Ok(n) => response_buf.extend_from_slice(&chunk[..n]),
-                Err(_) => break,
+            let read_result = tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                upstream_read.read(&mut chunk),
+            )
+            .await;
+            match read_result {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => response_buf.extend_from_slice(&chunk[..n]),
+                Ok(Err(_)) => break,
+                Err(_) => break, // timed out
             }
         }
 
@@ -930,13 +1007,20 @@ impl ProxyEngine {
         let mut request = format!("{} {} HTTP/1.1\r\n", request_data.method, request_data.path);
 
         for (key, value) in &request_data.headers {
-            // Skip hop-by-hop headers
+            // Skip hop-by-hop headers and content-length (we recompute it
+            // from the actual body to avoid mismatches when the body has
+            // been modified by rewrites/breakpoints or decoded from chunked)
             if !matches!(
                 key.to_lowercase().as_str(),
-                "connection" | "keep-alive" | "transfer-encoding" | "upgrade"
+                "connection" | "keep-alive" | "transfer-encoding" | "upgrade" | "content-length"
             ) {
                 request.push_str(&format!("{}: {}\r\n", key, value));
             }
+        }
+
+        // Add Content-Length based on the actual body length
+        if let Some(ref body) = request_data.body {
+            request.push_str(&format!("Content-Length: {}\r\n", body.len()));
         }
 
         request.push_str("Connection: close\r\n");
@@ -970,6 +1054,8 @@ impl ProxyEngine {
         // Parse headers
         let mut headers = std::collections::HashMap::new();
         let mut content_type = None;
+        let mut is_chunked = false;
+        let mut content_length: Option<usize> = None;
 
         for line in lines {
             if line.is_empty() {
@@ -981,17 +1067,57 @@ impl ProxyEngine {
 
                 if key.eq_ignore_ascii_case("content-type") {
                     content_type = Some(value.clone());
+                } else if key.eq_ignore_ascii_case("transfer-encoding") {
+                    if value.eq_ignore_ascii_case("chunked") {
+                        is_chunked = true;
+                    }
+                } else if key.eq_ignore_ascii_case("content-length") {
+                    content_length = value.parse().ok();
                 }
 
                 headers.insert(key, value);
             }
         }
 
-        // Extract body
+        // Extract body (everything after \r\n\r\n)
         let body = data
             .windows(4)
             .position(|w| w == b"\r\n\r\n")
-            .map(|p| data[p + 4..].to_vec());
+            .map(|p| &data[p + 4..]);
+
+        // Process body based on transfer encoding
+        let body = if let Some(raw_body) = body {
+            if is_chunked {
+                // Decode chunked transfer encoding and remove the header
+                // so the stored response is consistent (decoded body + no TE)
+                let decoded = Self::decode_chunked(raw_body);
+                // Remove Transfer-Encoding header (case-insensitive)
+                headers.retain(|k, _| !k.eq_ignore_ascii_case("transfer-encoding"));
+                // Add Content-Length based on decoded body
+                headers.insert("Content-Length".to_string(), decoded.len().to_string());
+                Some(decoded)
+            } else if let Some(cl) = content_length {
+                // Truncate to Content-Length in case extra data was read
+                let take = raw_body.len().min(cl);
+                Some(raw_body[..take].to_vec())
+            } else {
+                Some(raw_body.to_vec())
+            }
+        } else {
+            None
+        };
+
+        // Decompress the body if Content-Encoding is gzip, deflate, or br.
+        // This makes compressed responses human-readable in the UI and
+        // avoids base64 encoding (which happens when bytes aren't valid UTF-8).
+        // The decompressed body is what gets stored; the Content-Encoding
+        // header is removed so the stored response is consistent.
+        let content_encoding = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("content-encoding"))
+            .map(|(_, v)| v.to_lowercase());
+        let body =
+            body.and_then(|b| Self::decompress_body(content_encoding.as_deref(), b, &mut headers));
 
         Ok(ResponseData {
             status_code,
@@ -1001,6 +1127,193 @@ impl ProxyEngine {
             content_type,
             duration_ms: 0, // Will be set by caller
         })
+    }
+
+    /// Decompress response body based on Content-Encoding header.
+    /// On success, removes the Content-Encoding header and updates
+    /// Content-Length to match the decompressed body. Returns the
+    /// decompressed body, or the original body if decompression fails
+    /// or no encoding is present.
+    fn decompress_body(
+        content_encoding: Option<&str>,
+        body: Vec<u8>,
+        out_headers: &mut std::collections::HashMap<String, String>,
+    ) -> Option<Vec<u8>> {
+        let encoding = match content_encoding {
+            Some(e) => e,
+            None => return Some(body), // no encoding, return as-is
+        };
+
+        let decompressed = match encoding {
+            "gzip" | "x-gzip" => {
+                use std::io::Read;
+                let mut decoder = flate2::read::GzDecoder::new(&body[..]);
+                let mut out = Vec::with_capacity(body.len() * 4);
+                match decoder.read_to_end(&mut out) {
+                    Ok(_) => Some(out),
+                    Err(e) => {
+                        debug!("Failed to decompress gzip body: {}", e);
+                        None
+                    }
+                }
+            }
+            "deflate" => {
+                use std::io::Read;
+                // Try zlib-wrapped deflate first (most common), then raw deflate
+                let mut out = Vec::with_capacity(body.len() * 4);
+                let result = flate2::read::ZlibDecoder::new(&body[..])
+                    .read_to_end(&mut out)
+                    .or_else(|_| {
+                        out.clear();
+                        flate2::read::DeflateDecoder::new(&body[..]).read_to_end(&mut out)
+                    });
+                match result {
+                    Ok(_) => Some(out),
+                    Err(e) => {
+                        debug!("Failed to decompress deflate body: {}", e);
+                        None
+                    }
+                }
+            }
+            "br" => {
+                let mut decoder = brotli::Decompressor::new(&body[..], 4096);
+                let mut out = Vec::with_capacity(body.len() * 4);
+                use std::io::Read;
+                match decoder.read_to_end(&mut out) {
+                    Ok(_) => Some(out),
+                    Err(e) => {
+                        debug!("Failed to decompress brotli body: {}", e);
+                        None
+                    }
+                }
+            }
+            _ => {
+                // Unknown encoding — leave body as-is
+                return Some(body);
+            }
+        };
+
+        match decompressed {
+            Some(dec) => {
+                // Remove Content-Encoding header and update Content-Length
+                out_headers.retain(|k, _| !k.eq_ignore_ascii_case("content-encoding"));
+                out_headers.insert("Content-Length".to_string(), dec.len().to_string());
+                Some(dec)
+            }
+            None => Some(body), // decompression failed, keep original
+        }
+    }
+
+    /// Decode HTTP chunked transfer encoding into the raw body bytes
+    fn decode_chunked(data: &[u8]) -> Vec<u8> {
+        let mut result = Vec::new();
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Find the end of the chunk size line
+            let line_end = match data[pos..].windows(2).position(|w| w == b"\r\n") {
+                Some(p) => pos + p,
+                None => break,
+            };
+
+            // Parse chunk size (hex, may have extensions after ';')
+            let size_str = std::str::from_utf8(&data[pos..line_end]).unwrap_or("");
+            let chunk_size =
+                usize::from_str_radix(size_str.split(';').next().unwrap_or("0").trim(), 16)
+                    .unwrap_or(0);
+
+            pos = line_end + 2; // skip \r\n after size
+
+            if chunk_size == 0 {
+                break; // last chunk
+            }
+
+            // Copy chunk data (bounded by available data)
+            let end = (pos + chunk_size).min(data.len());
+            result.extend_from_slice(&data[pos..end]);
+            pos = end;
+
+            // Skip trailing \r\n after chunk data
+            if pos + 2 <= data.len() && &data[pos..pos + 2] == b"\r\n" {
+                pos += 2;
+            }
+        }
+
+        result
+    }
+
+    /// Read the full request body from the client, handling both
+    /// Content-Length and chunked transfer encoding. The initial body
+    /// bytes (from the first read) are supplemented with additional
+    /// reads as needed.
+    async fn read_full_request_body<R: AsyncReadExt + Unpin>(
+        &self,
+        reader: &mut R,
+        body: Option<Vec<u8>>,
+        headers: &std::collections::HashMap<String, String>,
+    ) -> crate::Result<Option<Vec<u8>>> {
+        // Check for chunked transfer encoding
+        let is_chunked = headers.iter().any(|(k, v)| {
+            k.eq_ignore_ascii_case("transfer-encoding") && v.eq_ignore_ascii_case("chunked")
+        });
+
+        if is_chunked {
+            // For chunked: read raw data until we see the 0\r\n\r\n terminator
+            let mut raw = body.unwrap_or_default();
+
+            // Check if we already have the terminator
+            let has_terminator = |buf: &[u8]| {
+                // Look for "0\r\n\r\n" which marks the end of chunked data
+                buf.windows(5).any(|w| w == b"0\r\n\r\n")
+            };
+
+            while !has_terminator(&raw) {
+                let mut chunk = vec![0u8; 65536];
+                match reader.read(&mut chunk).await {
+                    Ok(0) => break, // client closed
+                    Ok(n) => raw.extend_from_slice(&chunk[..n]),
+                    Err(e) => {
+                        return Err(Error::Proxy(format!(
+                            "Failed to read chunked request body: {}",
+                            e
+                        )))
+                    }
+                }
+            }
+
+            // Decode chunked encoding into raw body bytes
+            let decoded = Self::decode_chunked(&raw);
+            Ok(Some(decoded))
+        } else {
+            // Content-Length based: read until we have the full body
+            let content_length: usize = headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, v)| v.parse().ok())
+                .unwrap_or(0);
+
+            if content_length == 0 {
+                return Ok(body);
+            }
+
+            let mut buf = body.unwrap_or_default();
+
+            // Read more if we don't have the full body yet
+            while buf.len() < content_length {
+                let mut chunk = vec![0u8; content_length - buf.len()];
+                match reader.read(&mut chunk).await {
+                    Ok(0) => break, // client closed
+                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                    Err(e) => {
+                        return Err(Error::Proxy(format!("Failed to read request body: {}", e)))
+                    }
+                }
+            }
+
+            // Truncate to content_length in case we over-read (pipelined requests)
+            buf.truncate(content_length);
+            Ok(Some(buf))
+        }
     }
 
     /// Create TLS client config for connecting to upstream servers

@@ -19,6 +19,7 @@ export function JsonView({ data, searchTerm }: JsonViewProps) {
     ...darkStyles,
     container: 'bg-muted rounded-md p-3',
     label: 'text-primary font-semibold',
+    punctuation: 'text-foreground font-bold',
     stringValue: 'text-green-600 dark:text-green-400',
     numberValue: 'text-blue-600 dark:text-blue-400',
     booleanValue: 'text-purple-600 dark:text-purple-400',

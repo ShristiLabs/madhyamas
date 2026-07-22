@@ -95,6 +95,7 @@ async fn main() -> Result<()> {
         verbose: args.verbose,
         max_requests: args.max_requests,
         intercept_https: !args.no_https,
+        max_body_size: defaults.max_body_size,
     };
 
     // Ensure data directories exist
@@ -106,6 +107,8 @@ async fn main() -> Result<()> {
 
     // Initialize traffic store
     let traffic_store = TrafficStore::new(config.db_path.clone())?;
+    // Apply configured max body size (default 20 MB)
+    traffic_store.set_max_body_size(config.max_body_size);
 
     info!("Starting proxy engine...");
     let cert_manager_for_api = cert_manager.clone();

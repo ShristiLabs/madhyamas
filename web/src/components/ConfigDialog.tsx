@@ -85,7 +85,7 @@ const DEFAULT_UPSTREAM: UpstreamConfig = {
 const DEFAULT_CAPTURE: CaptureConfig = {
   capture_request_bodies: true,
   capture_response_bodies: true,
-  max_body_size_kb: 512,
+  max_body_size_kb: 20480,
   ignored_domains: "",
 };
 

@@ -389,46 +389,65 @@ function BodyView({ body, contentType, decode = false }: BodyViewProps) {
   const [isPrettified, setIsPrettified] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
 
+  // Decode base64-prefixed bodies (backend marks binary/non-UTF-8 bodies
+  // with "base64:" prefix). Also handles the "Decode payload" checkbox.
+  const decodedBody = useMemo(() => {
+    if (!body) return "";
+
+    // If the body has the "base64:" prefix, decode it automatically.
+    // The backend uses this prefix for content that isn't valid UTF-8
+    // (e.g. binary data, or compressed content that wasn't decompressed).
+    if (body.startsWith("base64:")) {
+      const b64Data = body.slice(7);
+      try {
+        // atob() returns a binary string; convert to UTF-8 safely
+        const binaryStr = atob(b64Data);
+        // Convert binary string to UTF-8 string
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+        try {
+          return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+        } catch {
+          // If UTF-8 decode fails, show the raw binary string
+          return binaryStr;
+        }
+      } catch {
+        return body; // return original if base64 decode fails
+      }
+    }
+
+    // "Decode payload" checkbox: try base64 decode on the raw body
+    if (decode) {
+      try {
+        return atob(body);
+      } catch {
+        // not valid base64, return as-is
+      }
+    }
+
+    return body;
+  }, [body, decode]);
+
   // Calculate values before early return
-  const isJson = body
+  const isJson = decodedBody
     ? contentType?.includes("application/json") ||
-      body.startsWith("{") ||
-      body.startsWith("[")
+      decodedBody.startsWith("{") ||
+      decodedBody.startsWith("[")
     : false;
 
   const parsedJson = useMemo(() => {
-    if (!body || !isJson) return null;
+    if (!decodedBody || !isJson) return null;
     try {
-      return JSON.parse(body);
+      return JSON.parse(decodedBody);
     } catch {
       return null;
     }
-  }, [isJson, body]);
+  }, [isJson, decodedBody]);
 
   const displayBody = useMemo(() => {
-    if (!body) return "";
-
-    // Try to decode if requested
-    let decodedBody = body;
-    if (decode) {
-      try {
-        // Check for gzip/deflate encoding in content-type or try to decode
-        if (contentType?.includes("gzip") || contentType?.includes("deflate")) {
-          // For now, show a message that decoding is attempted
-          // In a real implementation, you'd use pako or similar library
-          decodedBody = "[Compressed content - decoding not yet implemented]";
-        } else {
-          // Try base64 decode
-          try {
-            decodedBody = atob(body);
-          } catch {
-            decodedBody = body;
-          }
-        }
-      } catch {
-        decodedBody = body;
-      }
-    }
+    if (!decodedBody) return "";
 
     if (isJson && parsedJson) {
       return isPrettified
@@ -436,7 +455,7 @@ function BodyView({ body, contentType, decode = false }: BodyViewProps) {
         : JSON.stringify(parsedJson);
     }
     return decodedBody;
-  }, [isJson, parsedJson, isPrettified, body, decode, contentType]);
+  }, [isJson, parsedJson, isPrettified, decodedBody]);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(displayBody);
