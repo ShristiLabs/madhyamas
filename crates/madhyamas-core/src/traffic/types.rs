@@ -123,10 +123,7 @@ impl ResponseData {
 /// Compute the on-wire size of a header map in bytes.
 /// Each header contributes `key: value\r\n` = key.len() + 2 + value.len() + 2.
 fn headers_size(headers: &HashMap<String, String>) -> usize {
-    headers
-        .iter()
-        .map(|(k, v)| k.len() + 2 + v.len() + 2)
-        .sum()
+    headers.iter().map(|(k, v)| k.len() + 2 + v.len() + 2).sum()
 }
 
 // Custom body serializer: converts Vec<u8> to String (UTF-8 or base64 for binary)
@@ -225,9 +222,9 @@ impl TrafficEntry {
     /// Get the total size (request + response if available)
     pub fn total_size(&self) -> usize {
         self.request_size
-            + self.response_size.unwrap_or_else(|| {
-                self.response.as_ref().map(|r| r.size()).unwrap_or(0)
-            })
+            + self
+                .response_size
+                .unwrap_or_else(|| self.response.as_ref().map(|r| r.size()).unwrap_or(0))
     }
 
     /// Check if this is an HTTPS request

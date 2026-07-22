@@ -211,9 +211,7 @@ impl ThrottleManager {
     pub fn set_enabled(&self, enabled: bool) {
         *self.enabled.write() = enabled;
         if let Some(store) = &self.store {
-            if let Err(e) =
-                store.save_throttle_profile(&self.profile.read(), enabled)
-            {
+            if let Err(e) = store.save_throttle_profile(&self.profile.read(), enabled) {
                 tracing::warn!("Failed to persist throttle enabled state: {}", e);
             }
         }

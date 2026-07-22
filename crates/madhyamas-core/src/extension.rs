@@ -182,9 +182,7 @@ impl ExtensionManager {
     pub fn register(&self, ext: Arc<dyn Extension>) {
         self.extensions.write().push(ext);
         // Keep sorted by priority so iteration is in execution order.
-        self.extensions
-            .write()
-            .sort_by_key(|e| e.priority());
+        self.extensions.write().sort_by_key(|e| e.priority());
     }
 
     /// Run `on_request` on all enabled extensions in priority order.
@@ -198,11 +196,7 @@ impl ExtensionManager {
             }
             let result = ext.on_request(ctx);
             if let Some(err) = &result.error {
-                tracing::warn!(
-                    "Extension {} on_request error: {}",
-                    ext.name(),
-                    err
-                );
+                tracing::warn!("Extension {} on_request error: {}", ext.name(), err);
             }
             if result.handled || !result.continue_chain {
                 return result.handled;
@@ -220,11 +214,7 @@ impl ExtensionManager {
             }
             let result = ext.on_response(ctx);
             if let Some(err) = &result.error {
-                tracing::warn!(
-                    "Extension {} on_response error: {}",
-                    ext.name(),
-                    err
-                );
+                tracing::warn!("Extension {} on_response error: {}", ext.name(), err);
             }
             if !result.continue_chain {
                 break;
@@ -341,7 +331,10 @@ mod script_adapter {
             host: r.host.clone(),
             path: r.path.clone(),
             headers: r.headers.clone(),
-            body: r.body.as_ref().map(|b| String::from_utf8_lossy(b).to_string()),
+            body: r
+                .body
+                .as_ref()
+                .map(|b| String::from_utf8_lossy(b).to_string()),
             content_type: r.content_type.clone(),
             query: Default::default(),
         });
@@ -350,7 +343,10 @@ mod script_adapter {
             status_code: r.status_code,
             status_message: r.status_message.clone(),
             headers: r.headers.clone(),
-            body: r.body.as_ref().map(|b| String::from_utf8_lossy(b).to_string()),
+            body: r
+                .body
+                .as_ref()
+                .map(|b| String::from_utf8_lossy(b).to_string()),
             content_type: r.content_type.clone(),
             duration_ms: r.duration_ms,
         });
@@ -403,9 +399,7 @@ mod plugin_adapter {
 
         fn on_request(&self, ctx: &mut ExtensionContext) -> ExtensionResult {
             let pctx = build_plugin_context(ctx, "on_request");
-            let results = self
-                .manager
-                .execute_hook(PluginHook::OnRequest, pctx);
+            let results = self.manager.execute_hook(PluginHook::OnRequest, pctx);
             let mut modified = false;
             let mut logs = Vec::new();
             let mut errors = Vec::new();
@@ -429,9 +423,7 @@ mod plugin_adapter {
 
         fn on_response(&self, ctx: &mut ExtensionContext) -> ExtensionResult {
             let pctx = build_plugin_context(ctx, "on_response");
-            let results = self
-                .manager
-                .execute_hook(PluginHook::OnResponse, pctx);
+            let results = self.manager.execute_hook(PluginHook::OnResponse, pctx);
             let mut modified = false;
             let mut logs = Vec::new();
             let mut errors = Vec::new();

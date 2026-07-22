@@ -186,7 +186,12 @@ impl McpServer {
         let result = self.tokio_runtime.block_on(async {
             if let Some(r) = self
                 .dyn_registry
-                .execute(&tool_name, self.tool_executor.client(), self.tool_executor.api_url(), &arguments)
+                .execute(
+                    &tool_name,
+                    self.tool_executor.client(),
+                    self.tool_executor.api_url(),
+                    &arguments,
+                )
                 .await
             {
                 return r;

@@ -79,7 +79,10 @@ fn format_sessions(sessions: &Value) -> String {
     let mut out = format!("Found {} session(s):\n\n", arr.len());
     for s in arr {
         let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-        let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("(unnamed)");
+        let name = s
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(unnamed)");
         let count = s.get("request_count").and_then(|v| v.as_u64()).unwrap_or(0);
         out.push_str(&format!("  • {} — {} ({} requests)\n", id, name, count));
     }

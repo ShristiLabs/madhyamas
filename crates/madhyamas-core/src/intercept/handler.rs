@@ -230,9 +230,7 @@ impl InterceptHandler for ThrottleManager {
 /// configured delay. This is the same logic as
 /// `Pipeline::build_mock_response` but available without a `Pipeline`
 /// reference so the trait implementation is self-contained.
-async fn build_mock_response(
-    mock_response: &super::MockResponse,
-) -> ResponseData {
+async fn build_mock_response(mock_response: &super::MockResponse) -> ResponseData {
     if let Some(delay_ms) = mock_response.delay_ms {
         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
     }

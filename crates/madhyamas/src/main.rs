@@ -12,13 +12,13 @@ use clap::{Parser, Subcommand};
 use std::sync::Arc;
 
 use madhyamas_api::{create_router, RateLimitConfig};
-use madhyamas_core::{
-    BreakpointManager, CertificateManager, ExtensionManager, InterceptStore, MemoryManager,
-    MetricsCollector, MockManager, Persistable, PerformanceMonitor, ProxyConfig, ProxyEngine,
-    RewriteManager, ThrottleManager, TrafficStore,
-};
 #[cfg(feature = "grpc")]
 use madhyamas_core::GrpcManager;
+use madhyamas_core::{
+    BreakpointManager, CertificateManager, ExtensionManager, InterceptStore, MemoryManager,
+    MetricsCollector, MockManager, PerformanceMonitor, Persistable, ProxyConfig, ProxyEngine,
+    RewriteManager, ThrottleManager, TrafficStore,
+};
 #[cfg(feature = "plugins")]
 use madhyamas_core::{PluginExtension, PluginManager};
 #[cfg(feature = "scripting")]
@@ -255,8 +255,7 @@ async fn run_proxy_server(args: Args) -> Result<()> {
 
     // Initialize intercept rule persistence store (SQLite). Rules are
     // loaded on startup and saved whenever they change via the API.
-    let intercept_db_path = std::path::Path::new(&config.db_path)
-        .with_file_name("intercept.db");
+    let intercept_db_path = std::path::Path::new(&config.db_path).with_file_name("intercept.db");
     let intercept_store = InterceptStore::new(&intercept_db_path)?;
 
     info!("Starting proxy engine...");

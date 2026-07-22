@@ -70,7 +70,10 @@ impl DynToolRegistry {
 
     /// List all registered tools as wire-format definitions.
     pub fn list_tools(&self) -> Vec<Tool> {
-        self.tools.iter().map(|t| tool_definition(t.as_ref())).collect()
+        self.tools
+            .iter()
+            .map(|t| tool_definition(t.as_ref()))
+            .collect()
     }
 
     /// Find a tool by name and execute it.

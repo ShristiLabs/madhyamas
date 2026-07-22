@@ -210,10 +210,7 @@ impl<'a> Pipeline<'a> {
 
         info!(
             "{} {} -> {} ({})",
-            request_data.method,
-            request_data.url,
-            response.status_code,
-            log_tag
+            request_data.method, request_data.url, response.status_code, log_tag
         );
         Ok(RequestOutcome::Responded)
     }
@@ -352,13 +349,14 @@ impl<'a> Pipeline<'a> {
                             duration_ms: 0,
                         };
 
-                        return self.short_circuit_response(
-                            request_data,
-                            &response,
-                            client_stream,
-                            "breakpoint response",
-                        )
-                        .await;
+                        return self
+                            .short_circuit_response(
+                                request_data,
+                                &response,
+                                client_stream,
+                                "breakpoint response",
+                            )
+                            .await;
                     }
                 }
             }
@@ -746,7 +744,7 @@ impl<'a> Pipeline<'a> {
                     | "proxy-authorization"
                     | "te"
                     | "trailers"
-                    | "host"             // reqwest sets :authority from URL
+                    | "host" // reqwest sets :authority from URL
             ) {
                 if let Ok(name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
                     if let Ok(val) = reqwest::header::HeaderValue::from_str(value) {
@@ -783,10 +781,7 @@ impl<'a> Pipeline<'a> {
                 let name_lower = name.as_str().to_lowercase();
                 if !matches!(
                     name_lower.as_str(),
-                    "transfer-encoding"
-                        | "content-length"
-                        | "connection"
-                        | "keep-alive"
+                    "transfer-encoding" | "content-length" | "connection" | "keep-alive"
                 ) {
                     headers.insert(
                         name.as_str().to_string(),

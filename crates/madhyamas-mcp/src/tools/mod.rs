@@ -4,6 +4,7 @@ mod breakpoints;
 mod executor;
 mod grpc;
 mod mocks;
+mod modern_tools;
 mod plugins;
 mod registry;
 mod replay;
@@ -13,12 +14,11 @@ mod sessions;
 mod throttle;
 mod tool_trait;
 mod traffic;
-mod modern_tools;
 
 pub use executor::ToolExecutor;
 pub use modern_tools::default_registry as default_dyn_registry;
 pub use registry::ToolRegistry;
-pub use tool_trait::{DynToolRegistry, McpTool, tool_definition};
+pub use tool_trait::{tool_definition, DynToolRegistry, McpTool};
 
 /// Sanitize an ID for safe inclusion in a URL path segment.
 ///

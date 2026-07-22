@@ -1,11 +1,11 @@
 //! API routes
 
+#[cfg(feature = "enterprise")]
+use axum::middleware::from_fn_with_state;
 use axum::{
     routing::{delete, get, patch, post, put},
     Router,
 };
-#[cfg(feature = "enterprise")]
-use axum::middleware::from_fn_with_state;
 #[cfg(feature = "enterprise")]
 use madhyamas_core::enterprise::AuthManager;
 use std::sync::Arc;

@@ -56,14 +56,14 @@ pub use intercept::{
 pub use persistence::{InterceptStore, Persistable};
 
 // Re-exports from extension
+#[cfg(feature = "plugins")]
+pub use extension::PluginExtension;
+#[cfg(feature = "scripting")]
+pub use extension::ScriptExtension;
 pub use extension::{
     Extension, ExtensionContext, ExtensionManager, ExtensionRequest, ExtensionResponse,
     ExtensionResult,
 };
-#[cfg(feature = "scripting")]
-pub use extension::ScriptExtension;
-#[cfg(feature = "plugins")]
-pub use extension::PluginExtension;
 
 // Re-exports from grpc
 #[cfg(feature = "grpc")]

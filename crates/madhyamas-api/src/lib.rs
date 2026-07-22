@@ -17,16 +17,16 @@ pub mod ws;
 use axum::Router;
 #[cfg(feature = "enterprise")]
 use madhyamas_core::enterprise::AuthManager;
-use madhyamas_core::{
-    BreakpointManager, CertificateManager, InterceptStore, MockManager, ProxyConfig,
-    ReplayManager, RewriteManager, SessionManager, ThrottleManager, TrafficStore, WsManager,
-};
 #[cfg(feature = "grpc")]
 use madhyamas_core::GrpcManager;
 #[cfg(feature = "plugins")]
 use madhyamas_core::PluginManager;
 #[cfg(feature = "scripting")]
 use madhyamas_core::ScriptRuntime;
+use madhyamas_core::{
+    BreakpointManager, CertificateManager, InterceptStore, MockManager, ProxyConfig, ReplayManager,
+    RewriteManager, SessionManager, ThrottleManager, TrafficStore, WsManager,
+};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
@@ -292,15 +292,15 @@ pub fn create_router(state: AppState, rate_limit: RateLimitConfig) -> Router<()>
 
     // Log only method, URI, and status — exclude headers and body to
     // avoid leaking sensitive data (cookies, auth headers) into logs.
-    router = router.layer(
-        TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<_>| {
+    router = router.layer(TraceLayer::new_for_http().make_span_with(
+        |request: &axum::http::Request<_>| {
             tracing::info_span!(
                 "api",
                 method = %request.method(),
                 uri = %request.uri(),
             )
-        }),
-    );
+        },
+    ));
 
     router.with_state(state)
 }
