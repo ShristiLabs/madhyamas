@@ -105,7 +105,7 @@ jobs:
       - name: Run tests
         env:
           RUST_BACKTRACE: 1
-        run: cargo nextest run --profile ci-release --verbose
+        run: cargo nextest run --verbose
 
   # =============================================================================
   # Security audit
