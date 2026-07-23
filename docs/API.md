@@ -1,74 +1,104 @@
-# Madhyamas API Documentation
+# Madhyamas API Reference
 
 ## Base URL
 
-| Endpoint | Method | Description |
-|----------|------|-------------|
-| `/api/traffic` | GET | List all captured traffic |
-| `/api/traffic?filter=<filter>` | GET | Filter traffic by criteria |
-| `/api/traffic/:id` | GET | Get specific traffic entry |
-| `/api/traffic/clear` | POST | Clear all traffic |
-| `/api/traffic/count` | GET | Get traffic count |
-| `/api/sessions` | GET | List all sessions |
-| `/api/sessions` | POST | Create new session |
-| `/api/sessions/:id` | GET | Get session details |
-| `/api/sessions/:id/export` | GET | Export session as HAR |
-| `/api/sessions/:id/switch` | POST | Switch to session |
-| `/api/sessions/import` | POST | Import session from HAR file |
-| `/api/export/har` | GET | Export all traffic as HAR |
-| `/api/export/curl/:id` | GET | Get cURL command for request |
-| `/api/cert/ca` | GET | Get CA certificate PEM |
-| `/api/breakpoints` | GET | List breakpoint rules |
-| `/api/breakpoints` | POST | Create breakpoint rule |
-| `/api/breakpoints/:id` | DELETE | Delete breakpoint rule |
-| `/api/breakpoints/paused` | GET | List paused requests |
-| `/api/breakpoints/paused/:id/resume` | POST | Resume paused request |
-| `/api/mocks` | GET | List mock rules |
-| `/api/mocks` | POST | Create mock rule |
-| `/api/mocks/:id` | PUT | Update mock rule |
-| `/api/mocks/:id` | DELETE | Delete mock rule |
-| `/api/mocks/:id/toggle` | POST | Enable/disable mock |
-| `/api/rewrites` | GET | List rewrite rules |
-| `/api/rewrites` | POST | Create rewrite rule |
-| `/api/rewrites/:id` | DELETE | Delete rewrite rule |
-| `/api/rewrites/:id/toggle` | POST | Enable/disable rewrite |
-| `/api/throttle` | GET | Get throttle profile |
-| `/api/throttle` | POST | Set throttle profile |
-| `/api/throttle/enabled` | POST | Enable/disable throttling |
-| `/api/throttle/presets` | GET | Get throttle presets |
-| `/api/replay/saved` | GET | List saved requests |
-| `/api/replay/saved` | POST | Save request for replay |
-| `/api/replay/execute/:id` | POST | Execute (replay) saved request |
-| `/api/replay/history` | GET | Get replay history |
-| `/api/grpc/connections` | GET | List gRPC connections |
-| `/api/grpc/streams` | GET | List gRPC streams |
-| `/api/grpc/frames` | GET | List gRPC frames |
-| `/api/scripts` | GET | List scripts |
-| `/api/scripts` | POST | Create script |
-| `/api/scripts/:id` | PUT | Update script |
-| `/api/scripts/:id` | DELETE | Delete script |
-| `/api/scripts/:id/toggle` | POST | Enable/disable script |
-| `/api/plugins` | GET | List plugins |
-| `/api/plugins/:id/enable` | POST | Enable plugin |
-| `/api/plugins/:id/disable` | POST | Disable plugin |
-| `/api/ws` | GET | WebSocket connection for real-time updates |
+All endpoints are served from the Madhyamas API server (default: `http://127.0.0.1:3001/api`).
 
-| `/api/health` | GET | Health check |
-| `/api/metrics` | GET | Performance metrics |
-| `/api/onboarding` | GET | Get onboarding status |
-| `/api/auth/login` | POST | User login |
-| `/api/auth/logout` | POST | User logout |
-| `/api/auth/me` | GET | Get current user |
-| `/api/users` | GET | List users (admin) |
-| `/api/users` | POST | Create user (admin) |
-| `/api/audit` | GET | Get audit log entries |
-| `/api/config` | GET | Get application config |
+## Traffic
 
-| `/api/config` | PUT | Update application config |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/traffic` | List all traffic entries |
+| GET | `/api/traffic/:id` | Get single traffic entry |
+| POST | `/api/traffic/clear` | Clear all traffic |
+| GET | `/api/traffic/count` | Get traffic count |
+
+## Sessions
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/sessions` | List all sessions |
+| POST | `/api/sessions` | Create new session |
+| GET | `/api/sessions/:id` | Get session details |
+| DELETE | `/api/sessions/:id` | Delete session |
+| GET | `/api/sessions/:id/export` | Export session as HAR |
+| POST | `/api/sessions/:id/switch` | Switch active session |
+| POST | `/api/sessions/import` | Import session from HAR |
+
+## Export
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/export/har` | Export traffic as HAR |
+| GET | `/api/export/curl/:id` | Export request as cURL |
+
+## Interception
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET/POST/DELETE | `/api/breakpoints` | Manage breakpoint rules |
+| GET/POST | `/api/breakpoints/paused` | List/resume paused requests |
+| POST | `/api/breakpoints/paused/:id/resume` | Resume a paused request |
+| GET/POST | `/api/mocks` | Manage mock rules |
+| PUT/DELETE | `/api/mocks/:id` | Update/delete mock rule |
+| POST | `/api/mocks/:id/toggle` | Enable/disable mock |
+| GET/POST/DELETE | `/api/rewrites` | Manage rewrite rules |
+| POST | `/api/rewrites/:id/toggle` | Enable/disable rewrite |
+| GET/POST | `/api/throttle` | Manage throttling |
+| POST | `/api/throttle/enabled` | Enable/disable throttling |
+| GET | `/api/throttle/presets` | Get throttle presets |
+
+## Replay
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET/POST | `/api/replay/saved` | Manage saved requests |
+| POST | `/api/replay/execute/:id` | Replay a request |
+| GET | `/api/replay/history` | View replay history |
+
+## WebSocket & gRPC
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/ws` | WebSocket for real-time traffic updates |
+| GET | `/api/ws-traffic/connections` | List WebSocket connections |
+| GET | `/api/grpc/connections` | List gRPC connections |
+| GET | `/api/grpc/streams` | List gRPC streams |
+| GET | `/api/grpc/frames` | List gRPC frames |
+| GET | `/api/grpc/stats` | Get gRPC statistics |
+
+## Scripts & Plugins
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET/POST | `/api/scripts` | List/create scripts |
+| PUT/DELETE | `/api/scripts/:id` | Update/delete script |
+| POST | `/api/scripts/:id/toggle` | Enable/disable script |
+| GET | `/api/plugins` | List plugins |
+| POST | `/api/plugins/:id/enable` | Enable plugin |
+| POST | `/api/plugins/:id/disable` | Disable plugin |
+| POST | `/api/plugins/reload` | Reload plugins |
+
+## Configuration & Capture
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/config` | Get proxy configuration |
+| PATCH | `/api/config` | Update proxy configuration |
+| GET | `/api/capture` | Get capture status |
+| POST | `/api/capture/toggle` | Toggle traffic capture |
+| GET | `/api/cert/ca` | Download CA certificate |
+
+## Health
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Health check |
 
 ## Query Parameters
 
 ### Traffic Filter
+
 ```
 GET /api/traffic?method=GET&url=*https://example.com*&status_code=200&content_type=application/json
 ```
@@ -81,6 +111,7 @@ GET /api/traffic?method=GET&url=*https://example.com*&status_code=200&content_ty
 | content_type | string | Response content type |
 
 ### Pagination
+
 ```
 GET /api/traffic?limit=100&offset=0
 ```
@@ -122,4 +153,3 @@ The WebSocket endpoint (`/api/ws`) sends `WsServerMessage` messages to clients. 
 | `Unsubscribe` | - | Unsubscribe from traffic updates |
 | `GetInitialTraffic` | `{ limit: Option<usize> }` | Request initial traffic data |
 | `Ping` | - | Keep-alive ping |
-

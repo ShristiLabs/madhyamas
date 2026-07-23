@@ -205,9 +205,168 @@ curl http://localhost:3001/api/health
 docker compose ps
 ```
 
-## Example Usage in Windsurf
+## Example Usage with AI Agents
 
-Once configured, you can use natural language to interact with Madhyamas:
+Once configured, AI agents can use Madhyamas to:
+
+- **Debug API issues**: "Show me all failed requests to /api/users in the last 10 minutes"
+- **Create mocks**: "Mock all requests to /api/auth to return a valid token"
+- **Replay requests**: "Replay the login request with different credentials"
+- **Analyze patterns**: "What are the most common API endpoints being called?"
+- **Export for sharing**: "Export the last 50 requests as HAR format"
+
+## CLI for AI Agents
+
+Madhyamas also provides a comprehensive CLI for AI agents that prefer shell commands:
+
+```bash
+# View captured traffic
+madhyamas traffic list
+madhyamas traffic get <id>
+madhyamas traffic search "api.example.com"
+madhyamas traffic count
+madhyamas traffic clear
+
+# Manage mocks
+madhyamas mock list
+madhyamas mock create --url "*/api/*" --status 200 --body '{"ok":true}'
+madhyamas mock delete <id>
+madhyamas mock toggle <id> --enabled true
+
+# Manage breakpoints
+madhyamas breakpoint list
+madhyamas breakpoint create --url "*/auth*" --direction request
+madhyamas breakpoint delete <id>
+
+# Manage sessions
+madhyamas session list
+madhyamas session create --name "debug-auth"
+madhyamas session switch <id>
+madhyamas session export <id> --format har
+```
+
+All commands support `--json` flag for machine-readable output.
+
+## AI Agent Skills
+
+Madhyamas ships with a comprehensive skills package that gives AI agents procedural knowledge on how to use the proxy, CLI, and REST API. The skills are built on the [Agent Skills standard](https://agentskills.io) and support multiple AI agent harnesses.
+
+### What's Included
+
+- **67 MCP tools** with full parameter schemas and examples
+- **58 CLI subcommands** with all flags and options
+- **130+ REST API endpoints** with curl examples
+- **18 workflow guides** covering traffic inspection, mocking, breakpoints, rewrites, throttling, replay, sessions, gRPC, scripting, plugins, WebSockets, export/import, troubleshooting, and harness setup
+
+### Installing Skills
+
+#### Via skills.sh (recommended)
+
+Install directly from GitHub using the `skills` CLI — works across Claude Code, Cursor, Windsurf, Codex, and other supported agents:
+
+```bash
+# Install to all detected agents (interactive)
+npx skills add ShristiLabs/madhyamas --skill madhyamas
+
+# Install to a specific agent
+npx skills add ShristiLabs/madhyamas --skill madhyamas -a claude-code
+npx skills add ShristiLabs/madhyamas --skill madhyamas -a cursor
+npx skills add ShristiLabs/madhyamas --skill madhyamas -a windsurf
+
+# Install globally (user-level, not project-level)
+npx skills add ShristiLabs/madhyamas --skill madhyamas --global
+
+# Non-interactive (CI/CD)
+npx skills add ShristiLabs/madhyamas --skill madhyamas -y
+
+# List available skills in the repo without installing
+npx skills add ShristiLabs/madhyamas --list
+```
+
+#### Via npm
+
+```bash
+# Install globally
+npm install -g @madhyamas/skill
+
+# Or as a project dev dependency
+npm install --save-dev @madhyamas/skill
+```
+
+#### Via build scripts (from source)
+
+The skills package includes build and install scripts that generate harness-specific formats:
+
+```bash
+# 1. Build skills for all target harnesses (outputs to dist/)
+bash skills/madhyamas/scripts/build.sh
+
+# 2. Install for your harness (project-level)
+bash skills/madhyamas/scripts/install.sh claude      # Claude Code
+bash skills/madhyamas/scripts/install.sh devin       # Devin CLI
+bash skills/madhyamas/scripts/install.sh windsurf    # Windsurf
+bash skills/madhyamas/scripts/install.sh cursor      # Cursor
+bash skills/madhyamas/scripts/install.sh opencode    # OpenCode
+bash skills/madhyamas/scripts/install.sh commandcode # CommandCode
+bash skills/madhyamas/scripts/install.sh agents      # Universal (Agent Skills standard)
+
+# Or install globally (--global flag)
+bash skills/madhyamas/scripts/install.sh claude --global
+
+# Or install to all harnesses at once
+bash skills/madhyamas/scripts/install.sh all
+```
+
+After installation, restart your AI agent to load the skill.
+
+### Supported Harnesses
+
+| Harness | Install Target | Format |
+|---------|---------------|--------|
+| Agent Skills (universal) | `agents` | `.agents/skills/madhyamas/SKILL.md` |
+| Claude Code | `claude` | `.claude/skills/madhyamas/SKILL.md` |
+| Devin CLI | `devin` | `.devin/skills/madhyamas/SKILL.md` |
+| Windsurf | `windsurf` | `.windsurf/skills/madhyamas/SKILL.md` |
+| Cursor | `cursor` | `.cursor/rules/madhyamas.mdc` (flattened) |
+| OpenCode | `opencode` | `.opencode/skills/madhyamas/SKILL.md` |
+| CommandCode | `commandcode` | `.commandcode/skills/madhyamas/SKILL.md` |
+
+### MCP Configuration
+
+Use the provided config templates in `skills/madhyamas/assets/` to configure the MCP server:
+
+```json
+{
+  "mcpServers": {
+    "madhyamas": {
+      "command": "madhyamas",
+      "args": ["mcp"],
+      "env": { "MADHYAMAS_API_URL": "http://127.0.0.1:3001" }
+    }
+  }
+}
+```
+
+See `skills/madhyamas/references/harness-setup.md` for harness-specific setup instructions.
+
+### Validating Skills
+
+```bash
+# Validate the skill package (checks structure, frontmatter, links, tool counts)
+bash skills/madhyamas/scripts/validate.sh
+
+# Preview build without writing files
+bash skills/madhyamas/scripts/build.sh --dry-run
+```
+
+### Skills Directory Structure
 
 ```
-User: Show me the last 10 HTTP requests captured by the proxy
+skills/madhyamas/
+├── SKILL.md                    # Entry point (always loaded when skill triggers)
+├── references/                 # 18 detailed reference files (loaded on demand)
+├── scripts/                    # build.sh, install.sh, validate.sh, pre-commit.sh
+└── assets/                     # MCP config templates for each harness
+```
+
+See [skills/README.md](../skills/README.md) for complete documentation.

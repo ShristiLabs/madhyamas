@@ -587,3 +587,83 @@ cross build --target x86_64-unknown-linux-musl --release
 - [React Documentation](https://react.dev/)
 - [Project README](../README.md)
 - [Architecture Guide](ARCHITECTURE.md)
+
+## Project Structure
+
+```
+madhyamas/
+├── Cargo.toml                 # Workspace configuration
+├── crates/
+│   ├── madhyamas/             # Unified binary (proxy + web UI + MCP + CLI)
+│   ├── madhyamas-core/        # Core proxy engine (Rust)
+│   ├── madhyamas-api/         # REST/WebSocket API + embedded web assets (Rust)
+│   ├── madhyamas-cli/         # CLI library (re-exported by main binary)
+│   └── madhyamas-mcp/         # MCP server library (re-exported by main binary)
+├── web/                       # React frontend (embedded at compile time)
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── src/
+├── android/                   # Android VPN companion app (Kotlin)
+├── docs/                      # Documentation
+├── docker/                    # Docker setup
+├── skills/                    # AI agent skills package (multi-harness)
+│   └── madhyamas/             # SKILL.md + references + build scripts
+└── README.md
+```
+
+## Technology Stack
+
+### Backend (Rust)
+
+- **axum** — Web framework
+- **hyper** — HTTP server/client
+- **tokio** — Async runtime
+- **rustls** — TLS implementation
+- **rcgen** — Certificate generation
+- **rusqlite** — SQLite storage
+- **clap** — CLI framework
+- **reqwest** — HTTP client for upstream requests (gzip/deflate/brotli support)
+- **tower-governor** — Rate limiting (opt-in)
+
+### Frontend (React)
+
+- **React 18** — UI framework
+- **TypeScript** — Type safety
+- **Vite** — Build tool
+- **Tailwind CSS** — Styling
+- **shadcn/ui** — UI components
+- **TanStack Query** — Data fetching
+- **Zustand** — State management
+- **Prism.js** — Syntax highlighting for JSON viewer
+- **react-json-view-lite** — Collapsible JSON tree view
+- **jsonpath-plus** — JSONPath query engine
+- **jmespath** — JMESPath query engine
+
+## Development Workflow
+
+The web UI is embedded into the Rust binary at compile time via `rust-embed`. For development:
+
+1. Run the web UI dev server: `cd web && npm run dev`
+2. Run the Rust backend: `cargo run -- --verbose`
+3. The backend serves the web UI at `http://localhost:3001`
+4. For production builds, always build the web UI first (`cd web && npm run build`), then rebuild the Rust binary
+
+## Git Hooks (Pre-commit Checks)
+
+A pre-commit hook is provided to catch formatting and clippy issues before they reach CI. To install:
+
+```bash
+./hooks/install.sh
+```
+
+This installs a `pre-commit` hook that runs:
+
+- **`cargo fmt --all -- --check`** — fails if any Rust file is not formatted
+- **`cargo clippy --all-targets --all-features -- -D warnings`** — fails on any clippy warning
+- **`npm run lint`** — fails on frontend lint issues (when web files are changed)
+
+The hook only runs when `.rs` files or frontend config files are staged. To bypass temporarily:
+
+```bash
+git commit --no-verify
+```
