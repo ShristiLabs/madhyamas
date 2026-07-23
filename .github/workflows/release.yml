@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.1.0)"
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -179,7 +184,7 @@ jobs:
       - name: Extract version
         id: version
         shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ inputs.version || \${GITHUB_REF#refs/tags/v} }}" >> $GITHUB_OUTPUT
 
       - name: Build binary
         run: cargo build --release --target ${{ matrix.target }} -p madhyamas
@@ -237,7 +242,7 @@ jobs:
       - name: Extract version
         id: version
         shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ inputs.version || \${GITHUB_REF#refs/tags/v} }}" >> $GITHUB_OUTPUT
 
       - name: Install WiX Toolset
         run: dotnet tool install --global wix
@@ -282,7 +287,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ inputs.version || \${GITHUB_REF#refs/tags/v} }}" >> $GITHUB_OUTPUT
 
       - name: Copy snapcraft file
         run: |
@@ -329,7 +334,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ inputs.version || \${GITHUB_REF#refs/tags/v} }}" >> $GITHUB_OUTPUT
 
       - name: Copy spec file
         run: |
@@ -378,7 +383,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ inputs.version || \${GITHUB_REF#refs/tags/v} }}" >> $GITHUB_OUTPUT
 
       - name: Flatten artifacts
         run: |
@@ -476,7 +481,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ inputs.version || \${GITHUB_REF#refs/tags/v} }}" >> $GITHUB_OUTPUT
 
       - name: Download release checksums
         run: |
@@ -517,7 +522,7 @@ jobs:
       - name: Extract version
         id: version
         shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ inputs.version || \${GITHUB_REF#refs/tags/v} }}" >> $GITHUB_OUTPUT
 
       - name: Update Chocolatey package
         shell: pwsh
@@ -598,7 +603,7 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${{ inputs.version || \${GITHUB_REF#refs/tags/v} }}
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
           echo "MAJOR_MINOR=$(echo $VERSION | cut -d. -f1,2)" >> $GITHUB_OUTPUT
           echo "MAJOR=$(echo $VERSION | cut -d. -f1)" >> $GITHUB_OUTPUT
