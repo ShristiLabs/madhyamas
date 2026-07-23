@@ -1,6 +1,7 @@
 # Madhyamas
 
-[![skills.sh](https://skills.sh/b/ShristiLabs/madhyamas)](https://skills.sh/ShristiLabs/madhyamas)
+[![skills.sh](https://img.shields.io/badge/skills.sh-madhyamas-blue?logo=vercel&logoColor=white)](https://skills.sh/ShristiLabs/madhyamas)
+[![npm](https://img.shields.io/badge/npm-%40madhyamas%2Fskill-blue?logo=npm&logoColor=white)](https://www.npmjs.com/package/@madhyamas/skill)
 
 **Open Source HTTP/HTTPS Debugging Proxy**
 

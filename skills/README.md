@@ -1,6 +1,7 @@
 # Madhyamas Skills
 
-[![skills.sh](https://skills.sh/b/ShristiLabs/madhyamas)](https://skills.sh/ShristiLabs/madhyamas)
+[![skills.sh](https://img.shields.io/badge/skills.sh-madhyamas-blue?logo=vercel&logoColor=white)](https://skills.sh/ShristiLabs/madhyamas)
+[![npm](https://img.shields.io/badge/npm-%40madhyamas%2Fskill-blue?logo=npm&logoColor=white)](https://www.npmjs.com/package/@madhyamas/skill)
 
 AI agent skills package providing procedural knowledge for using the [Madhyamas](https://github.com/ShristiLabs/madhyamas) HTTP/HTTPS debugging proxy.
 
@@ -198,12 +199,16 @@ Checks performed:
 
 ### To skills.sh
 
-skills.sh indexes skills from public GitHub repos via install telemetry. No submission form is needed — once someone runs `npx skills add ShristiLabs/madhyamas`, the skill appears on [skills.sh](https://skills.sh).
+skills.sh indexes skills from public GitHub repos via install telemetry. No submission form is needed — once users run `npx skills add ShristiLabs/madhyamas`, the skill appears on [skills.sh](https://skills.sh).
 
 To improve discoverability:
-- The skills.sh badge is already in the repo README
-- Add GitHub topics: `gh repo edit ShristiLabs/madhyamas --add-topic agent-skill --add-topic claude-code --add-topic mcp --add-topic debugging-proxy`
+- The skills.sh badge is in the repo README (static shields.io badge until skills.sh indexes the skill via telemetry)
+- GitHub topics added: `agent-skill`, `claude-code`, `cursor`, `mcp`, `debugging-proxy`, `http-proxy`
 - Verify discoverability: `npx skills add ShristiLabs/madhyamas --list`
+- Once indexed on skills.sh, switch the badge to the dynamic format:
+  ```markdown
+  [![skills.sh](https://skills.sh/b/ShristiLabs/madhyamas)](https://skills.sh/ShristiLabs/madhyamas)
+  ```
 
 ### To npm
 
