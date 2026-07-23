@@ -6,7 +6,7 @@ $toolsDir = "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)"
 $packageArgs = @{
     packageName    = $packageName
     unzipLocation  = $toolsDir
-    url64bit       = 'https://github.com/madhyamas/madhyamas/releases/download/v__VERSION__/madhyamas-v__VERSION__-x86_64-pc-windows-msvc.zip'
+    url64bit       = 'https://github.com/ShristiLabs/madhyamas/releases/download/v__VERSION__/madhyamas-v__VERSION__-x86_64-pc-windows-msvc.zip'
     checksum64     = '__CHECKSUM__'
     checksumType64 = 'sha256'
 }

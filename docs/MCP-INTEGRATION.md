@@ -8,12 +8,14 @@ The Model Context Protocol (MCP) is a standard that allows AI assistants to inte
 
 ## Available MCP Tools
 
-The Madhyamas MCP server provides the following tools:
+The Madhyamas MCP server provides 67 tools covering traffic inspection, mocking, breakpoints, rewrites, throttling, replay, sessions, gRPC, scripting, and plugins. Key tools include:
 
 | Tool | Description |
 |------|-------------|
 | `madhyamas_get_traffic` | Get captured HTTP/HTTPS traffic with filtering |
-| `madhyamas_get_traffic_details` | Get detailed information about a specific request |
+| `madhyamas_get_traffic_entry` | Get detailed information about a specific request |
+| `madhyamas_search_traffic` | Search traffic by content (headers, bodies, URLs) |
+| `madhyamas_get_traffic_count` | Get total count of captured requests |
 | `madhyamas_clear_traffic` | Clear all captured traffic |
 | `madhyamas_get_config` | Get current proxy configuration |
 | `madhyamas_update_config` | Update runtime configuration |
@@ -22,13 +24,29 @@ The Madhyamas MCP server provides the following tools:
 | `madhyamas_create_mock` | Create a mock response rule |
 | `madhyamas_list_mocks` | List all mock rules |
 | `madhyamas_delete_mock` | Delete a mock rule |
+| `madhyamas_toggle_mock` | Enable/disable a mock rule |
 | `madhyamas_create_breakpoint` | Create a breakpoint rule |
 | `madhyamas_list_breakpoints` | List all breakpoint rules |
 | `madhyamas_delete_breakpoint` | Delete a breakpoint rule |
 | `madhyamas_replay_request` | Replay a captured request |
+| `madhyamas_save_request` | Save a request for later replay |
+| `madhyamas_list_saved_requests` | List all saved requests |
 | `madhyamas_list_sessions` | List all sessions |
 | `madhyamas_create_session` | Create a new session |
+| `madhyamas_export_session` | Export a session as HAR |
+| `madhyamas_import_session` | Import a session from HAR |
 | `madhyamas_switch_session` | Switch to a different session |
+| `madhyamas_export_curl` | Export a request as a cURL command |
+| `madhyamas_get_throttle` | Get current throttle settings |
+| `madhyamas_set_throttle` | Set throttle profile |
+| `madhyamas_toggle_throttle` | Enable/disable throttling |
+| `madhyamas_list_rewrites` | List all rewrite rules |
+| `madhyamas_create_rewrite` | Create a rewrite rule |
+| `madhyamas_get_grpc_connections` | List gRPC connections |
+| `madhyamas_list_scripts` | List all scripts |
+| `madhyamas_list_plugins` | List all plugins |
+
+For the complete list of all 67 tools with full parameter schemas, see the [skills package reference](../skills/madhyamas/references/mcp-tools.md).
 
 ## Setup Options
 

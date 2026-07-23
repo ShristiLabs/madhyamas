@@ -14,7 +14,7 @@ edition = "2021"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 authors = ["Madhyamas Team"]
-repository = "https://github.com/madhyamas/madhyamas"
+repository = "https://github.com/ShristiLabs/madhyamas"
 
 [workspace.dependencies]
 # Async runtime

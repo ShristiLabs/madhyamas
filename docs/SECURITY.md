@@ -13,7 +13,7 @@ If you discover a security vulnerability in Madhyamas, please report it responsi
 ### How to Report
 
 1. **Do not** open a public GitHub issue for security vulnerabilities.
-2. Instead, send an email to the maintainers or use [GitHub Security Advisories](https://github.com/madhyamas/madhyamas/security/advisories/new).
+2. Instead, send an email to the maintainers or use [GitHub Security Advisories](https://github.com/ShristiLabs/madhyamas/security/advisories/new).
 3. Include as much detail as possible: steps to reproduce, affected versions, potential impact.
 
 ### What to Expect

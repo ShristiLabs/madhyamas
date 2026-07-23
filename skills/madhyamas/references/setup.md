@@ -5,7 +5,7 @@
 ### From Source
 
 ```bash
-git clone https://github.com/madhyamas/madhyamas.git
+git clone https://github.com/ShristiLabs/madhyamas.git
 cd madhyamas
 cargo build --release -p madhyamas
 # Binary: target/release/madhyamas
@@ -19,7 +19,7 @@ cargo build --release -p madhyamas
 
 ### Pre-built Binaries
 
-Download from [GitHub Releases](https://github.com/madhyamas/madhyamas/releases). Available platforms:
+Download from [GitHub Releases](https://github.com/ShristiLabs/madhyamas/releases). Available platforms:
 
 | Platform | Target | Binary |
 |----------|--------|--------|

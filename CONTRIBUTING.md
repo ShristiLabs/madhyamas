@@ -56,7 +56,7 @@ We are committed to providing a welcoming and inclusive environment for all cont
 
 2. **Add Upstream Remote**
    ```bash
-   git remote add upstream https://github.com/madhyamas/madhyamas.git
+   git remote add upstream https://github.com/ShristiLabs/madhyamas.git
    git fetch upstream
    ```
 

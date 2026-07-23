@@ -5,28 +5,28 @@
 
 class Madhyamas < Formula
   desc "Open-source HTTP/HTTPS debugging proxy with web-based UI"
-  homepage "https://github.com/madhyamas/madhyamas"
+  homepage "https://github.com/ShristiLabs/madhyamas"
   version "0.1.0"
   license "MIT"
 
   on_macos do
     on_intel do
-      url "https://github.com/madhyamas/madhyamas/releases/download/v#{version}/madhyamas-v#{version}-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/ShristiLabs/madhyamas/releases/download/v#{version}/madhyamas-v#{version}-x86_64-apple-darwin.tar.gz"
       sha256 "PLACEHOLDER_SHA256_MACOS_INTEL"
     end
     on_arm do
-      url "https://github.com/madhyamas/madhyamas/releases/download/v#{version}/madhyamas-v#{version}-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/ShristiLabs/madhyamas/releases/download/v#{version}/madhyamas-v#{version}-aarch64-apple-darwin.tar.gz"
       sha256 "PLACEHOLDER_SHA256_MACOS_ARM"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/madhyamas/madhyamas/releases/download/v#{version}/madhyamas-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/ShristiLabs/madhyamas/releases/download/v#{version}/madhyamas-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "PLACEHOLDER_SHA256_LINUX_INTEL"
     end
     on_arm do
-      url "https://github.com/madhyamas/madhyamas/releases/download/v#{version}/madhyamas-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/ShristiLabs/madhyamas/releases/download/v#{version}/madhyamas-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "PLACEHOLDER_SHA256_LINUX_ARM"
     end
   end
@@ -61,7 +61,7 @@ class Madhyamas < Formula
         Install the cert from ~/.madhyamas/certs/madhyamas-ca.pem
 
       For more information:
-        https://github.com/madhyamas/madhyamas#readme
+        https://github.com/ShristiLabs/madhyamas#readme
     EOS
   end
 

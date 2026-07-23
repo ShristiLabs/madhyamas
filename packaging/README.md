@@ -35,7 +35,7 @@ brew install madhyamas
 ### Windows
 
 #### MSI Installer
-Download the `.msi` installer from the [releases page](https://github.com/madhyamas/madhyamas/releases).
+Download the `.msi` installer from the [releases page](https://github.com/ShristiLabs/madhyamas/releases).
 
 #### Chocolatey
 ```powershell

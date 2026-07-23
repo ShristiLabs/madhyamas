@@ -8,8 +8,8 @@ Release:        1%{?dist}
 Summary:        Open-source HTTP/HTTPS debugging proxy with web-based UI
 
 License:        MIT
-URL:            https://github.com/madhyamas/madhyamas
-Source0:        https://github.com/madhyamas/madhyamas/archive/refs/tags/v%{version}.tar.gz
+URL:            https://github.com/ShristiLabs/madhyamas
+Source0:        https://github.com/ShristiLabs/madhyamas/archive/refs/tags/v%{version}.tar.gz
 
 BuildRequires:  rust >= 1.88
 BuildRequires:  cargo

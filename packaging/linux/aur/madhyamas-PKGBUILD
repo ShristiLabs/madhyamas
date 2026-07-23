@@ -6,7 +6,7 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="Open-source HTTP/HTTPS debugging proxy with web-based UI"
 arch=('x86_64' 'aarch64')
-url="https://github.com/madhyamas/madhyamas"
+url="https://github.com/ShristiLabs/madhyamas"
 license=('MIT' 'Apache-2.0')
 depends=('openssl' 'gcc-libs' 'glibc')
 makedepends=('rust' 'cargo' 'nodejs' 'npm')
@@ -16,7 +16,7 @@ optdepends=(
 )
 backup=('etc/madhyamas/config.toml')
 source=(
-    "https://github.com/madhyamas/madhyamas/archive/refs/tags/v${pkgver}.tar.gz"
+    "https://github.com/ShristiLabs/madhyamas/archive/refs/tags/v${pkgver}.tar.gz"
     "madhyamas.service"
 )
 sha256sums=('SKIP' 'SKIP')

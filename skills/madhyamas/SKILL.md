@@ -15,7 +15,7 @@ license: MIT OR Apache-2.0
 metadata:
   author: madhyamas
   version: "0.1.0"
-  project-url: https://github.com/madhyamas/madhyamas
+  project-url: https://github.com/ShristiLabs/madhyamas
 ---
 
 # Madhyamas Proxy — AI Agent Guide

@@ -27,6 +27,25 @@ cargo build --release
 
 Download the latest release for your platform from the [Releases](https://github.com/ShristiLabs/madhyamas/releases) page.
 
+### Package Managers
+
+```bash
+# macOS (Homebrew)
+brew tap madhyamas/tap
+brew install madhyamas
+
+# Windows (Chocolatey)
+choco install madhyamas
+
+# Linux (Snap)
+sudo snap install madhyamas
+
+# Arch Linux (AUR)
+yay -S madhyamas
+```
+
+> **Note:** Package manager availability depends on the package being published. If not yet available, use [pre-built binaries](#pre-built-binaries) or [build from source](#from-source).
+
 ### Snapshot Builds
 
 Snapshot builds are automatically generated from the latest `main` branch and are available as CI artifacts. A single unified binary is built for each supported platform — it includes the proxy server, web UI (embedded), MCP server, and CLI.

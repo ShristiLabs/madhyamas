@@ -17,7 +17,7 @@
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/madhyamas/madhyamas.git
+git clone https://github.com/ShristiLabs/madhyamas.git
 cd madhyamas
 ```
 

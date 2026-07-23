@@ -20,7 +20,7 @@ This guide covers deploying Madhyamas in various environments, from local develo
 
 ```bash
 # Clone repository
-git clone https://github.com/madhyamas/madhyamas.git
+git clone https://github.com/ShristiLabs/madhyamas.git
 cd madhyamas
 
 # Build optimized release binary
@@ -571,8 +571,8 @@ Create formula `madhyamas.rb`:
 ```ruby
 class Proxyforge < Formula
   desc "Open source HTTP/HTTPS debugging proxy"
-  homepage "https://github.com/madhyamas/madhyamas"
-  url "https://github.com/madhyamas/madhyamas/archive/v0.1.0.tar.gz"
+  homepage "https://github.com/ShristiLabs/madhyamas"
+  url "https://github.com/ShristiLabs/madhyamas/archive/v0.1.0.tar.gz"
   sha256 "..."
   license "MIT OR Apache-2.0"
 
@@ -653,11 +653,11 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="Open source HTTP/HTTPS debugging proxy"
 arch=('x86_64')
-url="https://github.com/madhyamas/madhyamas"
+url="https://github.com/ShristiLabs/madhyamas"
 license=('MIT' 'Apache')
 depends=('gcc-libs')
 makedepends=('rust' 'cargo')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/madhyamas/madhyamas/archive/v$pkgver.tar.gz")
+source=("$pkgname-$pkgver.tar.gz::https://github.com/ShristiLabs/madhyamas/archive/v$pkgver.tar.gz")
 sha256sums=('...')
 
 build() {

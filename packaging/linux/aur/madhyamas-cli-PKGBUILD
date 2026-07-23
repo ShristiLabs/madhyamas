@@ -6,11 +6,11 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="Command-line interface for Madhyamas debugging proxy"
 arch=('x86_64' 'aarch64')
-url="https://github.com/madhyamas/madhyamas"
+url="https://github.com/ShristiLabs/madhyamas"
 license=('MIT' 'Apache-2.0')
 depends=('openssl' 'gcc-libs' 'glibc')
 makedepends=('rust' 'cargo')
-source=("https://github.com/madhyamas/madhyamas/archive/refs/tags/v${pkgver}.tar.gz")
+source=("https://github.com/ShristiLabs/madhyamas/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
 build() {

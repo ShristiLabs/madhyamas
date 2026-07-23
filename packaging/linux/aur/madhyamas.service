@@ -1,6 +1,6 @@
 [Unit]
 Description=Madhyamas HTTP/HTTPS Debugging Proxy
-Documentation=https://github.com/madhyamas/madhyamas
+Documentation=https://github.com/ShristiLabs/madhyamas
 After=network-online.target
 Wants=network-online.target
 
