@@ -5,8 +5,8 @@ how connections are accepted, how TLS/HTTPS interception is performed, how
 certificates are generated and used, how traffic is stored, and how it is
 displayed in the web UI. Mermaid diagrams are used throughout.
 
-> Source references use `<ref_file />` / `<ref_snippet />` tags so you can
-> jump directly to the relevant code.
+> Source references link to the relevant source files (with line numbers
+> where applicable) so you can jump directly to the code.
 
 ---
 
@@ -54,7 +54,7 @@ flowchart LR
 ```
 
 The binary entry point wires everything together in `run_proxy_server`:
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas/src/main.rs" lines="225-364" />
+[`main.rs:225-364`](../crates/madhyamas/src/main.rs#L225-L364)
 
 ---
 
@@ -90,10 +90,10 @@ flowchart TD
     WSCheck2 -- No --> Pipe
 ```
 
-Source: <ref_file file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/proxy/engine.rs" />
+Source: [`crates/madhyamas-core/src/proxy/engine.rs`](../crates/madhyamas-core/src/proxy/engine.rs)
 
 The peek/branch logic lives in `handle_connection`:
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/proxy/engine.rs" lines="275-320" />
+[`engine.rs:275-320`](../crates/madhyamas-core/src/proxy/engine.rs#L275-L320)
 
 ---
 
@@ -118,7 +118,7 @@ flowchart TD
 
 The CA is generated once using `rcgen` with ECDSA‑P256‑SHA256 and stored in
 `~/.madhyamas/certs/`. The private key is locked to `0600` on Unix.
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/tls/certificate.rs" lines="47-159" />
+[`certificate.rs:47-159`](../crates/madhyamas-core/src/tls/certificate.rs#L47-L159)
 
 ### 3.2 Per‑Host Leaf Certificate Generation
 
@@ -138,7 +138,7 @@ flowchart TD
     Insert --> Return
 ```
 
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/tls/certificate.rs" lines="170-252" />
+[`certificate.rs:170-252`](../crates/madhyamas-core/src/tls/certificate.rs#L170-L252)
 
 ### 3.3 TLS Handshake with the Client (Downstream)
 
@@ -181,7 +181,7 @@ sequenceDiagram
 ```
 
 Source for the handshake and ALPN policy:
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/proxy/engine.rs" lines="322-448" />
+[`engine.rs:322-448`](../crates/madhyamas-core/src/proxy/engine.rs#L322-L448)
 
 ### 3.4 TLS to the Upstream Server
 
@@ -191,7 +191,7 @@ server. For raw WebSocket upgrades the engine builds a
 `rustls::ClientConfig` with a `SkipServerVerification` verifier (it must
 trust the upstream cert without relying on the system root store because
 the proxy itself is the MITM).
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/proxy/engine.rs" lines="634-642" />
+[`engine.rs:634-642`](../crates/madhyamas-core/src/proxy/engine.rs#L634-L642)
 
 ### 3.5 Trust Model Summary
 
@@ -265,9 +265,9 @@ flowchart TD
     Rec --> DoneFwd
 ```
 
-Source: <ref_file file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/proxy/pipeline.rs" />
+Source: [`crates/madhyamas-core/src/proxy/pipeline.rs`](../crates/madhyamas-core/src/proxy/pipeline.rs)
 
-Key entry point: <ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/proxy/pipeline.rs" lines="226-496" />
+Key entry point: [`pipeline.rs:226-496`](../crates/madhyamas-core/src/proxy/pipeline.rs#L226-L496)
 
 ### 4.1 Upstream Forwarding (`reqwest`)
 
@@ -290,14 +290,14 @@ Hop‑by‑hop headers (`Connection`, `Keep-Alive`, `Transfer-Encoding`,
 before forwarding; `Host` is omitted because `reqwest` sets `:authority`
 from the URL (sending both causes HTTP/2 PROTOCOL_ERROR resets).
 
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/proxy/pipeline.rs" lines="688-827" />
+[`pipeline.rs:688-827`](../crates/madhyamas-core/src/proxy/pipeline.rs#L688-L827)
 
 ### 4.2 Self‑Exclusion (Feedback Loop Prevention)
 
 The pipeline skips capturing requests whose `Host` ends with `:api_port`
 or whose URL contains `:{api_port}/api/` — this prevents the web UI's own
 API calls from appearing in the traffic list.
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/proxy/pipeline.rs" lines="136-153" />
+[`pipeline.rs:136-153`](../crates/madhyamas-core/src/proxy/pipeline.rs#L136-L153)
 
 ---
 
@@ -375,7 +375,7 @@ erDiagram
     }
 ```
 
-Schema creation: <ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/traffic/store.rs" lines="82-187" />
+Schema creation: [`store.rs:82-187`](../crates/madhyamas-core/src/traffic/store.rs#L82-L187)
 
 ### 5.2 SQLite Pragmas (Performance)
 
@@ -388,7 +388,7 @@ The store tunes SQLite for a high‑write proxy workload:
 | `busy_timeout` | `5000ms` | Avoids "database is locked" under burst writes |
 | `cache_size` | `-64000` (64 MB) | Larger page cache for faster reads |
 
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/traffic/store.rs" lines="82-101" />
+[`store.rs:82-101`](../crates/madhyamas-core/src/traffic/store.rs#L82-L101)
 
 ### 5.3 Write Path (Request → Response)
 
@@ -423,7 +423,7 @@ sequenceDiagram
   the body bytes — only metadata + sizes — to keep WebSocket messages
   small. The full body is fetched on demand via `GET /api/traffic/{id}`.
 
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/traffic/store.rs" lines="269-350" />
+[`store.rs:269-350`](../crates/madhyamas-core/src/traffic/store.rs#L269-L350)
 
 ### 5.4 Read Path (Query / Filter)
 
@@ -432,7 +432,7 @@ responses`, applying optional filters: `url_pattern`, `method`, status
 range, `search`, `file_type`, `header`, `cookie`, `limit`, `offset`.
 Results are ordered by `timestamp DESC`.
 
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/traffic/store.rs" lines="353-506" />
+[`store.rs:353-506`](../crates/madhyamas-core/src/traffic/store.rs#L353-L506)
 
 ---
 
@@ -502,12 +502,12 @@ sequenceDiagram
 ```
 
 Server‑side message types (`WsServerMessage`):
-<ref_snippet file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-core/src/traffic/events.rs" lines="80-114" />
+[`events.rs:80-114`](../crates/madhyamas-core/src/traffic/events.rs#L80-L114)
 
 The axum handler subscribes to the store's broadcast channel, sends the
 initial traffic snapshot, then forwards every subsequent event to the
 client. Lagged receivers (slow clients) log a warning and keep going.
-<ref_file file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-api/src/ws.rs" />
+[`crates/madhyamas-api/src/ws.rs`](../crates/madhyamas-api/src/ws.rs)
 
 ### 6.3 Frontend State Machine
 
@@ -527,7 +527,7 @@ stateDiagram-v2
     Populated --> [*]: unmount
 ```
 
-<ref_file file="/Users/harikiranbavineni/madhyamas/web/src/hooks/useTrafficWebSocket.ts" />
+[`web/src/hooks/useTrafficWebSocket.ts`](../web/src/hooks/useTrafficWebSocket.ts)
 
 When the user clicks a row, `TrafficDetail` fetches the **full** entry
 (including bodies) via `GET /api/traffic/{id}` and renders headers, body
@@ -607,7 +607,7 @@ The web UI is built with Vite (`cd web && npm run build`) and the resulting
 `web/dist/` is embedded into the `madhyamas-api` crate at compile time via
 `rust-embed`, so the released binary is fully self‑contained. A
 `MADHYAMAS_WEB_DIR` env var can override to serve from disk for dev.
-<ref_file file="/Users/harikiranbavineni/madhyamas/crates/madhyamas-api/src/embedded_assets.rs" />
+[`crates/madhyamas-api/src/embedded_assets.rs`](../crates/madhyamas-api/src/embedded_assets.rs)
 
 ---
 

@@ -161,7 +161,7 @@ Android's built‑in certificate installer. You will see a scary Android
 warning that says the CA is not trusted by all apps — that is normal and
 expected.
 
-<ref_file file="/Users/harikiranbavineni/madhyamas/android/app/src/main/java/com/madhyamas/vpn/vpn/CertInstallActivity.kt" />
+[`android/app/src/main/java/com/madhyamas/vpn/vpn/CertInstallActivity.kt`](../android/app/src/main/java/com/madhyamas/vpn/vpn/CertInstallActivity.kt)
 
 > **Important distinction:** Android keeps **user** certificates and
 > **system** certificates in two separate stores. By default, apps only
