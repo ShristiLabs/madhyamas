@@ -9,22 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Initial project structure with Rust workspace (core, api, cli crates)
-- React + TypeScript web frontend with Vite
-- HTTP/HTTPS proxy functionality
-- TLS certificate generation for HTTPS interception
-- Traffic capture and storage in SQLite
-- Web UI for traffic inspection
+- AI agent skills package (67 MCP tools, 58 CLI subcommands, 130+ REST API endpoints)
+- skills.sh and npm publishing support for the skills package
+
+## [0.1.0] - 2025-07-22
+
+### Added
+
+- Initial project structure with Rust workspace (core, api, cli, mcp, main binary)
+- React + TypeScript web frontend with Vite, Tailwind CSS, shadcn/ui
+- HTTP/HTTPS proxy functionality with HTTP/2 upstream support
+- TLS certificate generation for HTTPS interception (ECDSA P-256, per-host leaf certs)
+- Traffic capture and storage in SQLite (WAL mode)
+- Web UI for traffic inspection with real-time WebSocket updates
 - Breakpoint functionality for request/response interception
-- Mock server capabilities
+- Mock server capabilities with collections, recording, import/export
 - URL rewriting rules
-- Network throttling simulation
+- Network throttling simulation (3G, 4G, DSL presets)
 - Request replay functionality
-- Session save/load
+- Session save/load with HAR export/import
 - Docker support
 - GitHub Actions CI/CD
-
-### Added (Recent)
+- MCP server for AI agent integration (67 tools)
+- CLI with 58 subcommands
+- gRPC traffic inspection (experimental)
+- JavaScript/TypeScript scripting (experimental)
+- Plugin system (experimental)
+- Android VPN companion app for transparent traffic routing
+- Syntax-highlightlined JSON viewer with JSONPath and JMESPath queries
+- Image preview for image responses
+- Compression toggle (gzip/deflate/brotli)
+- Copy as cURL/HTTPie/fetch/wget
 
 #### Capture Mode (Passthrough)
 
@@ -74,12 +89,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local development scripts: `startup-local.sh`, `stop-local.sh`
 - Enhanced `startup.sh` with `--clean` flag for fresh builds
 - Certificate helper UI improvements for easier mobile device onboarding
-
-## [0.1.0] - 2025-01-15
-
-### Added
-
-- Initial release
-- Core proxy engine
-- Basic web UI
-- Traffic interception and display
+- Pre-commit hooks for cargo fmt, clippy, and npm lint
+- CI path filters to skip irrelevant builds
