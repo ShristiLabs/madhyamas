@@ -223,6 +223,7 @@ jobs:
     name: Build Windows MSI Installer
     needs: build-binaries
     runs-on: windows-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -254,7 +255,7 @@ jobs:
         shell: pwsh
         working-directory: packaging/windows/msi
         run: |
-          wix build madhyamas.wxs -d SourceDir="../../../msi-source" -d Version="${{ steps.version.outputs.VERSION }}" -o "../../../dist/madhyamas-v${{ steps.version.outputs.VERSION }}-x64.msi"
+          wix build madhyamas.wxs -acceptEula wix7 -d SourceDir="../../../msi-source" -d Version="${{ steps.version.outputs.VERSION }}" -o "../../../dist/madhyamas-v${{ steps.version.outputs.VERSION }}-x64.msi"
 
       - name: Generate MSI checksum
         shell: pwsh
@@ -363,7 +364,7 @@ jobs:
     name: Create GitHub Release
     needs: [build-binaries, build-msi, build-snap, build-rpm]
     runs-on: ubuntu-latest
-    if: always() && needs.build-binaries.result == 'success' && needs.build-msi.result == 'success'
+    if: always() && needs.build-binaries.result == 'success'
     permissions:
       contents: write
     steps:
@@ -566,6 +567,7 @@ jobs:
     name: Publish Docker Image
     needs: build-binaries
     runs-on: ubuntu-latest
+    continue-on-error: true
     permissions:
       contents: read
       packages: write
@@ -586,7 +588,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to Docker Hub
-        if: github.repository == 'ShristiLabs/madhyamas'
+        if: github.repository == 'ShristiLabs/madhyamas' && secrets.DOCKERHUB_USERNAME != ''
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
