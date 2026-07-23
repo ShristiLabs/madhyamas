@@ -29,7 +29,7 @@ $wxsContent | Set-Content "madhyamas.wxs"
 
 # Build MSI
 Write-Host "Compiling WiX source..." -ForegroundColor Yellow
-wix build madhyamas.wxs `
+wix build madhyamas.wxs -acceptEula wix7 `
     -d SourceDir="$SourceDir" `
     -d Version="$Version" `
     -o "$OutputDir\madhyamas-$Version-x64.msi"

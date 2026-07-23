@@ -99,7 +99,7 @@ jobs:
 
   # =============================================================================
   # Build the unified binary for all platforms
-  # Single binary includes: proxy server + web UI (embedded) + MCP + CLI
+  # Single binary includes: proxy server + web UI (embedded) + MCP server + CLI
   # =============================================================================
   build-binaries:
     needs: test-gate
@@ -471,10 +471,11 @@ jobs:
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
 
   # =============================================================================
-  # Publish to Package Managers
+  # Publish to Homebrew Tap
+  # Skips with visible message if HOMEBREW_TAP_TOKEN is not set
   # =============================================================================
   publish-homebrew:
-    name: Update Homebrew Tap
+    name: Publish to Homebrew Tap
     needs: create-release
     runs-on: ubuntu-latest
     steps:
@@ -484,7 +485,20 @@ jobs:
         id: version
         run: echo "VERSION=${RELEASE_VERSION:-${GITHUB_REF#refs/tags/v}}" >> $GITHUB_OUTPUT
 
+      - name: Check for HOMEBREW_TAP_TOKEN
+        id: check_token
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::notice::Skipping Homebrew tap publish — HOMEBREW_TAP_TOKEN secret is not configured. See docs/GETTING_STARTED.md for setup instructions."
+            echo "has_token=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_token=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Download release checksums
+        if: steps.check_token.outputs.has_token == 'true'
         run: |
           mkdir -p checksums
           for target in x86_64-apple-darwin aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
@@ -492,6 +506,7 @@ jobs:
           done
 
       - name: Update Homebrew formula (version + SHA256)
+        if: steps.check_token.outputs.has_token == 'true'
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           for formula in packaging/homebrew/*.rb; do
@@ -507,12 +522,25 @@ jobs:
           done
 
       - name: Push to Homebrew tap
-        if: github.repository == 'ShristiLabs/madhyamas'
+        if: steps.check_token.outputs.has_token == 'true'
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          echo "Would push updated formulas to homebrew-tap repository"
+          # Clone the homebrew-tap repo, copy the updated formula, and push
+          REPO_OWNER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${REPO_OWNER}/homebrew-tap.git" /tmp/homebrew-tap
+          cp packaging/homebrew/madhyamas.rb /tmp/homebrew-tap/Formula/madhyamas.rb
+          cd /tmp/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/madhyamas.rb
+          git commit -m "Update madhyamas to v${{ steps.version.outputs.VERSION }}"
+          git push origin main
 
+  # =============================================================================
+  # Publish to Chocolatey
+  # Skips with visible message if CHOCOLATEY_API_KEY is not set
+  # =============================================================================
   publish-chocolatey:
     name: Publish to Chocolatey
     needs: create-release
@@ -525,7 +553,21 @@ jobs:
         shell: bash
         run: echo "VERSION=${RELEASE_VERSION:-${GITHUB_REF#refs/tags/v}}" >> $GITHUB_OUTPUT
 
+      - name: Check for CHOCOLATEY_API_KEY
+        id: check_token
+        shell: bash
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          if [ -z "$CHOCOLATEY_API_KEY" ]; then
+            echo "::notice::Skipping Chocolatey publish — CHOCOLATEY_API_KEY secret is not configured. See docs/GETTING_STARTED.md for setup instructions."
+            echo "has_token=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_token=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Update Chocolatey package
+        if: steps.check_token.outputs.has_token == 'true'
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.VERSION }}"
@@ -537,12 +579,13 @@ jobs:
           }
 
       - name: Pack Chocolatey package
+        if: steps.check_token.outputs.has_token == 'true'
         shell: pwsh
         run: |
           choco pack "packaging/windows/chocolatey/madhyamas/madhyamas.nuspec" --outputdirectory dist
 
       - name: Publish to Chocolatey
-        if: github.repository == 'ShristiLabs/madhyamas'
+        if: steps.check_token.outputs.has_token == 'true'
         env:
           CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
         shell: pwsh
@@ -551,6 +594,10 @@ jobs:
             choco push $_.FullName --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY
           }
 
+  # =============================================================================
+  # Publish to Snap Store
+  # Skips with visible message if SNAPCRAFT_TOKEN is not set
+  # =============================================================================
   publish-snap:
     name: Publish to Snap Store
     needs: build-snap
@@ -562,19 +609,37 @@ jobs:
           name: madhyamas-snap
           path: snaps
 
+      - name: Check for SNAPCRAFT_TOKEN
+        id: check_token
+        env:
+          SNAPCRAFT_TOKEN: ${{ secrets.SNAPCRAFT_TOKEN }}
+        run: |
+          if [ -z "$SNAPCRAFT_TOKEN" ]; then
+            echo "::notice::Skipping Snap Store publish — SNAPCRAFT_TOKEN secret is not configured. See docs/GETTING_STARTED.md for setup instructions."
+            echo "has_token=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_token=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Publish to Snap Store
-        if: github.repository == 'ShristiLabs/madhyamas'
+        if: steps.check_token.outputs.has_token == 'true'
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
         run: |
           sudo snap install snapcraft --classic
-          find snaps -name "*.snap" -exec snapcraft upload {} --release=stable \;
+          for snap_file in snaps/*.snap; do
+            snapcraft upload "$snap_file" --release=stable
+          done
 
+  # =============================================================================
+  # Publish Docker Image
+  # GHCR push works automatically via GITHUB_TOKEN.
+  # Docker Hub push skips with visible message if DOCKERHUB_USERNAME is not set.
+  # =============================================================================
   publish-docker:
     name: Publish Docker Image
     needs: build-binaries
     runs-on: ubuntu-latest
-    continue-on-error: true
     permissions:
       contents: read
       packages: write
@@ -587,6 +652,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Check for Docker Hub credentials
+        id: check_dockerhub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::notice::Skipping Docker Hub publish — DOCKERHUB_USERNAME and/or DOCKERHUB_TOKEN secrets are not configured. GHCR push will still work. See docs/GETTING_STARTED.md for setup instructions."
+            echo "has_dockerhub=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_dockerhub=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -595,8 +673,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to Docker Hub
-        if: github.repository == 'ShristiLabs/madhyamas'
-        continue-on-error: true
+        if: steps.check_dockerhub.outputs.has_dockerhub == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -609,6 +686,9 @@ jobs:
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
           echo "MAJOR_MINOR=$(echo $VERSION | cut -d. -f1,2)" >> $GITHUB_OUTPUT
           echo "MAJOR=$(echo $VERSION | cut -d. -f1)" >> $GITHUB_OUTPUT
+          # GHCR requires lowercase repository name
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "REPO_LOWER=${REPO_LOWER}" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
@@ -617,12 +697,16 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
-            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.MAJOR_MINOR }}
+            ghcr.io/${{ steps.version.outputs.REPO_LOWER }}:latest
+            ghcr.io/${{ steps.version.outputs.REPO_LOWER }}:${{ steps.version.outputs.VERSION }}
+            ghcr.io/${{ steps.version.outputs.REPO_LOWER }}:${{ steps.version.outputs.MAJOR_MINOR }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # =============================================================================
+  # Publish to crates.io
+  # Skips with visible message if CRATES_TOKEN is not set
+  # =============================================================================
   publish-crates:
     name: Publish to crates.io
     needs: build-binaries
@@ -633,18 +717,30 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Check for CRATES_TOKEN
+        id: check_token
+        env:
+          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        run: |
+          if [ -z "$CRATES_TOKEN" ]; then
+            echo "::notice::Skipping crates.io publish — CRATES_TOKEN secret is not configured. See docs/GETTING_STARTED.md for setup instructions."
+            echo "has_token=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_token=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Publish crates
-        if: github.repository == 'ShristiLabs/madhyamas'
+        if: steps.check_token.outputs.has_token == 'true'
         env:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
         run: |
           # Publish in dependency order
-          cargo publish -p madhyamas-core --token $CRATES_TOKEN || true
+          cargo publish -p madhyamas-core --token "$CRATES_TOKEN"
           sleep 30
-          cargo publish -p madhyamas-api --token $CRATES_TOKEN || true
+          cargo publish -p madhyamas-api --token "$CRATES_TOKEN"
           sleep 30
-          cargo publish -p madhyamas-cli --token $CRATES_TOKEN || true
+          cargo publish -p madhyamas-cli --token "$CRATES_TOKEN"
           sleep 30
-          cargo publish -p madhyamas-mcp --token $CRATES_TOKEN || true
+          cargo publish -p madhyamas-mcp --token "$CRATES_TOKEN"
           sleep 30
-          cargo publish -p madhyamas --token $CRATES_TOKEN || true
+          cargo publish -p madhyamas --token "$CRATES_TOKEN"
