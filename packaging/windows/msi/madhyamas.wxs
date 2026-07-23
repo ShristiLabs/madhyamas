@@ -24,11 +24,7 @@
     <!-- Add to PATH -->
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
 
-    <UI>
-      <UIRef Id="WixUI_Minimal" />
-    </UI>
-
-    <!-- Use built-in WiX UI assets (no custom banner/dialog needed) -->
+    <!-- No custom UI — uses default MSI install experience -->
 
   </Package>
 
