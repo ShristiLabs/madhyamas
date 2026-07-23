@@ -1,5 +1,7 @@
 # Madhyamas
 
+[![skills.sh](https://skills.sh/b/ShristiLabs/madhyamas)](https://skills.sh/ShristiLabs/madhyamas)
+
 **Open Source HTTP/HTTPS Debugging Proxy**
 
 A high-performance, cross-platform HTTP/HTTPS debugging proxy built in Rust with a modern web-based UI. Madhyamas is the free, open-source alternative to tools like Charles Proxy and Fiddler.
@@ -432,7 +434,7 @@ All commands support `--json` flag for machine-readable output.
 
 ## AI Agent Skills
 
-Madhyamas ships with a comprehensive skills package that gives AI agents procedural knowledge on how to use the proxy, CLI, and REST API. The skills are built on the [Agent Skills standard](https://github.com/anthropics/agent-skills) and support multiple AI agent harnesses.
+Madhyamas ships with a comprehensive skills package that gives AI agents procedural knowledge on how to use the proxy, CLI, and REST API. The skills are built on the [Agent Skills standard](https://agentskills.io) and support multiple AI agent harnesses.
 
 ### What's Included
 
@@ -442,6 +444,41 @@ Madhyamas ships with a comprehensive skills package that gives AI agents procedu
 - **18 workflow guides** covering traffic inspection, mocking, breakpoints, rewrites, throttling, replay, sessions, gRPC, scripting, plugins, WebSockets, export/import, troubleshooting, and harness setup
 
 ### Installing Skills
+
+#### Via skills.sh (recommended)
+
+Install directly from GitHub using the `skills` CLI — works across Claude Code, Cursor, Windsurf, Codex, and other supported agents:
+
+```bash
+# Install to all detected agents (interactive)
+npx skills add ShristiLabs/madhyamas --skill madhyamas
+
+# Install to a specific agent
+npx skills add ShristiLabs/madhyamas --skill madhyamas -a claude-code
+npx skills add ShristiLabs/madhyamas --skill madhyamas -a cursor
+npx skills add ShristiLabs/madhyamas --skill madhyamas -a windsurf
+
+# Install globally (user-level, not project-level)
+npx skills add ShristiLabs/madhyamas --skill madhyamas --global
+
+# Non-interactive (CI/CD)
+npx skills add ShristiLabs/madhyamas --skill madhyamas -y
+
+# List available skills in the repo without installing
+npx skills add ShristiLabs/madhyamas --list
+```
+
+#### Via npm
+
+```bash
+# Install globally
+npm install -g @madhyamas/skill
+
+# Or as a project dev dependency
+npm install --save-dev @madhyamas/skill
+```
+
+#### Via build scripts (from source)
 
 The skills package includes build and install scripts that generate harness-specific formats:
 

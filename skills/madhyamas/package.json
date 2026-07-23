@@ -1,0 +1,55 @@
+{
+  "name": "@madhyamas/skill",
+  "version": "0.1.0",
+  "description": "Procedural knowledge for using Madhyamas, an open-source HTTP/HTTPS debugging proxy built in Rust. Covers 67 MCP tools, 58 CLI subcommands, and 130+ REST API endpoints.",
+  "license": "MIT OR Apache-2.0",
+  "author": "ShristiLabs",
+  "repository": {
+    "type": "git",
+    "url": "github:ShristiLabs/madhyamas",
+    "directory": "skills/madhyamas"
+  },
+  "homepage": "https://github.com/ShristiLabs/madhyamas/tree/main/skills/madhyamas",
+  "bugs": {
+    "url": "https://github.com/ShristiLabs/madhyamas/issues"
+  },
+  "keywords": [
+    "agent-skill",
+    "ai-agent-skill",
+    "claude-code",
+    "cursor",
+    "windsurf",
+    "devin",
+    "mcp",
+    "debugging-proxy",
+    "http-proxy",
+    "https",
+    "traffic-inspection",
+    "mocking",
+    "breakpoints",
+    "har"
+  ],
+  "files": [
+    "SKILL.md",
+    "references",
+    "scripts",
+    "assets",
+    "README.md"
+  ],
+  "agentskills": {
+    "skills": [
+      {
+        "name": "madhyamas",
+        "path": "."
+      }
+    ]
+  },
+  "scripts": {
+    "validate": "bash scripts/validate.sh",
+    "build": "bash scripts/build.sh",
+    "install:skill": "bash scripts/install.sh"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

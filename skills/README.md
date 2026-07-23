@@ -1,6 +1,8 @@
 # Madhyamas Skills
 
-AI agent skills package providing procedural knowledge for using the [Madhyamas](https://github.com/madhyamas/madhyamas) HTTP/HTTPS debugging proxy.
+[![skills.sh](https://skills.sh/b/ShristiLabs/madhyamas)](https://skills.sh/ShristiLabs/madhyamas)
+
+AI agent skills package providing procedural knowledge for using the [Madhyamas](https://github.com/ShristiLabs/madhyamas) HTTP/HTTPS debugging proxy.
 
 ## What's Included
 
@@ -16,7 +18,40 @@ AI agent skills package providing procedural knowledge for using the [Madhyamas]
 
 1. Install Madhyamas: `cargo install madhyamas`
 2. Start the proxy: `madhyamas serve`
-3. Install the skill for your harness:
+3. Install the skill for your harness (choose one method below)
+
+#### Via skills.sh (recommended)
+
+```bash
+# Install to all detected agents (interactive)
+npx skills add ShristiLabs/madhyamas --skill madhyamas
+
+# Install to a specific agent
+npx skills add ShristiLabs/madhyamas --skill madhyamas -a claude-code
+npx skills add ShristiLabs/madhyamas --skill madhyamas -a cursor
+npx skills add ShristiLabs/madhyamas --skill madhyamas -a windsurf
+
+# Install globally (user-level)
+npx skills add ShristiLabs/madhyamas --skill madhyamas --global
+
+# Non-interactive (CI/CD)
+npx skills add ShristiLabs/madhyamas --skill madhyamas -y
+
+# List available skills without installing
+npx skills add ShristiLabs/madhyamas --list
+```
+
+#### Via npm
+
+```bash
+# Install globally
+npm install -g @madhyamas/skill
+
+# Or as a project dev dependency
+npm install --save-dev @madhyamas/skill
+```
+
+#### Via build scripts (from source)
 
 ```bash
 # Build all targets
@@ -57,6 +92,8 @@ bash skills/madhyamas/scripts/build.sh --dry-run
 ```
 skills/madhyamas/
 ├── SKILL.md                    # Entry point (always loaded when skill triggers)
+├── package.json                # npm package config for @madhyamas/skill
+├── .npmignore                  # npm publish exclusions
 ├── references/                 # Detailed reference files (loaded on demand)
 │   ├── setup.md                # Installation, configuration, CA certs
 │   ├── mcp-tools.md            # All 67 MCP tools with parameters
@@ -79,7 +116,8 @@ skills/madhyamas/
 ├── scripts/                    # Build and install tooling
 │   ├── build.sh                # Build for all target harnesses
 │   ├── install.sh              # Install to a specific harness
-│   └── validate.sh             # Validate skill package
+│   ├── validate.sh             # Validate skill package
+│   └── pre-commit.sh           # Git pre-commit hook
 └── assets/                     # MCP config templates
     ├── mcp-config.json         # Generic MCP config
     ├── claude-desktop-config.json
@@ -155,6 +193,56 @@ Checks performed:
 - MCP tool count matches expected (~67)
 - CLI command count matches expected (~58)
 - Scripts are executable
+
+## Publishing
+
+### To skills.sh
+
+skills.sh indexes skills from public GitHub repos via install telemetry. No submission form is needed — once someone runs `npx skills add ShristiLabs/madhyamas`, the skill appears on [skills.sh](https://skills.sh).
+
+To improve discoverability:
+- The skills.sh badge is already in the repo README
+- Add GitHub topics: `gh repo edit ShristiLabs/madhyamas --add-topic agent-skill --add-topic claude-code --add-topic mcp --add-topic debugging-proxy`
+- Verify discoverability: `npx skills add ShristiLabs/madhyamas --list`
+
+### To npm
+
+The `package.json` at `skills/madhyamas/` is configured for npm publishing:
+
+```bash
+cd skills/madhyamas
+
+# Validate before publishing
+bash scripts/validate.sh
+
+# Publish to npm (requires npm login)
+npm login
+npm publish --access public
+
+# Or publish via skillpm (validates Agent Skills spec)
+npx skillpm publish
+```
+
+Users then install with:
+```bash
+npm install -g @madhyamas/skill
+# or
+npx skillpm install @madhyamas/skill
+```
+
+### To anthropics/skills (official registry)
+
+Once the skill is stable and has real users, submit a PR to [anthropics/skills](https://github.com/anthropics/skills):
+
+```bash
+gh repo fork anthropics/skills --clone
+cd skills
+cp -r /path/to/madhyamas/skills/madhyamas skills/madhyamas
+git add skills/madhyamas
+git commit -m "Add madhyamas skill for HTTP/HTTPS proxy debugging"
+git push origin add-madhyamas-skill
+gh pr create --title "Add madhyamas skill" --body "..."
+```
 
 ## License
 
