@@ -430,6 +430,95 @@ madhyamas session export <id> --format har
 
 All commands support `--json` flag for machine-readable output.
 
+## AI Agent Skills
+
+Madhyamas ships with a comprehensive skills package that gives AI agents procedural knowledge on how to use the proxy, CLI, and REST API. The skills are built on the [Agent Skills standard](https://github.com/anthropics/agent-skills) and support multiple AI agent harnesses.
+
+### What's Included
+
+- **67 MCP tools** with full parameter schemas and examples
+- **58 CLI subcommands** with all flags and options
+- **130+ REST API endpoints** with curl examples
+- **18 workflow guides** covering traffic inspection, mocking, breakpoints, rewrites, throttling, replay, sessions, gRPC, scripting, plugins, WebSockets, export/import, troubleshooting, and harness setup
+
+### Installing Skills
+
+The skills package includes build and install scripts that generate harness-specific formats:
+
+```bash
+# 1. Build skills for all target harnesses (outputs to dist/)
+bash skills/madhyamas/scripts/build.sh
+
+# 2. Install for your harness (project-level)
+bash skills/madhyamas/scripts/install.sh claude      # Claude Code
+bash skills/madhyamas/scripts/install.sh devin       # Devin CLI
+bash skills/madhyamas/scripts/install.sh windsurf    # Windsurf
+bash skills/madhyamas/scripts/install.sh cursor      # Cursor
+bash skills/madhyamas/scripts/install.sh opencode    # OpenCode
+bash skills/madhyamas/scripts/install.sh commandcode # CommandCode
+bash skills/madhyamas/scripts/install.sh agents      # Universal (Agent Skills standard)
+
+# Or install globally (--global flag)
+bash skills/madhyamas/scripts/install.sh claude --global
+
+# Or install to all harnesses at once
+bash skills/madhyamas/scripts/install.sh all
+```
+
+After installation, restart your AI agent to load the skill.
+
+### Supported Harnesses
+
+| Harness | Install Target | Format |
+|---------|---------------|--------|
+| Agent Skills (universal) | `agents` | `.agents/skills/madhyamas/SKILL.md` |
+| Claude Code | `claude` | `.claude/skills/madhyamas/SKILL.md` |
+| Devin CLI | `devin` | `.devin/skills/madhyamas/SKILL.md` |
+| Windsurf | `windsurf` | `.windsurf/skills/madhyamas/SKILL.md` |
+| Cursor | `cursor` | `.cursor/rules/madhyamas.mdc` (flattened) |
+| OpenCode | `opencode` | `.opencode/skills/madhyamas/SKILL.md` |
+| CommandCode | `commandcode` | `.commandcode/skills/madhyamas/SKILL.md` |
+
+### MCP Configuration
+
+Use the provided config templates in `skills/madhyamas/assets/` to configure the MCP server:
+
+```json
+{
+  "mcpServers": {
+    "madhyamas": {
+      "command": "madhyamas",
+      "args": ["mcp"],
+      "env": { "MADHYAMAS_API_URL": "http://127.0.0.1:3001" }
+    }
+  }
+}
+```
+
+See `skills/madhyamas/references/harness-setup.md` for harness-specific setup instructions.
+
+### Validating Skills
+
+```bash
+# Validate the skill package (checks structure, frontmatter, links, tool counts)
+bash skills/madhyamas/scripts/validate.sh
+
+# Preview build without writing files
+bash skills/madhyamas/scripts/build.sh --dry-run
+```
+
+### Skills Directory Structure
+
+```
+skills/madhyamas/
+├── SKILL.md                    # Entry point (always loaded when skill triggers)
+├── references/                 # 18 detailed reference files (loaded on demand)
+├── scripts/                    # build.sh, install.sh, validate.sh, pre-commit.sh
+└── assets/                     # MCP config templates for each harness
+```
+
+See [skills/README.md](skills/README.md) for complete documentation.
+
 ## Project Structure
 
 ```
@@ -448,6 +537,8 @@ madhyamas/
 ├── android/                   # Android VPN companion app (Kotlin)
 ├── docs/                      # Documentation
 ├── docker/                    # Docker setup
+├── skills/                    # AI agent skills package (multi-harness)
+│   └── madhyamas/             # SKILL.md + references + build scripts
 └── README.md
 ```
 
