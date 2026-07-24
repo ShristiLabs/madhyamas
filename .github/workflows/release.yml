@@ -251,6 +251,10 @@ jobs:
       - name: Prepare MSI source files
         shell: pwsh
         run: |
+          # Update version in .wxs file
+          $wxs = Get-Content "packaging/windows/msi/madhyamas.wxs" -Raw
+          $wxs = $wxs -replace 'Version="[^"]*"', "Version=`"${{ steps.version.outputs.VERSION }}`""
+          Set-Content "packaging/windows/msi/madhyamas.wxs" $wxs
           New-Item -ItemType Directory -Path "msi-source\bin" -Force
           $artifacts = Get-ChildItem -Path "artifacts" -Recurse -Filter "*.zip"
           foreach ($artifact in $artifacts) {
@@ -293,6 +297,8 @@ jobs:
       - name: Copy snapcraft file
         run: |
           mkdir -p snap
+          # Update version in snapcraft.yaml
+          sed -i "s/^version: .*/version: '${{ steps.version.outputs.VERSION }}'/" packaging/linux/snap/madhyamas.snapcraft.yaml
           cp packaging/linux/snap/madhyamas.snapcraft.yaml snap/snapcraft.yaml
 
       - name: Build Snap
@@ -339,6 +345,8 @@ jobs:
 
       - name: Copy spec file
         run: |
+          # Update version in spec file
+          sed -i "s/^Version: .*/Version: ${{ steps.version.outputs.VERSION }}/" packaging/linux/rpm/madhyamas.spec
           cp packaging/linux/rpm/madhyamas.spec ~/rpmbuild/SPECS/
           if [ -f packaging/linux/rpm/madhyamas.service ]; then
             cp packaging/linux/rpm/madhyamas.service ~/rpmbuild/SOURCES/
