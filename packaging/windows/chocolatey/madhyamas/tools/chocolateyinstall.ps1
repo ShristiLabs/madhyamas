@@ -13,8 +13,12 @@ $packageArgs = @{
 
 Install-ChocolateyZipPackage @packageArgs
 
-# Create shim for the executable
-$exePath = Join-Path $toolsDir "madhyamas.exe"
+# The zip extracts to a subdirectory (madhyamas-v<version>-x86_64-pc-windows-msvc/)
+# Find the actual exe path and create the shim
+$exePath = Get-ChildItem -Path $toolsDir -Recurse -Filter "madhyamas.exe" | Select-Object -First 1 -ExpandProperty FullName
+if (-not $exePath) {
+    throw "madhyamas.exe not found after extraction in $toolsDir"
+}
 Install-BinFile -Name "madhyamas" -Path $exePath
 
 Write-Host ""

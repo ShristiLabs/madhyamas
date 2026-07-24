@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI agent skills package (67 MCP tools, 58 CLI subcommands, 130+ REST API endpoints)
 - skills.sh and npm publishing support for the skills package
 
+## [0.1.3] - 2025-07-24
+
+### Fixed
+
+- Chocolatey install script now finds madhyamas.exe recursively after zip
+  extraction (the zip contains a subdirectory, so the previous script
+  pointed the shim to a non-existent path, causing verification failure)
+
 ## [0.1.2] - 2025-07-24
 
 ### Fixed
