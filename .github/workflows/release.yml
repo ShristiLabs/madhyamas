@@ -395,6 +395,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.VERSION }}
           name: Madhyamas v${{ steps.version.outputs.VERSION }}
           body: |
             ## Madhyamas v${{ steps.version.outputs.VERSION }}
