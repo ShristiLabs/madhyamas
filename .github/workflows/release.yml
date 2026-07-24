@@ -680,9 +680,31 @@ jobs:
           CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Continue'
+          $failed = $false
           Get-ChildItem -Path "dist" -Filter "*.nupkg" | ForEach-Object {
-            choco push $_.FullName --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY
+            Write-Host "Pushing $($_.Name) to Chocolatey..."
+            $output = choco push $_.FullName --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY 2>&1
+            Write-Host $output
+
+            if ($LASTEXITCODE -ne 0) {
+              $failed = $true
+              if ($output -match '403') {
+                Write-Host "::error::Chocolatey push returned 403 Forbidden. This usually means:"
+                Write-Host "::error::  1. A previous package version is stuck in moderation with failed verification."
+                Write-Host "::error::     -> Go to https://community.chocolatey.org/packages/madhyamas"
+                Write-Host "::error::     -> Log in, find the failed version, and click 'Discontinue' to remove it."
+                Write-Host "::error::  2. The API key is invalid or expired."
+                Write-Host "::error::     -> Check your API key at https://community.chocolatey.org/account"
+                Write-Host "::error::  3. The package is owned by a different account."
+                Write-Host "::error::     -> Verify the 'owners' field in the nuspec matches your Chocolatey username."
+                Write-Host "::error::After fixing the issue, retrigger: gh workflow run release.yml -R ${{ github.repository }} -f version=${{ steps.version.outputs.VERSION }}"
+              } else {
+                Write-Host "::error::Chocolatey push failed with exit code $LASTEXITCODE"
+              }
+            }
           }
+          if ($failed) { exit 1 }
 
   # =============================================================================
   # Publish to Snap Store

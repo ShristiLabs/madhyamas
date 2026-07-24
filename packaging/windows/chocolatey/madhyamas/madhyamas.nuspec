@@ -8,7 +8,6 @@
     <owners>madhyamas</owners>
     <projectUrl>https://github.com/ShristiLabs/madhyamas</projectUrl>
     <licenseUrl>https://github.com/ShristiLabs/madhyamas/blob/main/LICENSE-MIT</licenseUrl>
-    <iconUrl>https://raw.githubusercontent.com/madhyamas/madhyamas/main/assets/icon.png</iconUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>Open-source HTTP/HTTPS debugging proxy with web-based UI. Madhyamas is a high-performance, cross-platform debugging proxy built in Rust - the free alternative to Charles Proxy and Fiddler.</description>
     <summary>HTTP/HTTPS debugging proxy with modern web UI</summary>
