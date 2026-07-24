@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI agent skills package (67 MCP tools, 58 CLI subcommands, 130+ REST API endpoints)
 - skills.sh and npm publishing support for the skills package
 
+## [0.1.1] - 2025-07-24
+
+### Fixed
+
+- Chocolatey package now includes correct SHA256 checksum for Windows zip
+  (previously shipped with literal `__CHECKSUM__` placeholder, causing
+  automated verification failure)
+- Release workflow downloads the actual checksum from the GitHub Release
+  and injects it into the chocolateyinstall.ps1 script before packing
+
 ## [0.1.0] - 2025-07-22
 
 ### Added

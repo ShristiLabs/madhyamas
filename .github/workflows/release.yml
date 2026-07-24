@@ -597,16 +597,29 @@ jobs:
             echo "has_token=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Download Windows zip checksum
+        if: steps.check_token.outputs.has_token == 'true'
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/madhyamas-v${VERSION}-x86_64-pc-windows-msvc.zip.sha256" -o /tmp/win_checksum.txt
+          # Extract just the hash (first field of sha256sum output)
+          WIN_SHA256=$(awk '{print $1}' /tmp/win_checksum.txt)
+          echo "WIN_SHA256=${WIN_SHA256}" >> $GITHUB_ENV
+          echo "Windows zip SHA256: ${WIN_SHA256}"
+
       - name: Update Chocolatey package
         if: steps.check_token.outputs.has_token == 'true'
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.VERSION }}"
+          $checksum = "${{ env.WIN_SHA256 }}"
           Get-ChildItem -Path "packaging/windows/chocolatey" -Recurse -Filter "*.nuspec" | ForEach-Object {
             (Get-Content $_.FullName) -replace '<version>[^<]*</version>', "<version>$version</version>" | Set-Content $_.FullName
           }
           Get-ChildItem -Path "packaging/windows/chocolatey" -Recurse -Filter "chocolateyinstall.ps1" | ForEach-Object {
             (Get-Content $_.FullName) -replace '__VERSION__', $version | Set-Content $_.FullName
+            (Get-Content $_.FullName) -replace '__CHECKSUM__', $checksum | Set-Content $_.FullName
           }
 
       - name: Pack Chocolatey package
