@@ -1,7 +1,8 @@
 # Homebrew Formula for Madhyamas
 # Single unified binary: proxy server + web UI (embedded) + MCP + CLI
 #
-# Install: brew install madhyamas/tap/madhyamas
+# Install: brew tap ShristiLabs/tap
+#         brew install madhyamas
 
 class Madhyamas < Formula
   desc "Open-source HTTP/HTTPS debugging proxy with web-based UI"
@@ -31,7 +32,7 @@ class Madhyamas < Formula
     end
   end
 
-  depends_on "openssl@3"
+  # No runtime dependencies — uses rustls (pure Rust TLS), no openssl needed
 
   def install
     # Single binary — web UI is embedded, no external assets needed

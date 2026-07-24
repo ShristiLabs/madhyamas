@@ -31,7 +31,7 @@ Download the latest release for your platform from the [Releases](https://github
 
 ```bash
 # macOS (Homebrew)
-brew tap madhyamas/tap
+brew tap ShristiLabs/tap
 brew install madhyamas
 
 # Windows (Chocolatey)

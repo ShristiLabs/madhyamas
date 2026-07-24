@@ -423,9 +423,35 @@ jobs:
           cp artifacts/*.zip release/ 2>/dev/null || true
           cp artifacts/*.msi release/ 2>/dev/null || true
           cp artifacts/*.snap release/ 2>/dev/null || true
-          cp artifacts/*.rpm release/ 2>/dev/null || true
+          # Only copy the main RPM, not debuginfo/debugsource
+          for rpm in artifacts/*.x86_64.rpm; do
+            case "$(basename "$rpm")" in
+              *debuginfo*|*debugsource*) ;;
+              *) cp "$rpm" release/ ;;
+            esac
+          done
           echo "Release files:"
           ls -la release/
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          # Extract the changelog section for this version
+          if grep -q "## \[$VERSION\]" CHANGELOG.md; then
+            NOTES=$(awk "/## \[$VERSION\]/{found=1; next} /^## \[/{found=0} found" CHANGELOG.md | sed '/^$/d; /^###/d' | head -20)
+            if [ -n "$NOTES" ]; then
+              {
+                echo "CHANGES<<EOF"
+              echo "$NOTES"
+                echo "EOF"
+              } >> $GITHUB_OUTPUT
+            else
+              echo "CHANGES=See [CHANGELOG.md](CHANGELOG.md) for details." >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "CHANGES=See [CHANGELOG.md](CHANGELOG.md) for details." >> $GITHUB_OUTPUT
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -442,7 +468,7 @@ jobs:
 
             #### macOS (Homebrew)
             ```bash
-            brew tap madhyamas/tap
+            brew tap ShristiLabs/tap
             brew install madhyamas
             ```
 
@@ -461,7 +487,8 @@ jobs:
 
             #### Linux (DNF/YUM)
             ```bash
-            sudo dnf install ./madhyamas-${{ steps.version.outputs.VERSION }}-1.x86_64.rpm
+            # Download the RPM from the assets below, then:
+            sudo dnf install ./madhyamas-*.x86_64.rpm
             ```
 
             ### Usage
@@ -501,7 +528,10 @@ jobs:
             | Windows MSI | `madhyamas-v${{ steps.version.outputs.VERSION }}-x64.msi` |
 
             ### Changes
-            See [CHANGELOG.md](CHANGELOG.md) for details.
+
+            ${{ steps.changelog.outputs.CHANGES }}
+
+            See [CHANGELOG.md](https://github.com/ShristiLabs/madhyamas/blob/main/CHANGELOG.md) for full details.
           files: release/*
           draft: false
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
@@ -549,11 +579,19 @@ jobs:
             sed -i "s/version \"[^\"]*\"/version \"$VERSION\"/" "$formula"
             MACOS_INTEL_SHA=$(awk '{print $1}' checksums/madhyamas-x86_64-apple-darwin.sha256 2>/dev/null || echo "")
             MACOS_ARM_SHA=$(awk '{print $1}' checksums/madhyamas-aarch64-apple-darwin.sha256 2>/dev/null || echo "")
+            LINUX_INTEL_SHA=$(awk '{print $1}' checksums/madhyamas-x86_64-unknown-linux-gnu.sha256 2>/dev/null || echo "")
+            LINUX_ARM_SHA=$(awk '{print $1}' checksums/madhyamas-aarch64-unknown-linux-gnu.sha256 2>/dev/null || echo "")
             if [ -n "$MACOS_INTEL_SHA" ]; then
               sed -i "s/PLACEHOLDER_SHA256_MACOS_INTEL/$MACOS_INTEL_SHA/" "$formula"
             fi
             if [ -n "$MACOS_ARM_SHA" ]; then
               sed -i "s/PLACEHOLDER_SHA256_MACOS_ARM/$MACOS_ARM_SHA/" "$formula"
+            fi
+            if [ -n "$LINUX_INTEL_SHA" ]; then
+              sed -i "s/PLACEHOLDER_SHA256_LINUX_INTEL/$LINUX_INTEL_SHA/" "$formula"
+            fi
+            if [ -n "$LINUX_ARM_SHA" ]; then
+              sed -i "s/PLACEHOLDER_SHA256_LINUX_ARM/$LINUX_ARM_SHA/" "$formula"
             fi
           done
 

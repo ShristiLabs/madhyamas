@@ -1,0 +1,248 @@
+name: Release Dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: "Version bump type"
+        required: false
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+      explicit_version:
+        description: "Explicit version (overrides bump_type, e.g. 0.2.0)"
+        required: false
+        type: string
+      dry_run:
+        description: "Dry run (show what would happen without pushing tag)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare-release:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compute_version.outputs.VERSION }}
+      release_notes: ${{ steps.consolidate_notes.outputs.RELEASE_NOTES }}
+      is_dry_run: ${{ steps.check_dry_run.outputs.DRY_RUN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Get current version
+        id: current_version
+        run: |
+          CURRENT=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "CURRENT=$CURRENT" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT"
+
+      - name: Compute next version
+        id: compute_version
+        run: |
+          CURRENT="${{ steps.current_version.outputs.CURRENT }}"
+          EXPLICIT="${{ github.event.inputs.explicit_version }}"
+          BUMP="${{ github.event.inputs.bump_type }}"
+
+          if [ -n "$EXPLICIT" ] && [ "$EXPLICIT" != "" ]; then
+            VERSION="$EXPLICIT"
+          else
+            # Parse semver: MAJOR.MINOR.PATCH (strip any pre-release suffix)
+            MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+            MINOR=$(echo "$CURRENT" | cut -d. -f2)
+            PATCH=$(echo "$CURRENT" | cut -d. -f3 | cut -d- -f1)
+
+            case "$BUMP" in
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              minor)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              patch)
+                PATCH=$((PATCH + 1))
+                ;;
+              *)
+                echo "::error::Invalid bump type: $BUMP"
+                exit 1
+                ;;
+            esac
+            VERSION="$MAJOR.$MINOR.$PATCH"
+          fi
+
+          # Validate semver format
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "::error::Invalid version format: $VERSION (expected MAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Next version: $VERSION"
+
+      - name: Check if tag already exists
+        run: |
+          VERSION="${{ steps.compute_version.outputs.VERSION }}"
+          if git tag -l "v$VERSION" | grep -q "v$VERSION"; then
+            echo "::error::Tag v$VERSION already exists. Use a different version."
+            exit 1
+          fi
+          echo "Tag v$VERSION is available"
+
+      - name: Consolidate release notes
+        id: consolidate_notes
+        run: |
+          VERSION="${{ steps.compute_version.outputs.VERSION }}"
+          CURRENT="${{ steps.current_version.outputs.CURRENT }}"
+          NOTES_FILE=$(mktemp)
+
+          # Try to extract from CHANGELOG.md [Unreleased] section
+          if grep -q "## \[Unreleased\]" CHANGELOG.md; then
+            # Extract content between [Unreleased] and the next version header
+            awk '/## \[Unreleased\]/{found=1; next} /^## \[/{found=0} found' CHANGELOG.md > /tmp/unreleased_notes.txt
+            if [ -s /tmp/unreleased_notes.txt ]; then
+              echo "Found release notes in CHANGELOG.md [Unreleased] section"
+              cat /tmp/unreleased_notes.txt >> "$NOTES_FILE"
+            fi
+          fi
+
+          # If no CHANGELOG notes, generate from git log
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "No [Unreleased] section in CHANGELOG.md — generating from git log"
+            # Get commits since the last tag
+            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -n "$LAST_TAG" ]; then
+              RANGE="$LAST_TAG..HEAD"
+            else
+              RANGE="HEAD"
+            fi
+
+            # Group commits by type
+            {
+              echo "### Commits since $LAST_TAG"
+              echo ""
+              git log $RANGE --pretty=format:"- %s (%h)" --no-merges | head -50
+              echo ""
+            } >> "$NOTES_FILE"
+          fi
+
+          # Read the notes (multiline)
+          {
+            echo "RELEASE_NOTES<<EOF"
+            cat "$NOTES_FILE"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+          echo "--- Consolidated release notes ---"
+          cat "$NOTES_FILE"
+          echo "----------------------------------"
+
+      - name: Check dry run
+        id: check_dry_run
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
+            echo "DRY_RUN=true" >> $GITHUB_OUTPUT
+            echo "::notice::Dry run mode — no changes will be pushed"
+          else
+            echo "DRY_RUN=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version in Cargo.toml
+        if: steps.check_dry_run.outputs.DRY_RUN != 'true'
+        run: |
+          VERSION="${{ steps.compute_version.outputs.VERSION }}"
+          # Update workspace.package.version
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          echo "Updated Cargo.toml to version $VERSION"
+
+      - name: Update CHANGELOG.md
+        if: steps.check_dry_run.outputs.DRY_RUN != 'true'
+        env:
+          VERSION: ${{ steps.compute_version.outputs.VERSION }}
+        run: |
+          TODAY=$(date +%Y-%m-%d)
+          python3 << 'PYEOF'
+          import re
+          from datetime import date
+          import os
+
+          version = os.environ["VERSION"]
+          today = date.today().isoformat()
+
+          with open("CHANGELOG.md", "r") as f:
+              content = f.read()
+
+          # Find the [Unreleased] section and its content
+          pattern = r'(## \[Unreleased\]\n)(.*?)(\n## \[)'
+          match = re.search(pattern, content, re.DOTALL)
+          if match:
+              unreleased_content = match.group(2).strip()
+              # Keep [Unreleased] header (empty), add new version section with the content
+              if unreleased_content:
+                  new_section = match.group(1) + "\n" + unreleased_content + "\n" + match.group(3) + f"{version}] - {today}\n"
+              else:
+                  new_section = match.group(1) + "\n" + match.group(3) + f"{version}] - {today}\n"
+              content = content[:match.start()] + new_section + content[match.end():]
+          else:
+              # No [Unreleased] section — insert at the top after header
+              header_end = content.find("## [")
+              if header_end == -1:
+                  header_end = len(content)
+              new_section = f"## [Unreleased]\n\n\n## [{version}] - {today}\n\n"
+              content = content[:header_end] + new_section + content[header_end:]
+
+          with open("CHANGELOG.md", "w") as f:
+              f.write(content)
+          print(f"Updated CHANGELOG.md with version {version}")
+          PYEOF
+
+      - name: Commit version bump
+        if: steps.check_dry_run.outputs.DRY_RUN != 'true'
+        run: |
+          VERSION="${{ steps.compute_version.outputs.VERSION }}"
+          git add Cargo.toml CHANGELOG.md
+          git commit -m "chore: bump version to $VERSION
+
+          Release notes:
+          ${{ steps.consolidate_notes.outputs.RELEASE_NOTES }}
+
+          Generated with [Devin](https://cli.devin.ai/docs)
+
+          Co-Authored-By: Devin <158243242+devin-ai-integration[bot]@users.noreply.github.com>"
+
+      - name: Create and push tag
+        if: steps.check_dry_run.outputs.DRY_RUN != 'true'
+        run: |
+          VERSION="${{ steps.compute_version.outputs.VERSION }}"
+          git push origin HEAD:main
+          git tag -a "v$VERSION" -m "Madhyamas v$VERSION
+
+          ${{ steps.consolidate_notes.outputs.RELEASE_NOTES }}"
+          git push origin "v$VERSION"
+          echo "::notice::Tag v$VERSION pushed — release workflow will trigger automatically"
+
+      - name: Dry run summary
+        if: steps.check_dry_run.outputs.DRY_RUN == 'true'
+        run: |
+          VERSION="${{ steps.compute_version.outputs.VERSION }}"
+          echo "::notice::Dry run complete. Would release v$VERSION with these notes:"
+          echo ""
+          echo "${{ steps.consolidate_notes.outputs.RELEASE_NOTES }}"
+          echo ""
+          echo "To actually release, re-run this workflow with dry_run=false"

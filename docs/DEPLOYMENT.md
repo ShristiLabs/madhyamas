@@ -598,7 +598,7 @@ end
 Install:
 
 ```bash
-brew tap madhyamas/tap
+brew tap ShristiLabs/tap
 brew install madhyamas
 brew services start madhyamas
 ```

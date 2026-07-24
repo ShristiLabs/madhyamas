@@ -12,6 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI agent skills package (67 MCP tools, 58 CLI subcommands, 130+ REST API endpoints)
 - skills.sh and npm publishing support for the skills package
 
+## [0.1.2] - 2025-07-24
+
+### Fixed
+
+- Homebrew tap instructions corrected from `madhyamas/tap` to `ShristiLabs/tap`
+  (the tap repo is at github.com/ShristiLabs/homebrew-tap)
+- Homebrew formula now includes SHA256 checksums for Linux builds
+  (previously only macOS checksums were injected, Linux had placeholders)
+- Removed unnecessary `openssl@3` dependency from Homebrew formula
+  (madhyamas uses rustls — pure Rust TLS, no openssl needed)
+- Release notes now include extracted changelog section instead of a static link
+- RPM filename in release notes no longer hardcoded (uses wildcard pattern)
+- Debug RPM packages (debuginfo, debugsource) excluded from GitHub Release assets
+
+### Added
+
+- New `Release Dispatch` workflow for on-demand releases with version bumping
+  and release notes consolidation from CHANGELOG.md and git history
+
 ## [0.1.1] - 2025-07-24
 
 ### Fixed

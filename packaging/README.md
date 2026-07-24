@@ -26,7 +26,7 @@ madhyamas --help       # See all commands
 
 ```bash
 # Add the Madhyamas tap
-brew tap madhyamas/tap
+brew tap ShristiLabs/tap
 
 # Install
 brew install madhyamas
