@@ -251,9 +251,9 @@ jobs:
       - name: Prepare MSI source files
         shell: pwsh
         run: |
-          # Update version in .wxs file
+          # Update version in .wxs file (only the Package Version attribute, not the XML declaration)
           $wxs = Get-Content "packaging/windows/msi/madhyamas.wxs" -Raw
-          $wxs = $wxs -replace 'Version="[^"]*"', "Version=`"${{ steps.version.outputs.VERSION }}`""
+          $wxs = $wxs -replace '(?<=Package[^>]*\s)Version="[^"]*"', "Version=`"${{ steps.version.outputs.VERSION }}`""
           Set-Content "packaging/windows/msi/madhyamas.wxs" $wxs
           New-Item -ItemType Directory -Path "msi-source\bin" -Force
           $artifacts = Get-ChildItem -Path "artifacts" -Recurse -Filter "*.zip"
