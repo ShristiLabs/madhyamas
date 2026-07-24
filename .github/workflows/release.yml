@@ -377,12 +377,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download binary artifacts
         id: download
         uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+          pattern: madhyamas-*
         continue-on-error: true
 
       - name: Retry artifact download
@@ -391,6 +392,7 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+          pattern: madhyamas-*
 
       - name: Verify artifacts downloaded
         run: |
@@ -405,10 +407,16 @@ jobs:
         id: version
         run: echo "VERSION=${RELEASE_VERSION:-${GITHUB_REF#refs/tags/v}}" >> $GITHUB_OUTPUT
 
-      - name: Flatten artifacts
+      - name: Collect release files
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.msi" -o -name "*.snap" -o -name "*.rpm" -o -name "*.sha256" \) -exec cp {} release/ \;
+          # merge-multiple puts all files in artifacts/ directly
+          cp artifacts/*.tar.gz artifacts/*.sha256 release/ 2>/dev/null || true
+          cp artifacts/*.zip release/ 2>/dev/null || true
+          cp artifacts/*.msi release/ 2>/dev/null || true
+          cp artifacts/*.snap release/ 2>/dev/null || true
+          cp artifacts/*.rpm release/ 2>/dev/null || true
+          echo "Release files:"
           ls -la release/
 
       - name: Create Release
