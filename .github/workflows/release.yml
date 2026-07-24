@@ -378,9 +378,28 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download all artifacts
+        id: download
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Retry artifact download
+        if: steps.download.outcome == 'failure'
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Verify artifacts downloaded
+        run: |
+          if [ -z "$(ls -A artifacts/ 2>/dev/null)" ]; then
+            echo "::error::No artifacts were downloaded after retry."
+            exit 1
+          fi
+          echo "Artifacts downloaded successfully:"
+          ls -la artifacts/
 
       - name: Extract version
         id: version
