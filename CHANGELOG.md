@@ -12,6 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI agent skills package (67 MCP tools, 58 CLI subcommands, 130+ REST API endpoints)
 - skills.sh and npm publishing support for the skills package
 
+## [0.1.6] - 2025-07-25
+
+### Fixed
+
+- crates.io publish: removed `embedded-assets` from madhyamas binary's
+  default features so `cargo install madhyamas` works from crates.io
+  (uses disk-based web serving instead of embedded assets)
+- crates.io publish: workspace dependency on madhyamas-api now uses
+  `default-features = false` so the binary doesn't pull in
+  embedded-assets unless explicitly enabled
+- Release workflow build step now explicitly enables `--features
+  embedded-assets` for the binary build (so release binaries still have
+  embedded web UI)
+
 ## [0.1.5] - 2025-07-25
 
 ### Fixed

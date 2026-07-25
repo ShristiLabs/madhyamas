@@ -188,7 +188,7 @@ jobs:
         run: echo "VERSION=${RELEASE_VERSION:-${GITHUB_REF#refs/tags/v}}" >> $GITHUB_OUTPUT
 
       - name: Build binary
-        run: cargo build --release --target ${{ matrix.target }} -p madhyamas
+        run: cargo build --release --target ${{ matrix.target }} -p madhyamas --features embedded-assets
 
       - name: Package (Unix)
         if: matrix.os != 'windows-latest'
@@ -856,9 +856,8 @@ jobs:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
         run: |
           # Publish in dependency order
-          # madhyamas-api and madhyamas use embedded-assets feature which
-          # requires web/dist/ — disable it for publishing (crates.io doesn't
-          # need the embedded assets, the binary build does)
+          # madhyamas-api: disable embedded-assets (requires web/dist/ which
+          # doesn't exist in the published tarball)
           cargo publish -p madhyamas-core --token "$CRATES_TOKEN"
           sleep 30
           cargo publish -p madhyamas-api --no-default-features --features grpc,scripting,plugins,enterprise --token "$CRATES_TOKEN"
@@ -867,4 +866,5 @@ jobs:
           sleep 30
           cargo publish -p madhyamas-mcp --token "$CRATES_TOKEN"
           sleep 30
-          cargo publish -p madhyamas --no-default-features --features grpc,scripting,plugins,enterprise --token "$CRATES_TOKEN"
+          # madhyamas: embedded-assets is not in default features, so default publish is fine
+          cargo publish -p madhyamas --token "$CRATES_TOKEN"
