@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -92,10 +92,10 @@ brotli = "6.0"
 sysinfo = "0.30"
 
 # Internal crates
-madhyamas-core = { path = "crates/madhyamas-core", version = "0.1.4" }
-madhyamas-api = { path = "crates/madhyamas-api", version = "0.1.4" }
-madhyamas-cli = { path = "crates/madhyamas-cli", version = "0.1.4" }
-madhyamas-mcp = { path = "crates/madhyamas-mcp", version = "0.1.4" }
+madhyamas-core = { path = "crates/madhyamas-core", version = "0.1.5" }
+madhyamas-api = { path = "crates/madhyamas-api", version = "0.1.5" }
+madhyamas-cli = { path = "crates/madhyamas-cli", version = "0.1.5" }
+madhyamas-mcp = { path = "crates/madhyamas-mcp", version = "0.1.5" }
 
 # Embedded web assets
 rust-embed = { version = "8", features = ["mime-guess"] }

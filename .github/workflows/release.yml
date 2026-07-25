@@ -856,12 +856,15 @@ jobs:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
         run: |
           # Publish in dependency order
+          # madhyamas-api and madhyamas use embedded-assets feature which
+          # requires web/dist/ — disable it for publishing (crates.io doesn't
+          # need the embedded assets, the binary build does)
           cargo publish -p madhyamas-core --token "$CRATES_TOKEN"
           sleep 30
-          cargo publish -p madhyamas-api --token "$CRATES_TOKEN"
+          cargo publish -p madhyamas-api --no-default-features --features grpc,scripting,plugins,enterprise --token "$CRATES_TOKEN"
           sleep 30
           cargo publish -p madhyamas-cli --token "$CRATES_TOKEN"
           sleep 30
           cargo publish -p madhyamas-mcp --token "$CRATES_TOKEN"
           sleep 30
-          cargo publish -p madhyamas --token "$CRATES_TOKEN"
+          cargo publish -p madhyamas --no-default-features --features grpc,scripting,plugins,enterprise --token "$CRATES_TOKEN"

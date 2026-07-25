@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI agent skills package (67 MCP tools, 58 CLI subcommands, 130+ REST API endpoints)
 - skills.sh and npm publishing support for the skills package
 
+## [0.1.5] - 2025-07-25
+
+### Fixed
+
+- crates.io publish: made rust-embed an optional feature (`embedded-assets`)
+  so madhyamas-api can be published without requiring web/dist/ to exist
+  at packaging time. The main binary enables the feature for the actual
+  build; crates.io publish uses `--no-default-features` to skip it.
+
 ## [0.1.4] - 2025-07-25
 
 ### Fixed

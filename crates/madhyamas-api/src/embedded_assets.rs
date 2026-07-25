@@ -4,14 +4,21 @@
 //! binary is fully self-contained — no external `web/dist/` directory needed.
 //! A `MADHYAMAS_WEB_DIR` env var can still override to serve from disk
 //! (useful for development).
+//!
+//! When the `embedded-assets` feature is disabled (e.g. when publishing to
+//! crates.io), only disk-based serving is available.
 
 use axum::body::Body;
-use axum::http::{header, HeaderValue, Response, StatusCode};
+use axum::http::{header, Response, StatusCode};
 use axum::response::IntoResponse;
+
+#[cfg(feature = "embedded-assets")]
+use axum::http::HeaderValue;
+
+#[cfg(feature = "embedded-assets")]
 use rust_embed::RustEmbed;
 
-/// Embedded static files from `web/dist/` at compile time.
-/// Path is relative to the workspace root (via CARGO_MANIFEST_DIR).
+#[cfg(feature = "embedded-assets")]
 #[derive(RustEmbed)]
 #[folder = "../../web/dist/"]
 struct WebAssets;
@@ -20,6 +27,7 @@ struct WebAssets;
 ///
 /// Returns `Some(Response)` if the file exists, `None` otherwise.
 /// Falls back to `index.html` for unknown paths (SPA routing).
+#[cfg(feature = "embedded-assets")]
 pub fn serve_embedded(path: &str) -> Option<Response<Body>> {
     // Normalize: strip leading slash, default to index.html
     let path = path.trim_start_matches('/');
@@ -57,9 +65,22 @@ pub fn serve_embedded(path: &str) -> Option<Response<Body>> {
     Some(response)
 }
 
+/// Serve an embedded file by path — stub when embedded-assets feature is off.
+#[cfg(not(feature = "embedded-assets"))]
+pub fn serve_embedded(_path: &str) -> Option<Response<Body>> {
+    None
+}
+
 /// Check whether embedded assets are available.
+#[cfg(feature = "embedded-assets")]
 pub fn has_embedded() -> bool {
     WebAssets::iter().next().is_some()
+}
+
+/// Check whether embedded assets are available — stub when feature is off.
+#[cfg(not(feature = "embedded-assets"))]
+pub fn has_embedded() -> bool {
+    false
 }
 
 /// Axum fallback handler that tries embedded assets first, then disk.
