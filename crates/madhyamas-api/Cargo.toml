@@ -3,6 +3,9 @@ name = "madhyamas-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description.workspace = true
+repository.workspace = true
+authors.workspace = true
 
 [features]
 default = ["grpc", "scripting", "plugins", "enterprise"]

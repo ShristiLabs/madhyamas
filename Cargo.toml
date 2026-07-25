@@ -9,12 +9,13 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 authors = ["Madhyamas Team"]
 repository = "https://github.com/ShristiLabs/madhyamas"
+description = "Open-source HTTP/HTTPS debugging proxy with web-based UI"
 
 [workspace.dependencies]
 # Async runtime
@@ -91,10 +92,10 @@ brotli = "6.0"
 sysinfo = "0.30"
 
 # Internal crates
-madhyamas-core = { path = "crates/madhyamas-core" }
-madhyamas-api = { path = "crates/madhyamas-api" }
-madhyamas-cli = { path = "crates/madhyamas-cli" }
-madhyamas-mcp = { path = "crates/madhyamas-mcp" }
+madhyamas-core = { path = "crates/madhyamas-core", version = "0.1.4" }
+madhyamas-api = { path = "crates/madhyamas-api", version = "0.1.4" }
+madhyamas-cli = { path = "crates/madhyamas-cli", version = "0.1.4" }
+madhyamas-mcp = { path = "crates/madhyamas-mcp", version = "0.1.4" }
 
 # Embedded web assets
 rust-embed = { version = "8", features = ["mime-guess"] }

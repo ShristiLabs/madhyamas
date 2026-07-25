@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "HTTP/HTTPS Debugging Proxy - Unified binary (proxy server + web UI + MCP server + CLI)"
+repository.workspace = true
+authors.workspace = true
 
 [features]
 default = ["grpc", "scripting", "plugins", "enterprise"]

@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "CLI tool for interacting with Madhyamas proxy server"
+repository.workspace = true
+authors.workspace = true
 
 [lib]
 name = "madhyamas_cli"

@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI agent skills package (67 MCP tools, 58 CLI subcommands, 130+ REST API endpoints)
 - skills.sh and npm publishing support for the skills package
 
+## [0.1.4] - 2025-07-25
+
+### Fixed
+
+- crates.io publish: added missing `description` field to madhyamas-core and
+  madhyamas-api Cargo.toml (crates.io rejects packages without description)
+- crates.io publish: added `version` to internal path dependencies
+  (required for publishing — path deps without version are rejected)
+- All crates now inherit `description`, `repository`, and `authors` from
+  workspace.package
+
 ## [0.1.3] - 2025-07-24
 
 ### Fixed
