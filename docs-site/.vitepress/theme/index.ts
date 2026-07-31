@@ -1,6 +1,7 @@
 import { h } from "vue"
 import DefaultTheme from "vitepress/theme"
 import type { Theme } from "vitepress"
+import HomeLayout from "./components/HomeLayout.vue"
 import "./style.css"
 
 export default {
@@ -11,6 +12,7 @@ export default {
     })
   },
   enhanceApp({ app }) {
-    // Custom theme overrides via CSS variables
+    // Register custom layout for the landing page
+    app.component("home-layout", HomeLayout)
   },
 } satisfies Theme
