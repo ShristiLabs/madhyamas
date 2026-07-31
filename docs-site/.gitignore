@@ -1,0 +1,9 @@
+# Dependencies
+node_modules/
+
+# VitePress build output
+.vitepress/dist/
+.vitepress/cache/
+
+# OS files
+.DS_Store

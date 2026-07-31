@@ -21,6 +21,11 @@ web/.vite/
 web/.turbo/
 *.tsbuildinfo
 
+# Docs site (VitePress)
+docs-site/node_modules/
+docs-site/.vitepress/dist/
+docs-site/.vitepress/cache/
+
 # Environment
 .env
 .env.local

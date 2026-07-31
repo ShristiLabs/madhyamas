@@ -6,6 +6,7 @@
 
 | Document | Description |
 |----------|-------------|
+| **[User Guide (GitHub Pages)](https://shristilabs.github.io/madhyamas/)** | End-user documentation with screenshots, deployed to GitHub Pages |
 | [Getting Started](GETTING_STARTED.md) | Installation, configuration, CLI options, environment variables, mobile device setup, basic usage |
 | [API Reference](API.md) | REST API endpoints, query parameters, WebSocket events |
 | [MCP Integration & AI Agent Skills](MCP-INTEGRATION.md) | MCP server setup, Claude Desktop/Windsurf config, AI agent skills installation |

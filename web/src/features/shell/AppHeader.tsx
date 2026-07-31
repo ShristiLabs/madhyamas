@@ -24,6 +24,8 @@ import {
   Loader2,
   HelpCircle,
   Github,
+  BookOpen,
+  ExternalLink,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { apiGet, apiPost } from "@/lib/api/client"
@@ -40,6 +42,8 @@ interface AppHeaderProps {
   isDark: boolean
   onToggleTheme: () => void
 }
+
+const DOCS_URL = "https://shristilabs.github.io/madhyamas/"
 
 export function AppHeader({ isDark, onToggleTheme }: AppHeaderProps) {
   const [proxyAddress, setProxyAddress] = useState("localhost:8888")
@@ -161,6 +165,10 @@ export function AppHeader({ isDark, onToggleTheme }: AppHeaderProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>Links</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => window.open(DOCS_URL, "_blank")}>
+              <BookOpen className="mr-2 h-3.5 w-3.5" /> Documentation
+              <ExternalLink className="ml-auto h-3 w-3 text-muted-foreground" />
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => window.open("https://windsurf.com/support", "_blank")}>
               <HelpCircle className="mr-2 h-3.5 w-3.5" /> Support
             </DropdownMenuItem>
