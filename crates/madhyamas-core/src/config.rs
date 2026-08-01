@@ -885,25 +885,31 @@ mod tests {
 
     #[test]
     fn proxy_config_upstream_proxy_active_when_enabled_with_host() {
-        let mut c = ProxyConfig::default();
-        c.upstream_proxy = cfg(true, "http", "corp-proxy", 8080);
+        let c = ProxyConfig {
+            upstream_proxy: cfg(true, "http", "corp-proxy", 8080),
+            ..Default::default()
+        };
         assert!(c.upstream_proxy_active());
     }
 
     #[test]
     fn proxy_config_upstream_proxy_inactive_when_enabled_but_no_host() {
-        let mut c = ProxyConfig::default();
-        c.upstream_proxy = cfg(true, "http", "", 8080);
+        let c = ProxyConfig {
+            upstream_proxy: cfg(true, "http", "", 8080),
+            ..Default::default()
+        };
         assert!(!c.upstream_proxy_active());
     }
 
     #[test]
     fn proxy_config_should_bypass_upstream_respects_disabled_state() {
-        let mut c = ProxyConfig::default();
-        c.upstream_proxy = UpstreamProxyConfig {
-            enabled: false,
-            no_proxy_hosts: vec!["localhost".to_string()],
-            ..cfg(false, "http", "proxy", 8080)
+        let c = ProxyConfig {
+            upstream_proxy: UpstreamProxyConfig {
+                enabled: false,
+                no_proxy_hosts: vec!["localhost".to_string()],
+                ..cfg(false, "http", "proxy", 8080)
+            },
+            ..Default::default()
         };
         // Even though "localhost" is in the bypass list, the proxy is
         // disabled so should_bypass_upstream must return false.
@@ -941,15 +947,17 @@ mod tests {
 
     #[test]
     fn proxy_config_with_upstream_serializes_roundtrip() {
-        let mut c = ProxyConfig::default();
-        c.upstream_proxy = UpstreamProxyConfig {
-            enabled: true,
-            protocol: "https".to_string(),
-            host: "secure-proxy.example.com".to_string(),
-            port: 443,
-            auth_username: Some("alice".to_string()),
-            auth_password: Some("secret".to_string()),
-            no_proxy_hosts: vec!["localhost".to_string()],
+        let c = ProxyConfig {
+            upstream_proxy: UpstreamProxyConfig {
+                enabled: true,
+                protocol: "https".to_string(),
+                host: "secure-proxy.example.com".to_string(),
+                port: 443,
+                auth_username: Some("alice".to_string()),
+                auth_password: Some("secret".to_string()),
+                no_proxy_hosts: vec!["localhost".to_string()],
+            },
+            ..Default::default()
         };
         let json = serde_json::to_string(&c).unwrap();
         let back: ProxyConfig = serde_json::from_str(&json).unwrap();

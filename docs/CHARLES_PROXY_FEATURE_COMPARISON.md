@@ -155,8 +155,8 @@ It was produced by:
 
 | # | Feature | Charles | Madhyamas | Notes |
 |---|---|---|---|---|
-| 58 | No Caching tool | ✅ | 🔴 | Only `no-cache` header on cert download |
-| 59 | Block Cookies tool | ✅ | ❌ | Not implemented |
+| 58 | No Caching tool | ✅ | ✅ | Rewrite template strips cache headers + adds no-cache directives. See [docs/REWRITE_TEMPLATES.md](REWRITE_TEMPLATES.md) |
+| 59 | Block Cookies tool | ✅ | ✅ | Rewrite template strips `Cookie`/`Set-Cookie` headers. See [docs/REWRITE_TEMPLATES.md](REWRITE_TEMPLATES.md) |
 | 60 | Map Remote (URL→URL) | ✅ | 🟡 | `RewriteAction::MapToUrl` (limited) |
 | 61 | Map Local (URL→file) | ✅ | 🟡 | `RewriteAction::MapToFile` (limited) |
 | 62 | Rewrite (header/URL/query/body) | ✅ | ✅ | `intercept/rewrite.rs`, regex support |

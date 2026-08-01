@@ -45,10 +45,14 @@ interface RewritesPanelProps {
 // Rewrite templates
 const REWRITE_TEMPLATES: {
   name: string;
+  description?: string;
   actionType: 'set_header' | 'remove_header' | 'url_rewrite' | 'body_rewrite';
   headerName: string;
   headerValue?: string;
   direction: 'request' | 'response' | 'both';
+  // Optional multi-action preset. When present, `handleCreate` uses these
+  // actions directly instead of the single-action form fields.
+  actions?: RewriteAction[];
 }[] = [
   {
     name: 'Add CORS Headers',
@@ -76,6 +80,36 @@ const REWRITE_TEMPLATES: {
     headerName: 'https://api.example.com',
     headerValue: 'http://localhost:3000',
     direction: 'request',
+  },
+  {
+    name: 'No Caching',
+    description:
+      'Strip cache-related headers and add no-cache directives so every request reaches the server.',
+    actionType: 'remove_header',
+    headerName: 'If-Modified-Since',
+    direction: 'both',
+    actions: [
+      { type: 'remove_header', name: 'If-Modified-Since' },
+      { type: 'remove_header', name: 'If-None-Match' },
+      { type: 'remove_header', name: 'ETag' },
+      { type: 'remove_header', name: 'Last-Modified' },
+      { type: 'remove_header', name: 'Expires' },
+      { type: 'set_header', name: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+      { type: 'set_header', name: 'Pragma', value: 'no-cache' },
+      { type: 'set_header', name: 'Expires', value: '0' },
+    ],
+  },
+  {
+    name: 'Block Cookies',
+    description:
+      'Strip Cookie and Set-Cookie headers from both requests and responses for anonymous-visitor testing.',
+    actionType: 'remove_header',
+    headerName: 'Cookie',
+    direction: 'both',
+    actions: [
+      { type: 'remove_header', name: 'Cookie' },
+      { type: 'remove_header', name: 'Set-Cookie' },
+    ],
   },
 ];
 
@@ -136,29 +170,40 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
       ? { type: 'url_pattern', pattern: newRewrite.urlPattern }
       : { type: 'all' };
 
-    let action: RewriteAction;
-    switch (newRewrite.actionType) {
-      case 'set_header':
-        action = { type: 'set_header', name: newRewrite.headerName, value: newRewrite.headerValue };
-        break;
-      case 'remove_header':
-        action = { type: 'remove_header', name: newRewrite.headerName };
-        break;
-      case 'url_rewrite':
-        action = { type: 'url_rewrite', pattern: newRewrite.headerName, replacement: newRewrite.headerValue };
-        break;
-      case 'body_rewrite':
-        action = { type: 'body_rewrite', pattern: newRewrite.headerName, replacement: newRewrite.headerValue };
-        break;
-      default:
-        action = { type: 'set_header', name: '', value: '' };
+    let actions: RewriteAction[];
+    const template =
+      selectedTemplate !== null ? REWRITE_TEMPLATES[selectedTemplate] : null;
+    if (template && template.actions && template.actions.length > 0) {
+      // Multi-action template (e.g. No Caching, Block Cookies) — use the
+      // preset actions directly.
+      actions = template.actions;
+    } else {
+      // Single-action form: build one action from the form fields.
+      let action: RewriteAction;
+      switch (newRewrite.actionType) {
+        case 'set_header':
+          action = { type: 'set_header', name: newRewrite.headerName, value: newRewrite.headerValue };
+          break;
+        case 'remove_header':
+          action = { type: 'remove_header', name: newRewrite.headerName };
+          break;
+        case 'url_rewrite':
+          action = { type: 'url_rewrite', pattern: newRewrite.headerName, replacement: newRewrite.headerValue };
+          break;
+        case 'body_rewrite':
+          action = { type: 'body_rewrite', pattern: newRewrite.headerName, replacement: newRewrite.headerValue };
+          break;
+        default:
+          action = { type: 'set_header', name: '', value: '' };
+      }
+      actions = [action];
     }
 
     await createRewrite.mutateAsync({
       name: newRewrite.name,
       condition,
       direction: newRewrite.direction,
-      rewrites: [action],
+      rewrites: actions,
       enabled: true,
     });
 
@@ -246,6 +291,12 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
 
   const getActionDescription = (rewrite: RewriteRule): string => {
     if (!rewrite.rewrites.length) return 'No actions';
+    // For multi-action rules (e.g. No Caching, Block Cookies), summarize
+    // the action count rather than only showing the first action.
+    if (rewrite.rewrites.length > 1) {
+      const names = rewrite.rewrites.map((a) => a.name ?? a.type);
+      return `${rewrite.rewrites.length} actions: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ', …' : ''}`;
+    }
     const action = rewrite.rewrites[0];
     switch (action.type) {
       case 'set_header':
@@ -333,6 +384,7 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
                           size="sm"
                           onClick={() => handleTemplateSelect(index)}
                           className="h-7 text-xs"
+                          title={template.description}
                         >
                           {template.name}
                         </Button>

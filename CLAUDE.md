@@ -67,6 +67,7 @@ madhyamas --help  # See all commands
 - `tls/certificate.rs` - TLS certificate management
 - `traffic/store.rs` - SQLite-based traffic storage
 - `intercept/` - Breakpoints, mocks, rewrites, throttling, block list
+  - `rewrite.rs` - Rewrite rules + `RewriteTemplates` (No Caching, Block Cookies, Add CORS, HTTP→HTTPS, Add Auth, Remove Security Headers). See [docs/REWRITE_TEMPLATES.md](docs/REWRITE_TEMPLATES.md)
 
 ### API Crate (`madhyamas-api`)
 - `lib.rs` - API server setup
@@ -178,7 +179,7 @@ Entries persist to SQLite and survive restarts. See
 | Capture | `GET /capture`, `POST /capture/toggle` |
 | Breakpoints | `GET/POST /breakpoints`, `GET/DELETE /breakpoints/{id}`, `GET /breakpoints/paused`, `POST /breakpoints/paused/{id}/resume` |
 | Mocks | `GET/POST /mocks`, `GET/PUT/DELETE /mocks/{id}`, `POST /mocks/{id}/toggle`, collections, recording, import/export |
-| Rewrites | `GET/POST /rewrites`, `GET/DELETE /rewrites/{id}`, `POST /rewrites/{id}/toggle` |
+| Rewrites | `GET/POST /rewrites`, `GET /rewrites/templates`, `GET/DELETE /rewrites/{id}`, `POST /rewrites/{id}/toggle`, `POST /rewrites/batch-toggle` |
 | Throttle | `GET/POST /throttle`, `POST /throttle/enabled`, `GET /throttle/presets` |
 | Replay | `GET/POST /replay/saved`, `POST /replay/execute/{id}`, `GET /replay/history` |
 | Block List | `GET/POST /blocklist`, `GET /blocklist/stats`, `GET/PUT/DELETE /blocklist/{id}`, `POST /blocklist/{id}/toggle` |

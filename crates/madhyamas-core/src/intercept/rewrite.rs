@@ -499,4 +499,419 @@ impl RewriteTemplates {
             }],
         )
     }
+
+    /// No Caching — prevent client and intermediary caching so that every
+    /// request through the proxy always reaches the upstream server and
+    /// returns the latest response.
+    ///
+    /// On **requests** the conditional-request headers are stripped so the
+    /// server cannot answer `304 Not Modified`:
+    /// - `If-Modified-Since`
+    /// - `If-None-Match`
+    ///
+    /// On **responses** the caching headers are removed and explicit
+    /// no-cache directives are added so the browser/proxy never serves a
+    /// stale copy:
+    /// - Remove `ETag`, `Last-Modified`, `Expires`
+    /// - Set `Cache-Control: no-cache, no-store, must-revalidate`
+    /// - Set `Pragma: no-cache`
+    /// - Set `Expires: 0`
+    pub fn no_caching() -> RewriteRule {
+        RewriteRule::new(
+            "No Caching".to_string(),
+            MatchCondition::All,
+            RewriteDirection::Both,
+            vec![
+                // Request: remove conditional request headers so the server
+                // cannot return a 304 Not Modified.
+                RewriteAction::RemoveHeader {
+                    name: "If-Modified-Since".to_string(),
+                },
+                RewriteAction::RemoveHeader {
+                    name: "If-None-Match".to_string(),
+                },
+                // Response: remove validators and expiration hints.
+                RewriteAction::RemoveHeader {
+                    name: "ETag".to_string(),
+                },
+                RewriteAction::RemoveHeader {
+                    name: "Last-Modified".to_string(),
+                },
+                RewriteAction::RemoveHeader {
+                    name: "Expires".to_string(),
+                },
+                // Response: add explicit no-cache directives.
+                RewriteAction::SetHeader {
+                    name: "Cache-Control".to_string(),
+                    value: "no-cache, no-store, must-revalidate".to_string(),
+                },
+                RewriteAction::SetHeader {
+                    name: "Pragma".to_string(),
+                    value: "no-cache".to_string(),
+                },
+                RewriteAction::SetHeader {
+                    name: "Expires".to_string(),
+                    value: "0".to_string(),
+                },
+            ],
+        )
+    }
+
+    /// Block Cookies — strip cookies from both directions of traffic so
+    /// that the client never sends cookies and the server never sets them.
+    ///
+    /// On **requests** the `Cookie` header is removed, so the upstream
+    /// server sees an unauthenticated, cookieless request.
+    ///
+    /// On **responses** the `Set-Cookie` header is removed, so the client
+    /// never stores any cookies returned by the server.
+    ///
+    /// This is useful for testing how an application behaves for first-
+    /// time/anonymous visitors, debugging login flows, or verifying that
+    /// a site degrades gracefully without cookies.
+    pub fn block_cookies() -> RewriteRule {
+        RewriteRule::new(
+            "Block Cookies".to_string(),
+            MatchCondition::All,
+            RewriteDirection::Both,
+            vec![
+                // Request: prevent the client from sending cookies.
+                RewriteAction::RemoveHeader {
+                    name: "Cookie".to_string(),
+                },
+                // Response: prevent the server from setting cookies.
+                RewriteAction::RemoveHeader {
+                    name: "Set-Cookie".to_string(),
+                },
+            ],
+        )
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traffic::{HttpMethod, RequestData, ResponseData};
+    use std::collections::HashMap;
+
+    // ── No Caching template ──────────────────────────────────────────
+
+    #[test]
+    fn no_caching_template_has_expected_metadata() {
+        let rule = RewriteTemplates::no_caching();
+        assert_eq!(rule.name, "No Caching");
+        assert_eq!(rule.direction, RewriteDirection::Both);
+        assert!(rule.enabled, "template should be enabled by default");
+        assert!(matches!(rule.condition, MatchCondition::All));
+        // 2 request-side removes + 3 response-side removes + 3 sets = 8.
+        assert_eq!(rule.rewrites.len(), 8, "No Caching should have 8 actions");
+    }
+
+    #[test]
+    fn no_caching_template_strips_conditional_request_headers() {
+        let manager = RewriteManager::new();
+        manager.add_rule(RewriteTemplates::no_caching());
+
+        let mut request = RequestData {
+            method: HttpMethod::Get,
+            url: "https://example.com/page".to_string(),
+            host: "example.com".to_string(),
+            path: "/page".to_string(),
+            headers: HashMap::from([
+                (
+                    "If-Modified-Since".to_string(),
+                    "Wed, 21 Oct 2025 07:28:00 GMT".to_string(),
+                ),
+                ("If-None-Match".to_string(), "\"abc123\"".to_string()),
+                ("Accept".to_string(), "text/html".to_string()),
+            ]),
+            body: None,
+            content_type: None,
+            http_version: None,
+        };
+
+        manager.rewrite_request(&mut request);
+
+        assert!(
+            !request.headers.contains_key("If-Modified-Since"),
+            "If-Modified-Since should be stripped from the request"
+        );
+        assert!(
+            !request.headers.contains_key("If-None-Match"),
+            "If-None-Match should be stripped from the request"
+        );
+        assert_eq!(
+            request.headers.get("Accept"),
+            Some(&"text/html".to_string()),
+            "non-cache headers should be preserved"
+        );
+    }
+
+    #[test]
+    fn no_caching_template_strips_and_sets_response_headers() {
+        let manager = RewriteManager::new();
+        manager.add_rule(RewriteTemplates::no_caching());
+
+        let request = RequestData {
+            method: HttpMethod::Get,
+            url: "https://example.com/page".to_string(),
+            host: "example.com".to_string(),
+            path: "/page".to_string(),
+            headers: HashMap::new(),
+            body: None,
+            content_type: None,
+            http_version: None,
+        };
+
+        let mut response = ResponseData {
+            status_code: 200,
+            status_message: Some("OK".to_string()),
+            headers: HashMap::from([
+                ("ETag".to_string(), "\"abc123\"".to_string()),
+                (
+                    "Last-Modified".to_string(),
+                    "Wed, 21 Oct 2025 07:28:00 GMT".to_string(),
+                ),
+                (
+                    "Expires".to_string(),
+                    "Thu, 21 Oct 2026 07:28:00 GMT".to_string(),
+                ),
+                ("Content-Type".to_string(), "text/html".to_string()),
+            ]),
+            body: None,
+            content_type: Some("text/html".to_string()),
+            duration_ms: 0,
+            http_version: None,
+        };
+
+        manager.rewrite_response(&request, &mut response);
+
+        assert!(
+            !response.headers.contains_key("ETag"),
+            "ETag should be stripped from the response"
+        );
+        assert!(
+            !response.headers.contains_key("Last-Modified"),
+            "Last-Modified should be stripped from the response"
+        );
+        assert!(
+            !response.headers.contains_key("Expires")
+                || response.headers.get("Expires") == Some(&"0".to_string()),
+            "Expires should be replaced with 0"
+        );
+        assert_eq!(
+            response.headers.get("Cache-Control"),
+            Some(&"no-cache, no-store, must-revalidate".to_string()),
+            "Cache-Control no-cache directive should be set"
+        );
+        assert_eq!(
+            response.headers.get("Pragma"),
+            Some(&"no-cache".to_string()),
+            "Pragma no-cache should be set"
+        );
+        assert_eq!(
+            response.headers.get("Expires"),
+            Some(&"0".to_string()),
+            "Expires should be set to 0"
+        );
+        assert_eq!(
+            response.headers.get("Content-Type"),
+            Some(&"text/html".to_string()),
+            "non-cache headers should be preserved"
+        );
+    }
+
+    #[test]
+    fn no_caching_template_can_be_disabled() {
+        let manager = RewriteManager::new();
+        let id = manager.add_rule(RewriteTemplates::no_caching());
+        assert!(manager.toggle_rule(&id, false), "toggle should succeed");
+
+        let mut request = RequestData {
+            method: HttpMethod::Get,
+            url: "https://example.com/page".to_string(),
+            host: "example.com".to_string(),
+            path: "/page".to_string(),
+            headers: HashMap::from([("If-None-Match".to_string(), "\"abc123\"".to_string())]),
+            body: None,
+            content_type: None,
+            http_version: None,
+        };
+
+        manager.rewrite_request(&mut request);
+
+        assert_eq!(
+            request.headers.get("If-None-Match"),
+            Some(&"\"abc123\"".to_string()),
+            "disabled rule should not strip headers"
+        );
+    }
+
+    // ── Block Cookies template ──────────────────────────────────────
+
+    #[test]
+    fn block_cookies_template_has_expected_metadata() {
+        let rule = RewriteTemplates::block_cookies();
+        assert_eq!(rule.name, "Block Cookies");
+        assert_eq!(rule.direction, RewriteDirection::Both);
+        assert!(rule.enabled, "template should be enabled by default");
+        assert!(matches!(rule.condition, MatchCondition::All));
+        assert_eq!(
+            rule.rewrites.len(),
+            2,
+            "Block Cookies should have 2 actions"
+        );
+    }
+
+    #[test]
+    fn block_cookies_template_strips_cookie_request_header() {
+        let manager = RewriteManager::new();
+        manager.add_rule(RewriteTemplates::block_cookies());
+
+        let mut request = RequestData {
+            method: HttpMethod::Get,
+            url: "https://example.com/dashboard".to_string(),
+            host: "example.com".to_string(),
+            path: "/dashboard".to_string(),
+            headers: HashMap::from([
+                (
+                    "Cookie".to_string(),
+                    "session=abc123; theme=dark".to_string(),
+                ),
+                ("Accept".to_string(), "text/html".to_string()),
+            ]),
+            body: None,
+            content_type: None,
+            http_version: None,
+        };
+
+        manager.rewrite_request(&mut request);
+
+        assert!(
+            !request.headers.contains_key("Cookie"),
+            "Cookie header should be stripped from the request"
+        );
+        assert_eq!(
+            request.headers.get("Accept"),
+            Some(&"text/html".to_string()),
+            "non-cookie headers should be preserved"
+        );
+    }
+
+    #[test]
+    fn block_cookies_template_strips_set_cookie_response_header() {
+        let manager = RewriteManager::new();
+        manager.add_rule(RewriteTemplates::block_cookies());
+
+        let request = RequestData {
+            method: HttpMethod::Get,
+            url: "https://example.com/login".to_string(),
+            host: "example.com".to_string(),
+            path: "/login".to_string(),
+            headers: HashMap::new(),
+            body: None,
+            content_type: None,
+            http_version: None,
+        };
+
+        let mut response = ResponseData {
+            status_code: 200,
+            status_message: Some("OK".to_string()),
+            headers: HashMap::from([
+                (
+                    "Set-Cookie".to_string(),
+                    "session=xyz; Path=/; HttpOnly".to_string(),
+                ),
+                ("Content-Type".to_string(), "text/html".to_string()),
+            ]),
+            body: None,
+            content_type: Some("text/html".to_string()),
+            duration_ms: 0,
+            http_version: None,
+        };
+
+        manager.rewrite_response(&request, &mut response);
+
+        assert!(
+            !response.headers.contains_key("Set-Cookie"),
+            "Set-Cookie header should be stripped from the response"
+        );
+        assert_eq!(
+            response.headers.get("Content-Type"),
+            Some(&"text/html".to_string()),
+            "non-cookie headers should be preserved"
+        );
+    }
+
+    #[test]
+    fn block_cookies_template_can_be_disabled() {
+        let manager = RewriteManager::new();
+        let id = manager.add_rule(RewriteTemplates::block_cookies());
+        assert!(manager.toggle_rule(&id, false), "toggle should succeed");
+
+        let mut request = RequestData {
+            method: HttpMethod::Get,
+            url: "https://example.com/page".to_string(),
+            host: "example.com".to_string(),
+            path: "/page".to_string(),
+            headers: HashMap::from([("Cookie".to_string(), "session=abc123".to_string())]),
+            body: None,
+            content_type: None,
+            http_version: None,
+        };
+
+        manager.rewrite_request(&mut request);
+
+        assert_eq!(
+            request.headers.get("Cookie"),
+            Some(&"session=abc123".to_string()),
+            "disabled rule should not strip the Cookie header"
+        );
+    }
+
+    // ── Template interaction with the manager ───────────────────────
+
+    #[test]
+    fn both_templates_can_coexist() {
+        let manager = RewriteManager::new();
+        manager.add_rule(RewriteTemplates::no_caching());
+        manager.add_rule(RewriteTemplates::block_cookies());
+
+        assert_eq!(manager.get_rules().len(), 2);
+
+        let mut request = RequestData {
+            method: HttpMethod::Get,
+            url: "https://example.com/page".to_string(),
+            host: "example.com".to_string(),
+            path: "/page".to_string(),
+            headers: HashMap::from([
+                ("If-None-Match".to_string(), "\"abc\"".to_string()),
+                ("Cookie".to_string(), "session=xyz".to_string()),
+                ("Accept".to_string(), "*/*".to_string()),
+            ]),
+            body: None,
+            content_type: None,
+            http_version: None,
+        };
+
+        manager.rewrite_request(&mut request);
+
+        assert!(!request.headers.contains_key("If-None-Match"));
+        assert!(!request.headers.contains_key("Cookie"));
+        assert_eq!(request.headers.get("Accept"), Some(&"*/*".to_string()));
+    }
+
+    #[test]
+    fn templates_generate_unique_ids() {
+        let rule_a = RewriteTemplates::no_caching();
+        let rule_b = RewriteTemplates::no_caching();
+        assert_ne!(
+            rule_a.id, rule_b.id,
+            "each template instance gets a unique id"
+        );
+    }
 }

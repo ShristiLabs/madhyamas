@@ -920,6 +920,34 @@ pub async fn get_rewrite_templates() -> impl IntoResponse {
                 ]
             }
         }),
+        serde_json::json!({
+            "name": "No Caching",
+            "description": "Prevent client caching by stripping cache-related headers and adding no-cache directives. Ensures you always see the latest version.",
+            "template": {
+                "direction": "both",
+                "rewrites": [
+                    { "type": "remove_header", "name": "If-Modified-Since" },
+                    { "type": "remove_header", "name": "If-None-Match" },
+                    { "type": "remove_header", "name": "ETag" },
+                    { "type": "remove_header", "name": "Last-Modified" },
+                    { "type": "remove_header", "name": "Expires" },
+                    { "type": "set_header", "name": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+                    { "type": "set_header", "name": "Pragma", "value": "no-cache" },
+                    { "type": "set_header", "name": "Expires", "value": "0" }
+                ]
+            }
+        }),
+        serde_json::json!({
+            "name": "Block Cookies",
+            "description": "Strip Cookie and Set-Cookie headers from both requests and responses. Useful for testing how a site behaves for anonymous/first-time visitors.",
+            "template": {
+                "direction": "both",
+                "rewrites": [
+                    { "type": "remove_header", "name": "Cookie" },
+                    { "type": "remove_header", "name": "Set-Cookie" }
+                ]
+            }
+        }),
     ])
 }
 
