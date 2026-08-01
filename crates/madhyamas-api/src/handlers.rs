@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use madhyamas_core::{ProxyConfig, TrafficFilter, WsFilter};
+use madhyamas_core::{AccessControlList, ProxyConfig, TrafficFilter, WsFilter};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -332,7 +332,9 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse
             "auth_enabled": config.upstream_proxy.auth_enabled(),
             "auth_username": config.upstream_proxy.auth_username,
             "no_proxy_hosts": config.upstream_proxy.no_proxy_hosts,
-        }
+        },
+        "access_control_enabled": config.access_control_enabled(),
+        "allowed_ips": config.allowed_ips,
     }))
 }
 
@@ -404,6 +406,16 @@ pub struct PatchConfigRequest {
     /// client is built once at engine startup). The bypass list and
     /// auth credentials are read live and don't require a restart.
     pub upstream_proxy: Option<UpstreamProxyPatch>,
+
+    /// IP allowlist for the proxy and API listeners.
+    ///
+    /// When set to a non-empty list, only connections from the listed IP
+    /// addresses or CIDR ranges are accepted (loopback is always allowed).
+    /// Set to an empty array to disable access control (allow all).
+    /// Each entry is validated as an IP address or CIDR range; invalid
+    /// entries cause a `400 Bad Request`. Changes take effect immediately
+    /// for new connections (the proxy accept loop reads the live config).
+    pub allowed_ips: Option<Vec<String>>,
 }
 
 /// Patchable subset of [`UpstreamProxyConfig`].
@@ -615,6 +627,35 @@ pub async fn patch_config(
         }
     }
 
+    // IP access control (allowlist). Validate every entry as an IP address
+    // or CIDR range before applying so a bad entry doesn't silently break
+    // the proxy. Normalization: trim, drop empties, deduplicate (case is
+    // preserved for IPv6 but entries are compared as strings). An empty
+    // array disables access control (allow all).
+    if let Some(entries) = req.allowed_ips {
+        let mut cleaned: Vec<String> = entries
+            .iter()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty())
+            .collect();
+        cleaned.sort();
+        cleaned.dedup();
+        // Validate by constructing an AccessControlList. This catches
+        // malformed IPs and out-of-range CIDR prefixes before they reach
+        // the accept loop.
+        if let Err(e) = AccessControlList::new(&cleaned) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "Invalid allowed_ips entry",
+                    "message": e.to_string(),
+                })),
+            )
+                .into_response();
+        }
+        config.allowed_ips = cleaned;
+    }
+
     // Snapshot the updated config for the response (still holding the lock).
     // Note: auth_password is intentionally omitted to avoid leaking secrets.
     let resp = serde_json::json!({
@@ -640,7 +681,9 @@ pub async fn patch_config(
             "auth_enabled": config.upstream_proxy.auth_enabled(),
             "auth_username": config.upstream_proxy.auth_username,
             "no_proxy_hosts": config.upstream_proxy.no_proxy_hosts,
-        }
+        },
+        "access_control_enabled": config.access_control_enabled(),
+        "allowed_ips": config.allowed_ips,
     });
 
     // Persist the updated config to disk so it survives restarts.

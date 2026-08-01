@@ -1,5 +1,6 @@
 //! Madhyamas Core - HTTP/HTTPS debugging proxy engine
 
+pub mod access_control;
 pub mod config;
 #[cfg(feature = "enterprise")]
 pub mod enterprise;
@@ -20,6 +21,9 @@ pub mod session;
 pub mod tls;
 pub mod traffic;
 pub mod websocket;
+
+// Re-exports from access_control
+pub use access_control::AccessControlList;
 
 // Re-exports from config
 pub use config::{ProxyConfig, UpstreamProxyConfig};

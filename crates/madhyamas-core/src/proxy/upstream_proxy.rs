@@ -154,15 +154,12 @@ async fn http_connect_handshake(
                 buf.len()
             )));
         }
-        let n = stream
-            .read(&mut buf[total..])
-            .await
-            .map_err(|e| {
-                Error::Proxy(format!(
-                    "Failed to read CONNECT response from upstream proxy: {}",
-                    e
-                ))
-            })?;
+        let n = stream.read(&mut buf[total..]).await.map_err(|e| {
+            Error::Proxy(format!(
+                "Failed to read CONNECT response from upstream proxy: {}",
+                e
+            ))
+        })?;
         if n == 0 {
             return Err(Error::Proxy(
                 "Upstream proxy closed connection during CONNECT response".into(),
@@ -538,16 +535,8 @@ mod tests {
             protocol: protocol.to_string(),
             host: "proxy.example.com".to_string(),
             port: 8080,
-            auth_username: if auth {
-                Some("user".to_string())
-            } else {
-                None
-            },
-            auth_password: if auth {
-                Some("pass".to_string())
-            } else {
-                None
-            },
+            auth_username: if auth { Some("user".to_string()) } else { None },
+            auth_password: if auth { Some("pass".to_string()) } else { None },
             no_proxy_hosts: Vec::new(),
         }
     }

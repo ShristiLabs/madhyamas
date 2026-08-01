@@ -119,11 +119,14 @@ impl ProxyEngine {
                 "Upstream proxy chaining enabled: {} (protocol={}, auth={})",
                 proxy_url,
                 upstream_cfg.protocol,
-                if upstream_cfg.auth_enabled() { "yes" } else { "no" }
+                if upstream_cfg.auth_enabled() {
+                    "yes"
+                } else {
+                    "no"
+                }
             );
-            let mut proxy = reqwest::Proxy::all(&proxy_url).map_err(|e| {
-                Error::Proxy(format!("Failed to configure upstream proxy: {}", e))
-            })?;
+            let mut proxy = reqwest::Proxy::all(&proxy_url)
+                .map_err(|e| Error::Proxy(format!("Failed to configure upstream proxy: {}", e)))?;
             if upstream_cfg.auth_enabled() {
                 proxy = proxy.basic_auth(
                     upstream_cfg.auth_username.as_deref().unwrap_or(""),
@@ -351,10 +354,49 @@ impl ProxyEngine {
         }
 
         loop {
-            let (client_socket, client_addr) = listener
+            let (mut client_socket, client_addr) = listener
                 .accept()
                 .await
                 .map_err(|e| Error::Proxy(format!("Failed to accept connection: {}", e)))?;
+
+            // IP access control (allowlist). The check runs on every accept
+            // using a live snapshot of the config, so API updates to
+            // `allowed_ips` (`PATCH /api/config`) take effect immediately for
+            // new connections without a restart. Loopback addresses are
+            // always allowed (enforced inside `is_allowed`) so a
+            // locally-started proxy can never be locked out.
+            //
+            // Rejected connections are dropped (TCP close) without spawning
+            // a handler task, matching Charles Proxy's behavior.
+            let reject = {
+                let cfg = self.config.read();
+                if !cfg.access_control_enabled() {
+                    false
+                } else {
+                    match cfg.access_control_list() {
+                        Ok(acl) => !acl.is_allowed(client_addr.ip()),
+                        Err(e) => {
+                            // A malformed allowlist entry should never reach
+                            // here (validated at config load / API patch
+                            // time), but if it does we fail closed for
+                            // non-localhost traffic and log the error.
+                            warn!(
+                                "Access control list parse error: {}. Rejecting connection from {}",
+                                e, client_addr
+                            );
+                            !client_addr.ip().is_loopback()
+                        }
+                    }
+                }
+            };
+            if reject {
+                warn!(
+                    "Connection from {} rejected by IP access control",
+                    client_addr
+                );
+                let _ = client_socket.shutdown().await;
+                continue;
+            }
 
             let engine = self.clone();
             tokio::spawn(async move {
@@ -623,8 +665,8 @@ impl ProxyEngine {
         // Otherwise we connect directly to the target.
         let upstream_addr = format!("{}:{}", host, port);
         let config_snapshot = self.config.read().clone();
-        let use_upstream_proxy =
-            config_snapshot.upstream_proxy_active() && !config_snapshot.should_bypass_upstream(host);
+        let use_upstream_proxy = config_snapshot.upstream_proxy_active()
+            && !config_snapshot.should_bypass_upstream(host);
 
         let mut upstream_socket = if use_upstream_proxy {
             info!(
@@ -681,15 +723,15 @@ impl ProxyEngine {
                         },
                     );
                     let _ = self.traffic_tx.send(entry);
-                    return Err(Error::Proxy(format!("Upstream proxy connect failed: {}", e)));
+                    return Err(Error::Proxy(format!(
+                        "Upstream proxy connect failed: {}",
+                        e
+                    )));
                 }
             }
         } else {
-            match tokio::time::timeout(
-                Duration::from_secs(30),
-                TcpStream::connect(&upstream_addr),
-            )
-            .await
+            match tokio::time::timeout(Duration::from_secs(30), TcpStream::connect(&upstream_addr))
+                .await
             {
                 Ok(Ok(s)) => s,
                 Ok(Err(e)) => {
@@ -1176,9 +1218,7 @@ impl ProxyEngine {
                 port,
             )
             .await
-            .map_err(|e| {
-                Error::Proxy(format!("Failed to connect via upstream proxy: {}", e))
-            })?
+            .map_err(|e| Error::Proxy(format!("Failed to connect via upstream proxy: {}", e)))?
         } else {
             TcpStream::connect((host, port))
                 .await
@@ -1296,9 +1336,7 @@ impl ProxyEngine {
                 port,
             )
             .await
-            .map_err(|e| {
-                Error::Proxy(format!("Failed to connect via upstream proxy: {}", e))
-            })?
+            .map_err(|e| Error::Proxy(format!("Failed to connect via upstream proxy: {}", e)))?
         } else {
             TcpStream::connect((host, port))
                 .await

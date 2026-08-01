@@ -124,6 +124,26 @@ pub struct ProxyConfig {
     /// See [`UpstreamProxyConfig`] for field details.
     #[serde(default)]
     pub upstream_proxy: UpstreamProxyConfig,
+
+    /// IP allowlist for the proxy and API listeners.
+    ///
+    /// When non-empty, only connections from the listed IP addresses or
+    /// CIDR ranges (e.g. `192.168.1.0/24`, `10.0.0.5`, `fd00::/8`) are
+    /// accepted. Loopback addresses (`127.0.0.1`, `::1`) are always
+    /// allowed regardless of this list, so a locally-started proxy can
+    /// never be locked out.
+    ///
+    /// An empty list (the default) allows connections from any address —
+    /// this preserves backward compatibility for existing deployments.
+    /// The list is applied live: updating it via the API
+    /// (`PATCH /api/config`) takes effect for new connections immediately
+    /// without a restart.
+    ///
+    /// See [`crate::AccessControlList`] for matching semantics and
+    /// [`docs/ACCESS_CONTROL.md`](../../docs/ACCESS_CONTROL.md) for the
+    /// end-user guide.
+    #[serde(default)]
+    pub allowed_ips: Vec<String>,
 }
 
 /// Upstream (external) proxy chaining configuration.
@@ -266,10 +286,9 @@ impl UpstreamProxyConfig {
 
             // CIDR notation (contains '/'): parse and check IP containment.
             if let Some((ip_str, cidr_str)) = entry.split_once('/') {
-                if let (Ok(ip), Ok(cidr)) = (
-                    ip_str.parse::<std::net::IpAddr>(),
-                    cidr_str.parse::<u8>(),
-                ) {
+                if let (Ok(ip), Ok(cidr)) =
+                    (ip_str.parse::<std::net::IpAddr>(), cidr_str.parse::<u8>())
+                {
                     if let Ok(net) = ipnet_like(ip, cidr) {
                         if let Ok(target_ip) = target.parse::<std::net::IpAddr>() {
                             if net.contains(&target_ip) {
@@ -388,6 +407,7 @@ impl Default for ProxyConfig {
             socks_auth_username: None,
             socks_auth_password: None,
             upstream_proxy: UpstreamProxyConfig::default(),
+            allowed_ips: Vec::new(),
         }
     }
 }
@@ -619,6 +639,25 @@ impl ProxyConfig {
     pub fn upstream_proxy_active(&self) -> bool {
         self.upstream_proxy.enabled && !self.upstream_proxy.host.trim().is_empty()
     }
+
+    /// Build an [`AccessControlList`] from the configured `allowed_ips`.
+    ///
+    /// Returns an "allow all" list when `allowed_ips` is empty (the
+    /// default). Invalid entries produce an error so callers can surface
+    /// bad configuration early rather than silently falling back to
+    /// "allow all".
+    ///
+    /// Call this on the live config snapshot (under the read lock) each
+    /// time a connection is accepted so that API updates to
+    /// `allowed_ips` take effect immediately for new connections.
+    pub fn access_control_list(&self) -> crate::Result<crate::AccessControlList> {
+        crate::AccessControlList::new(&self.allowed_ips)
+    }
+
+    /// Whether IP access control is currently active (non-empty allowlist).
+    pub fn access_control_enabled(&self) -> bool {
+        !self.allowed_ips.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -685,7 +724,10 @@ mod tests {
     #[test]
     fn proxy_url_normalizes_protocol_case() {
         let c = cfg(true, "SOCKS5", "127.0.0.1", 1080);
-        assert_eq!(c.proxy_url().unwrap().as_deref(), Some("socks5://127.0.0.1:1080"));
+        assert_eq!(
+            c.proxy_url().unwrap().as_deref(),
+            Some("socks5://127.0.0.1:1080")
+        );
     }
 
     #[test]

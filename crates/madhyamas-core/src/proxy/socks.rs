@@ -388,10 +388,38 @@ pub async fn serve_socks5(ctx: SocksContext) -> crate::Result<()> {
     let auth_pass = ctx.config.socks_auth_password.clone();
 
     loop {
-        let (client_socket, client_addr) = listener
+        let (mut client_socket, client_addr) = listener
             .accept()
             .await
             .map_err(|e| Error::Proxy(format!("Failed to accept SOCKS connection: {}", e)))?;
+
+        // IP access control (allowlist). The SOCKS listener uses the config
+        // snapshot captured at startup (the listener is bound at startup and
+        // requires a restart to rebind). Loopback is always allowed.
+        if ctx.config.access_control_enabled() {
+            match ctx.config.access_control_list() {
+                Ok(acl) => {
+                    if !acl.is_allowed(client_addr.ip()) {
+                        warn!(
+                            "SOCKS5 connection from {} rejected by IP access control",
+                            client_addr
+                        );
+                        let _ = client_socket.shutdown().await;
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "SOCKS5 access control list parse error: {}. Rejecting connection from {}",
+                        e, client_addr
+                    );
+                    if !client_addr.ip().is_loopback() {
+                        let _ = client_socket.shutdown().await;
+                        continue;
+                    }
+                }
+            }
+        }
 
         let traffic_store = ctx.traffic_store.clone();
         let traffic_tx = ctx.traffic_tx.clone();

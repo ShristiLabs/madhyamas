@@ -159,6 +159,32 @@ struct Args {
     #[arg(long, env = "MADHYAMAS_UPSTREAM_NO_PROXY", global = true)]
     upstream_no_proxy: Option<String>,
 
+    /// IP address or CIDR range to allow connections from (repeatable).
+    ///
+    /// When one or more `--allowed-ip` flags are provided, only connections
+    /// from the listed IPs/ranges are accepted by the proxy (and SOCKS5
+    /// listener). Loopback addresses (`127.0.0.1`, `::1`) are always
+    /// allowed regardless of this list, so a locally-started proxy can
+    /// never be locked out.
+    ///
+    /// Examples:
+    /// - `--allowed-ip 192.168.1.0/24` (allow a subnet)
+    /// - `--allowed-ip 10.0.0.5 --allowed-ip 10.0.0.6` (allow specific IPs)
+    /// - `--allowed-ip fd00::/8` (allow an IPv6 range)
+    ///
+    /// When omitted, connections from any address are allowed (default).
+    /// Can also be set via the `MADHYAMAS_ALLOWED_IPS` environment variable
+    /// as a comma-separated list. Runtime updates via the API
+    /// (`PATCH /api/config` with `allowed_ips`) take effect immediately
+    /// for new connections and persist across restarts.
+    #[arg(
+        long,
+        env = "MADHYAMAS_ALLOWED_IPS",
+        global = true,
+        value_delimiter = ','
+    )]
+    allowed_ip: Vec<String>,
+
     /// Enable API rate limiting (disabled by default).
     ///
     /// When enabled, the API server limits requests per peer IP to
@@ -306,7 +332,9 @@ fn build_upstream_proxy_config(args: &Args, saved: &Option<ProxyConfig>) -> Upst
         parse_host_port(proxy_str).unwrap_or((String::new(), 0))
     } else {
         (
-            saved_upstream.map(|u| u.host.clone()).unwrap_or(default.host.clone()),
+            saved_upstream
+                .map(|u| u.host.clone())
+                .unwrap_or(default.host.clone()),
             saved_upstream.map(|u| u.port).unwrap_or(default.port),
         )
     };
@@ -468,6 +496,19 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         // config. When --upstream-proxy-enabled is not set, fall back to
         // the saved config (if any) so runtime API changes persist.
         upstream_proxy,
+        // IP access control (allowlist): CLI --allowed-ip flags take
+        // precedence over the saved config. When no CLI flags are provided,
+        // fall back to the saved config so runtime API changes to
+        // `allowed_ips` persist across restarts. An empty CLI list with no
+        // saved config means "allow all" (the default).
+        allowed_ips: if !args.allowed_ip.is_empty() {
+            args.allowed_ip.clone()
+        } else {
+            saved
+                .as_ref()
+                .map(|s| s.allowed_ips.clone())
+                .unwrap_or_default()
+        },
     };
 
     if saved.is_some() {
@@ -482,6 +523,25 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     // Ensure data directories exist
     config.ensure_directories()?;
     info!("Data directory: ~/.madhyamas/");
+
+    // Validate the IP allowlist early so a bad entry fails fast at startup
+    // rather than silently rejecting (or accepting) connections.
+    if config.access_control_enabled() {
+        match config.access_control_list() {
+            Ok(acl) => {
+                info!(
+                    "IP access control enabled: {} entr{} (loopback always allowed)",
+                    acl.len(),
+                    if acl.len() == 1 { "y" } else { "ies" }
+                );
+            }
+            Err(e) => {
+                anyhow::bail!("Invalid allowed_ips configuration: {}", e);
+            }
+        }
+    } else {
+        debug!("IP access control disabled (allow all connections)");
+    }
 
     // Initialize certificate manager
     let cert_manager = CertificateManager::new(&config.cert_path).await?;
@@ -768,4 +828,3 @@ mod tests {
         assert_eq!(pass.as_deref(), Some(""));
     }
 }
-

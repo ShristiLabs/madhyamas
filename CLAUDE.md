@@ -62,6 +62,7 @@ madhyamas --help  # See all commands
 
 ### Core Crate (`madhyamas-core`)
 - `lib.rs` - Public API exports, error types
+- `access_control.rs` - IP allowlist (CIDR-based access control)
 - `proxy/engine.rs` - Main proxy engine logic
 - `tls/certificate.rs` - TLS certificate management
 - `traffic/store.rs` - SQLite-based traffic storage
@@ -113,7 +114,7 @@ cd web && npm run build
 
 ## Configuration
 
-**CLI Flags**: `--proxy-port`, `--api-port`, `--host`, `--public-ip`, `--verbose`, `--no-https`, `--enable-socks`, `--socks-port`, `--socks-username`, `--socks-password`, `--upstream-proxy-enabled`, `--upstream-proxy`, `--upstream-protocol`, `--upstream-auth`, `--upstream-no-proxy`
+**CLI Flags**: `--proxy-port`, `--api-port`, `--host`, `--public-ip`, `--verbose`, `--no-https`, `--enable-socks`, `--socks-port`, `--socks-username`, `--socks-password`, `--upstream-proxy-enabled`, `--upstream-proxy`, `--upstream-protocol`, `--upstream-auth`, `--upstream-no-proxy`, `--allowed-ip` (repeatable)
 
 **Environment Variables**:
 - `RUST_LOG` - Logging level (trace/debug/info/warn/error)
@@ -132,6 +133,7 @@ cd web && npm run build
 - `MADHYAMAS_UPSTREAM_PROTOCOL` - Upstream proxy protocol: http/https/socks5 (default: http)
 - `MADHYAMAS_UPSTREAM_AUTH` - Upstream proxy auth as `username:password`
 - `MADHYAMAS_UPSTREAM_NO_PROXY` - Comma-separated bypass list (e.g. `localhost,127.0.0.0/8`)
+- `MADHYAMAS_ALLOWED_IPS` - Comma-separated IP/CIDR allowlist (e.g. `192.168.1.0/24,10.0.0.5`)
 
 **SOCKS5 Proxy**: When `--enable-socks` is set, Madhyamas also listens on the
 SOCKS5 port (default `1080`) as a blind TCP tunnel (RFC 1928/1929). SOCKS
@@ -144,6 +146,13 @@ outbound traffic is routed through the configured upstream proxy (HTTP
 CONNECT, HTTPS, or SOCKS5). A bypass list (`--upstream-no-proxy`) excludes
 specified hosts/CIDRs from the upstream proxy. See
 [docs/UPSTREAM_PROXY.md](docs/UPSTREAM_PROXY.md).
+
+**Access Control (IP Allowlist)**: When `--allowed-ip` is provided (or
+`allowed_ips` is set via the API/config file), only connections from the
+listed IP addresses or CIDR ranges are accepted. Loopback (`127.0.0.1`,
+`::1`) is always allowed. An empty list (the default) allows all
+connections. API updates via `PATCH /api/config` take effect immediately
+for new connections. See [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md).
 
 **Data Directory**: `~/.madhyamas/` (certs, logs, traffic.db)
 
