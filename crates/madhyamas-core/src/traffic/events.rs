@@ -43,6 +43,9 @@ pub struct TrafficEntrySnapshot {
     pub has_request_body: bool,
     pub has_response_body: bool,
     pub is_passthrough: bool,
+    /// HTTP protocol version negotiated with the client (e.g. "HTTP/1.1", "HTTP/2").
+    /// `None` for entries created before this field was tracked.
+    pub http_version: Option<String>,
 }
 
 impl From<&TrafficEntry> for TrafficEntrySnapshot {
@@ -75,6 +78,7 @@ impl From<&TrafficEntry> for TrafficEntrySnapshot {
                 .map(|r| r.body.is_some())
                 .unwrap_or(false),
             is_passthrough: entry.is_passthrough,
+            http_version: entry.request.http_version.clone(),
         }
     }
 }

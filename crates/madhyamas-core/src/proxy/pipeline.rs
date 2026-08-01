@@ -296,7 +296,11 @@ impl<'a> Pipeline<'a> {
                     throttle_manager.apply_latency().await;
                 }
 
-                let response = self.build_mock_response(&mock.response()).await;
+                let mut response = self.build_mock_response(&mock.response()).await;
+                // Mocks are protocol-agnostic; inherit the downstream HTTP
+                // version from the request so the traffic list shows the
+                // correct protocol label.
+                response.http_version = request_data.http_version.clone();
 
                 return self
                     .short_circuit_response(request_data, &response, client_stream, "mocked")
@@ -351,6 +355,7 @@ impl<'a> Pipeline<'a> {
                             body: body.map(|b| b.into_bytes()),
                             content_type: Some("application/json".to_string()),
                             duration_ms: 0,
+                            http_version: request_data.http_version.clone(),
                         };
 
                         return self
@@ -506,6 +511,7 @@ impl<'a> Pipeline<'a> {
                         body: Some(error_detail.into_bytes()),
                         content_type: Some("text/plain".to_string()),
                         duration_ms: start.elapsed().as_millis() as u64,
+                        http_version: request_data.http_version.clone(),
                     };
                     self.traffic_store
                         .store_response(&entry.id, &error_response)?;
@@ -618,6 +624,7 @@ impl<'a> Pipeline<'a> {
             headers,
             body,
             content_type,
+            http_version: Some("HTTP/1.1".to_string()),
         })
     }
 
@@ -827,6 +834,9 @@ impl<'a> Pipeline<'a> {
             body: body.clone(),
             content_type,
             duration_ms: 0, // Set by caller
+            // The response is delivered to the client over the same protocol
+            // the request arrived on, so mirror the downstream HTTP version.
+            http_version: request_data.http_version.clone(),
         };
 
         // Build HTTP/1.1 response bytes and write to client
@@ -856,6 +866,9 @@ impl<'a> Pipeline<'a> {
             body: mock_response.body_bytes(),
             content_type: mock_response.headers.get("Content-Type").cloned(),
             duration_ms: mock_response.delay_ms.unwrap_or(0),
+            // Inherit the downstream protocol version from the request at the
+            // call site (mocks are protocol-agnostic).
+            http_version: None,
         }
     }
 
@@ -1008,6 +1021,7 @@ impl<'a> Pipeline<'a> {
             body,
             content_type,
             duration_ms: 0, // Will be set by caller
+            http_version: Some("HTTP/1.1".to_string()),
         })
     }
 

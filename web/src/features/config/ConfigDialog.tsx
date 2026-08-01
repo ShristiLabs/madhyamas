@@ -44,6 +44,7 @@ interface RuntimeConfig {
   max_requests: number;
   verbose: boolean;
   passthrough_domains?: string[];
+  enable_h2_downstream?: boolean;
 }
 
 interface UpstreamConfig {
@@ -166,6 +167,7 @@ function GeneralTab() {
     max_requests: 10000,
     verbose: false,
     passthrough_domains: [],
+    enable_h2_downstream: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -182,6 +184,7 @@ function GeneralTab() {
           max_requests: data.max_requests ?? 10000,
           verbose: data.verbose ?? false,
           passthrough_domains: data.passthrough_domains ?? [],
+          enable_h2_downstream: data.enable_h2_downstream ?? false,
         });
       })
       .catch(() => {})
@@ -197,6 +200,7 @@ function GeneralTab() {
         verbose: config.verbose,
         public_ip: config.public_ip || null,
         passthrough_domains: config.passthrough_domains ?? [],
+        enable_h2_downstream: config.enable_h2_downstream,
       });
       toast({ description: "Configuration saved successfully." });
     } catch (err) {
@@ -293,6 +297,20 @@ function GeneralTab() {
             max={100000}
             step={100}
             className="w-28 text-right"
+          />
+        </Row>
+      </Section>
+
+      <Section title="HTTP/2">
+        <Row
+          label="Enable HTTP/2 Downstream"
+          description="Allow clients to negotiate HTTP/2 via ALPN. Enables HTTP/2 frame parsing on the client-facing side, required for gRPC interception. HTTP/1.1 clients continue to work via ALPN fallback. Restart required to take effect."
+        >
+          <Switch
+            checked={config.enable_h2_downstream ?? false}
+            onCheckedChange={(v) =>
+              setConfig((p) => ({ ...p, enable_h2_downstream: v }))
+            }
           />
         </Row>
       </Section>

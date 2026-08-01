@@ -58,6 +58,19 @@ pub struct ProxyConfig {
     /// Supports suffix matching (e.g. "example.com" matches "api.example.com").
     #[serde(default)]
     pub passthrough_domains: Vec<String>,
+
+    /// Enable HTTP/2 downstream (client-facing) support.
+    ///
+    /// When enabled, the proxy advertises both `h2` and `http/1.1` via ALPN
+    /// during the TLS handshake with the client. If the client negotiates
+    /// `h2`, the proxy parses HTTP/2 frames (using the `h2` crate) and
+    /// multiplexes streams through the existing interception pipeline.
+    /// HTTP/1.1 clients continue to work via ALPN fallback.
+    ///
+    /// This is required for intercepting gRPC traffic (which mandates HTTP/2).
+    /// Defaults to `false` for safety; flip to `true` once validated.
+    #[serde(default)]
+    pub enable_h2_downstream: bool,
 }
 
 impl Default for ProxyConfig {
@@ -76,6 +89,7 @@ impl Default for ProxyConfig {
             intercept_https: true,
             max_body_size: 20 * 1024 * 1024, // 20 MB
             passthrough_domains: Vec::new(),
+            enable_h2_downstream: false,
         }
     }
 }
@@ -199,8 +213,9 @@ impl ProxyConfig {
     pub fn save_to_file(&self, path: &std::path::Path) -> crate::Result<()> {
         // Ensure the parent directory exists
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| crate::Error::Config(format!("Failed to create config directory: {}", e)))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                crate::Error::Config(format!("Failed to create config directory: {}", e))
+            })?;
         }
 
         let json = serde_json::to_string_pretty(self)

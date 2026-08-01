@@ -19,6 +19,8 @@ export interface TrafficEntrySnapshot {
   has_request_body: boolean;
   has_response_body: boolean;
   is_passthrough: boolean;
+  /** HTTP protocol version negotiated with the proxy (e.g. "HTTP/1.1", "HTTP/2"). */
+  http_version?: string | null;
 }
 
 // Traffic events from server

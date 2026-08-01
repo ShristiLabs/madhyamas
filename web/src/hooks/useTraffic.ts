@@ -45,6 +45,7 @@ function snapshotToTrafficEntry(snapshot: TrafficEntrySnapshot): TrafficEntry {
       headers: {},
       body: snapshot.has_request_body ? undefined : undefined,
       content_type: snapshot.content_type ?? undefined,
+      http_version: snapshot.http_version ?? undefined,
     },
     response: snapshot.status_code
       ? {
@@ -54,6 +55,7 @@ function snapshotToTrafficEntry(snapshot: TrafficEntrySnapshot): TrafficEntry {
           body: snapshot.has_response_body ? undefined : undefined,
           content_type: snapshot.response_content_type ?? undefined,
           duration_ms: snapshot.duration_ms ?? 0,
+          http_version: snapshot.http_version ?? undefined,
         }
       : undefined,
     timestamp: snapshot.timestamp,

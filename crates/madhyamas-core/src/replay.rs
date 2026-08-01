@@ -219,6 +219,7 @@ impl ReplayManager {
                         headers: HashMap::new(),
                         body: None,
                         content_type: None,
+                        http_version: None,
                     },
                     "Saved request not found".to_string(),
                 );
@@ -348,6 +349,7 @@ impl ReplayManager {
             body,
             content_type,
             duration_ms: 0,
+            http_version: None,
         })
     }
 }
@@ -442,6 +444,7 @@ mod tests {
             headers: HashMap::new(),
             body: None,
             content_type: None,
+            http_version: None,
         }
     }
 
@@ -518,6 +521,7 @@ mod tests {
                 body: Some(b"response body".to_vec()),
                 content_type: Some("text/plain".to_string()),
                 duration_ms: 150,
+                http_version: None,
             };
 
             let result = ReplayResult::success("saved-123", request.clone(), response.clone(), 150);
@@ -555,6 +559,7 @@ mod tests {
                 body: None,
                 content_type: None,
                 duration_ms: 50,
+                http_version: None,
             };
 
             let result = ReplayResult::success("req-id", request, response, 50);
@@ -691,6 +696,7 @@ mod tests {
                 },
                 body: None,
                 content_type: None,
+                http_version: None,
             };
 
             mods.apply(&mut request);

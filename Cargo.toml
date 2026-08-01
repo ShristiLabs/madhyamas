@@ -27,6 +27,15 @@ axum-extra = { version = "0.12", features = ["typed-header"] }
 hyper = { version = "1.2", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
+# HTTP/2 frame parsing for downstream (client-facing) connections. Used by
+# the proxy engine to accept h2 streams negotiated via ALPN, enabling gRPC
+# interception. Pinned to 0.4 to match the version already pulled in
+# transitively by reqwest. The `stream` feature enables the
+# `futures::Stream` impl on `h2::server::Connection` used by the accept loop.
+h2 = { version = "0.4", features = ["stream"] }
+# Core HTTP types (Request/Response/Uri/HeaderMap) — already in the dep graph
+# via hyper/h2; declared explicitly so the proxy engine can build h2 responses.
+http = "1"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "cors", "trace", "set-header", "limit"] }
 tower_governor = "0.8"

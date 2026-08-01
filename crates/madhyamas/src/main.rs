@@ -239,13 +239,22 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         host: args.host,
         public_ip: args.public_ip,
         cert_path: args.cert_path.unwrap_or_else(|| {
-            saved.as_ref().map(|s| s.cert_path.clone()).unwrap_or(defaults.cert_path)
+            saved
+                .as_ref()
+                .map(|s| s.cert_path.clone())
+                .unwrap_or(defaults.cert_path)
         }),
         db_path: args.db_path.unwrap_or_else(|| {
-            saved.as_ref().map(|s| s.db_path.clone()).unwrap_or(defaults.db_path)
+            saved
+                .as_ref()
+                .map(|s| s.db_path.clone())
+                .unwrap_or(defaults.db_path)
         }),
         log_path: args.log_path.unwrap_or_else(|| {
-            saved.as_ref().map(|s| s.log_path.clone()).unwrap_or(defaults.log_path)
+            saved
+                .as_ref()
+                .map(|s| s.log_path.clone())
+                .unwrap_or(defaults.log_path)
         }),
         verbose: args.verbose,
         max_requests: args.max_requests,
@@ -253,12 +262,25 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         // These fields have no CLI arg — preserve the saved value if present,
         // otherwise use the default. This is what makes runtime API changes
         // (passthrough_domains, max_body_size) persist across restarts.
-        max_body_size: saved.as_ref().map(|s| s.max_body_size).unwrap_or(defaults.max_body_size),
-        passthrough_domains: saved.as_ref().map(|s| s.passthrough_domains.clone()).unwrap_or(defaults.passthrough_domains),
+        max_body_size: saved
+            .as_ref()
+            .map(|s| s.max_body_size)
+            .unwrap_or(defaults.max_body_size),
+        passthrough_domains: saved
+            .as_ref()
+            .map(|s| s.passthrough_domains.clone())
+            .unwrap_or(defaults.passthrough_domains),
+        enable_h2_downstream: saved
+            .as_ref()
+            .map(|s| s.enable_h2_downstream)
+            .unwrap_or(defaults.enable_h2_downstream),
     };
 
     if saved.is_some() {
-        info!("Loaded saved config from {}", ProxyConfig::config_file_path().display());
+        info!(
+            "Loaded saved config from {}",
+            ProxyConfig::config_file_path().display()
+        );
     } else {
         debug!("No saved config found, using defaults");
     }

@@ -22,6 +22,8 @@ use crate::websocket::{
     is_websocket_upgrade, WsDirection, WsFrameParser, WsManager, WsMessageType, WsPayload,
 };
 use crate::Error;
+use bytes::Bytes;
+use futures::StreamExt;
 use parking_lot::RwLock;
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
@@ -442,6 +444,7 @@ impl ProxyEngine {
                         headers: connect_headers.clone(),
                         body: None,
                         content_type: None,
+                        http_version: Some("HTTP/1.1".to_string()),
                     },
                 );
                 let _ = self.traffic_store.store_request(&entry);
@@ -471,6 +474,7 @@ impl ProxyEngine {
                         ),
                         content_type: Some("text/plain".to_string()),
                         duration_ms: 0,
+                        http_version: Some("HTTP/1.1".to_string()),
                     },
                 );
                 let _ = self.traffic_tx.send(entry);
@@ -479,12 +483,10 @@ impl ProxyEngine {
             }
         };
 
-        // Inspect the ALPN protocol negotiated during the handshake. We
-        // advertise only `http/1.1` (see [`Self::create_tls_server_config`])
-        // because the proxy does not yet implement HTTP/2 frame parsing on
-        // the downstream side. If a client somehow negotiates `h2` (e.g. an
-        // older cached session), we log a warning and still attempt the
-        // HTTP/1.1 request loop.
+        // Inspect the ALPN protocol negotiated during the handshake. When
+        // HTTP/2 downstream support is enabled we advertise both `h2` and
+        // `http/1.1`; the negotiated protocol determines which request loop
+        // handles the connection. See [`Self::create_tls_server_config`].
         let negotiated_alpn = tls_stream
             .get_ref()
             .1
@@ -494,14 +496,11 @@ impl ProxyEngine {
 
         match negotiated_alpn.as_deref() {
             Some("h2") => {
-                // This should not happen since we only advertise http/1.1,
-                // but handle it gracefully if it does.
-                warn!(
-                    "HTTP/2 (h2) negotiated via ALPN for {}:{}, but the proxy \
-                     only supports HTTP/1.1 downstream. Falling back to \
-                     HTTP/1.1 handling — this connection may fail.",
-                    host, port
-                );
+                info!("ALPN negotiated h2 (HTTP/2) for {}:{}", host, port);
+                // Hand the TLS stream to the HTTP/2 frame parser. This path
+                // multiplexes streams through the same interception pipeline
+                // used by HTTP/1.1, and is required for gRPC interception.
+                return self.handle_h2_connection(tls_stream, host, port).await;
             }
             Some("http/1.1") => {
                 debug!("ALPN negotiated http/1.1 for {}:{}", host, port);
@@ -553,6 +552,7 @@ impl ProxyEngine {
                 headers: connect_headers.clone(),
                 body: None,
                 content_type: None,
+                http_version: Some("HTTP/1.1".to_string()),
             },
         );
         entry.is_passthrough = true;
@@ -561,78 +561,77 @@ impl ProxyEngine {
 
         // Connect to the upstream server
         let upstream_addr = format!("{}:{}", host, port);
-        let mut upstream_socket = match tokio::time::timeout(
-            Duration::from_secs(30),
-            TcpStream::connect(&upstream_addr),
-        )
-        .await
-        {
-            Ok(Ok(s)) => s,
-            Ok(Err(e)) => {
-                warn!("Passthrough: failed to connect to {}: {}", upstream_addr, e);
-                let _ = self.traffic_store.store_response(
-                    &entry.id,
-                    &crate::traffic::ResponseData {
-                        status_code: 502,
-                        status_message: Some("Bad Gateway (Passthrough Connect Failed)".to_string()),
-                        headers: std::collections::HashMap::new(),
-                        body: Some(
-                            format!(
-                                "SSL passthrough connection failed.\n\n\
+        let mut upstream_socket =
+            match tokio::time::timeout(Duration::from_secs(30), TcpStream::connect(&upstream_addr))
+                .await
+            {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    warn!("Passthrough: failed to connect to {}: {}", upstream_addr, e);
+                    let _ = self.traffic_store.store_response(
+                        &entry.id,
+                        &crate::traffic::ResponseData {
+                            status_code: 502,
+                            status_message: Some(
+                                "Bad Gateway (Passthrough Connect Failed)".to_string(),
+                            ),
+                            headers: std::collections::HashMap::new(),
+                            body: Some(
+                                format!(
+                                    "SSL passthrough connection failed.\n\n\
                                  Target: {}\n\
                                  Error: {}\n\n\
                                  CONNECT request headers:\n{}",
-                                upstream_addr,
-                                e,
-                                connect_headers
-                                    .iter()
-                                    .map(|(k, v)| format!("  {}: {}", k, v))
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            )
-                            .into_bytes(),
-                        ),
-                        content_type: Some("text/plain".to_string()),
-                        duration_ms: 0,
-                    },
-                );
-                let _ = self.traffic_tx.send(entry);
-                return Err(Error::Proxy(format!(
-                    "Passthrough connect failed: {}",
-                    e
-                )));
-            }
-            Err(_) => {
-                warn!("Passthrough: timeout connecting to {}", upstream_addr);
-                let _ = self.traffic_store.store_response(
-                    &entry.id,
-                    &crate::traffic::ResponseData {
-                        status_code: 504,
-                        status_message: Some("Gateway Timeout (Passthrough)".to_string()),
-                        headers: std::collections::HashMap::new(),
-                        body: Some(
-                            format!(
-                                "SSL passthrough connection timed out.\n\n\
+                                    upstream_addr,
+                                    e,
+                                    connect_headers
+                                        .iter()
+                                        .map(|(k, v)| format!("  {}: {}", k, v))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                )
+                                .into_bytes(),
+                            ),
+                            content_type: Some("text/plain".to_string()),
+                            duration_ms: 0,
+                            http_version: Some("HTTP/1.1".to_string()),
+                        },
+                    );
+                    let _ = self.traffic_tx.send(entry);
+                    return Err(Error::Proxy(format!("Passthrough connect failed: {}", e)));
+                }
+                Err(_) => {
+                    warn!("Passthrough: timeout connecting to {}", upstream_addr);
+                    let _ = self.traffic_store.store_response(
+                        &entry.id,
+                        &crate::traffic::ResponseData {
+                            status_code: 504,
+                            status_message: Some("Gateway Timeout (Passthrough)".to_string()),
+                            headers: std::collections::HashMap::new(),
+                            body: Some(
+                                format!(
+                                    "SSL passthrough connection timed out.\n\n\
                                  Target: {}\n\
                                  Timeout: 30 seconds\n\n\
                                  CONNECT request headers:\n{}",
-                                upstream_addr,
-                                connect_headers
-                                    .iter()
-                                    .map(|(k, v)| format!("  {}: {}", k, v))
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            )
-                            .into_bytes(),
-                        ),
-                        content_type: Some("text/plain".to_string()),
-                        duration_ms: 30000,
-                    },
-                );
-                let _ = self.traffic_tx.send(entry);
-                return Err(Error::Proxy("Passthrough connect timeout".into()));
-            }
-        };
+                                    upstream_addr,
+                                    connect_headers
+                                        .iter()
+                                        .map(|(k, v)| format!("  {}: {}", k, v))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                )
+                                .into_bytes(),
+                            ),
+                            content_type: Some("text/plain".to_string()),
+                            duration_ms: 30000,
+                            http_version: Some("HTTP/1.1".to_string()),
+                        },
+                    );
+                    let _ = self.traffic_tx.send(entry);
+                    return Err(Error::Proxy("Passthrough connect timeout".into()));
+                }
+            };
 
         // Record successful connection with a 200 response.
         // Include a descriptive body explaining what happened (visible in
@@ -661,6 +660,7 @@ impl ProxyEngine {
                 ),
                 content_type: Some("text/plain".to_string()),
                 duration_ms: 0,
+                http_version: Some("HTTP/1.1".to_string()),
             },
         );
         let _ = self.traffic_tx.send(entry);
@@ -715,28 +715,20 @@ impl ProxyEngine {
 
     /// Create TLS server config with the generated certificate.
     ///
-    /// The config advertises **only** `http/1.1` via ALPN.
+    /// # ALPN advertisement
     ///
-    /// # Why not `h2`?
+    /// When `enable_h2_downstream` is **disabled** (the default), only
+    /// `http/1.1` is advertised. This preserves the historical behaviour:
+    /// the proxy cannot parse HTTP/2 frames on the client-facing side, so
+    /// advertising `h2` would cause modern clients to negotiate HTTP/2 and
+    /// then send frames the proxy interprets as binary garbage (502 errors).
     ///
-    /// The proxy does not yet implement HTTP/2 frame parsing on the
-    /// downstream (client-facing) side. If we advertise `h2` and a client
-    /// negotiates it (which modern Android/Chrome clients will, since they
-    /// prefer HTTP/2), the proxy receives HTTP/2 frames but tries to parse
-    /// them as HTTP/1.1 — producing binary garbage in the request line and
-    /// causing 502 Bad Gateway errors for every HTTPS site.
-    ///
-    /// By advertising only `http/1.1`, ALPN-aware clients are forced to use
-    /// HTTP/1.1 when talking to the proxy. The proxy can still use HTTP/2 on
-    /// the **upstream** side (via `reqwest`, which handles ALPN natively), so
-    /// performance is not impacted — only the client→proxy leg is HTTP/1.1.
-    ///
-    /// TODO(h2-downstream): integrate the `h2` crate to parse HTTP/2 frames
-    /// and multiplex streams on the client-facing side. Once that lands,
-    /// re-enable `h2` in the ALPN list (preferably **after** `http/1.1` so
-    /// the fallback is automatic). This is required for the gRPC interception
-    /// module ([`crate::grpc`]) to be fully functional, since gRPC mandates
-    /// HTTP/2.
+    /// When `enable_h2_downstream` is **enabled**, both `h2` and `http/1.1`
+    /// are advertised (with `h2` listed first so ALPN-aware clients prefer
+    /// HTTP/2). The proxy then parses HTTP/2 frames via the `h2` crate in
+    /// [`Self::handle_h2_connection`]. HTTP/1.1-only clients automatically
+    /// fall back to `http/1.1`. This is required for gRPC interception,
+    /// since gRPC mandates HTTP/2.
     fn create_tls_server_config(
         &self,
         cert: &crate::tls::GeneratedCert,
@@ -754,10 +746,14 @@ impl ProxyEngine {
             .with_single_cert(cert_chain, private_key)
             .map_err(|e| Error::Tls(format!("Failed to create TLS config: {}", e)))?;
 
-        // Advertise ONLY http/1.1. Advertising h2 here causes clients to
-        // negotiate HTTP/2, but the proxy can't parse HTTP/2 frames yet,
-        // resulting in binary garbage and 502 errors for all HTTPS sites.
-        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        if self.config.read().enable_h2_downstream {
+            // h2 first (preferred), http/1.1 as fallback for older clients.
+            config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        } else {
+            // Only http/1.1 — the proxy cannot parse HTTP/2 frames when the
+            // feature is disabled.
+            config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        }
 
         Ok(Arc::new(config))
     }
@@ -836,6 +832,120 @@ impl ProxyEngine {
                 return Ok(());
             }
         }
+    }
+
+    /// Handle an HTTP/2 connection on an already-established TLS stream.
+    ///
+    /// This is invoked by [`Self::handle_https_tunnel`] when ALPN negotiates
+    /// `h2`. The `h2` crate performs HTTP/2 framing, multiplexing, and flow
+    /// control on the TLS stream. Each accepted stream is converted into a
+    /// [`RequestData`] (with `http_version = "HTTP/2"`), run through the same
+    /// shared [`Pipeline`] used by HTTP/1.1 (rewrites, mocks, breakpoints,
+    /// upstream forwarding, traffic recording), and the resulting response is
+    /// written back over the same h2 stream via [`H2ResponseWriter`].
+    ///
+    /// Streams are handled in independent tasks so concurrent HTTP/2 requests
+    /// (and gRPC calls) are processed in parallel — the defining feature of
+    /// HTTP/2 multiplexing.
+    async fn handle_h2_connection(
+        &self,
+        tls_stream: tokio_rustls::server::TlsStream<TcpStream>,
+        host: &str,
+        port: u16,
+    ) -> crate::Result<()> {
+        // Perform the HTTP/2 server handshake (client preface + settings
+        // exchange) on the TLS stream. The h2 crate owns framing/flow-control
+        // from here on.
+        let mut h2_conn = match h2::server::handshake(tls_stream).await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("HTTP/2 handshake failed for {}:{}: {}", host, port, e);
+                return Err(Error::Proxy(format!("h2 handshake failed: {}", e)));
+            }
+        };
+
+        info!("HTTP/2 connection established for {}:{}", host, port);
+
+        // Accept streams until the client closes the connection. `Connection`
+        // implements `futures::Stream` (via the `stream` feature on the h2
+        // crate), so we drive it with `.next().await`.
+        while let Some(stream_result) = h2_conn.next().await {
+            let (request, mut respond) = match stream_result {
+                Ok(pair) => pair,
+                Err(e) => {
+                    warn!("h2 stream accept error for {}:{}: {}", host, port, e);
+                    continue;
+                }
+            };
+
+            // Snapshot all shared state by cloning the Arcs so the spawned
+            // per-stream task is `'static` and self-contained. The pipeline
+            // borrows from these local Arcs for the task's lifetime.
+            let traffic_store = self.traffic_store.clone();
+            let traffic_tx = self.traffic_tx.clone();
+            let http_client = self.http_client.clone();
+            let config = self.config.read().clone();
+            let mock_manager = self.mock_manager.get().cloned();
+            let rewrite_manager = self.rewrite_manager.get().cloned();
+            let breakpoint_manager = self.breakpoint_manager.get().cloned();
+            let throttle_manager = self.throttle_manager.get().cloned();
+            #[cfg(feature = "grpc")]
+            let grpc_manager = self.grpc_manager.get().cloned();
+            #[cfg(feature = "scripting")]
+            let script_runtime = self.script_runtime.get().cloned();
+            #[cfg(feature = "plugins")]
+            let plugin_manager = self.plugin_manager.get().cloned();
+            let extension_manager = self.extension_manager.get().cloned();
+            let metrics_collector = self.metrics_collector.get().cloned();
+            let memory_manager = self.memory_manager.get().cloned();
+
+            let host_owned = host.to_string();
+
+            tokio::spawn(async move {
+                // Build a fresh pipeline borrowing from the task-local Arcs.
+                let pipeline = Pipeline::new(
+                    config,
+                    http_client,
+                    &traffic_store,
+                    &traffic_tx,
+                    mock_manager.as_ref(),
+                    rewrite_manager.as_ref(),
+                    breakpoint_manager.as_ref(),
+                    throttle_manager.as_ref(),
+                    #[cfg(feature = "grpc")]
+                    grpc_manager.as_ref(),
+                    #[cfg(feature = "scripting")]
+                    script_runtime.as_ref(),
+                    #[cfg(feature = "plugins")]
+                    plugin_manager.as_ref(),
+                    extension_manager.as_ref(),
+                    metrics_collector.as_ref(),
+                    memory_manager.as_ref(),
+                );
+
+                if let Err(e) =
+                    process_h2_stream(request, &mut respond, &host_owned, port, &pipeline).await
+                {
+                    warn!(
+                        "h2 stream processing failed for {}:{}: {}",
+                        host_owned, port, e
+                    );
+                    // Best-effort reset so the client sees a clean stream error.
+                    respond.send_reset(h2::Reason::INTERNAL_ERROR);
+                }
+            });
+        }
+
+        // Drive the connection to completion so any in-flight response frames
+        // queued by spawned tasks are flushed before we return. `poll_closed`
+        // advances the internal h2 state machine (flushing queued frames)
+        // and returns Ready when the underlying connection is fully closed.
+        use std::future::poll_fn;
+        if let Err(e) = poll_fn(|cx| h2_conn.poll_closed(cx)).await {
+            debug!("h2 connection close for {}:{}: {}", host, port, e);
+        }
+        debug!("HTTP/2 connection closed for {}:{}", host, port);
+        Ok(())
     }
 
     /// Handle regular HTTP proxy request
@@ -1471,4 +1581,318 @@ fn build_pong_frame(payload: &[u8], mask: bool) -> Vec<u8> {
     }
 
     frame
+}
+
+// ─── HTTP/2 downstream support ──────────────────────────────────────────────
+
+/// Process a single HTTP/2 stream accepted from the client.
+///
+/// Converts the `h2::RecvStream` request into a protocol-agnostic
+/// [`RequestData`] (tagged `http_version = "HTTP/2"`), runs it through the
+/// shared [`Pipeline`] (rewrites, mocks, breakpoints, upstream forwarding,
+/// traffic recording), and writes the resulting response back to the client
+/// over the same h2 stream.
+///
+/// The pipeline serializes responses as HTTP/1.1 bytes (its existing
+/// contract); [`H2ResponseWriter`] buffers those bytes and [`H2ResponseWriter::finalize`]
+/// translates them back into HTTP/2 frames. This adapter lets the entire
+/// HTTP/1.1 interception pipeline be reused for HTTP/2 without duplication.
+async fn process_h2_stream(
+    request: http::Request<h2::RecvStream>,
+    respond: &mut h2::server::SendResponse<Bytes>,
+    fallback_host: &str,
+    port: u16,
+    pipeline: &Pipeline<'_>,
+) -> crate::Result<()> {
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+    let headers_map = request.headers().clone();
+
+    // Determine the target host: prefer the URI host, then the HTTP/2
+    // `:authority` pseudo-header, then the CONNECT target host passed in.
+    let host = uri
+        .host()
+        .map(|h| h.to_string())
+        .or_else(|| {
+            headers_map
+                .get(":authority")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| fallback_host.to_string());
+
+    // Path (including query string). HTTP/2 always sends `:path`.
+    let path = uri
+        .path_and_query()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_else(|| "/".to_string());
+
+    // Copy regular headers, skipping HTTP/2 pseudo-headers (names starting
+    // with `:`). Pseudo-headers have no place in the stored `RequestData`
+    // and would confuse the upstream reqwest client.
+    let mut headers = std::collections::HashMap::new();
+    let mut content_type = None;
+    for (name, value) in &headers_map {
+        let name_str = name.as_str();
+        if name_str.starts_with(':') {
+            continue;
+        }
+        let value_str = value.to_str().unwrap_or("");
+        if name_str.eq_ignore_ascii_case("content-type") {
+            content_type = Some(value_str.to_string());
+        }
+        headers.insert(name_str.to_string(), value_str.to_string());
+    }
+
+    // Read the full request body from the h2 stream, releasing flow-control
+    // capacity as we consume data so the client's window stays open for
+    // large uploads (otherwise the stream deadlocks).
+    let mut body_stream = request.into_body();
+    let mut body = Vec::new();
+    while let Some(chunk_result) = body_stream.data().await {
+        match chunk_result {
+            Ok(chunk) => {
+                let len = chunk.len();
+                body.extend_from_slice(&chunk);
+                let _ = body_stream.flow_control().release_capacity(len);
+            }
+            Err(e) => {
+                warn!("h2 recv data error for {}:{}: {}", host, port, e);
+                break;
+            }
+        }
+    }
+
+    let url = format!("https://{}{}", host, path);
+
+    let mut request_data = RequestData {
+        method: method.as_str().into(),
+        url,
+        host,
+        path,
+        headers,
+        body: if body.is_empty() { None } else { Some(body) },
+        content_type,
+        http_version: Some("HTTP/2".to_string()),
+    };
+
+    // Run the request through the shared pipeline. The pipeline writes the
+    // HTTP/1.1-serialized response into the H2ResponseWriter buffer; we then
+    // translate it back into h2 frames in `finalize`.
+    let mut writer = H2ResponseWriter::new();
+    let _outcome = pipeline
+        .process_request(&mut request_data, &mut writer)
+        .await?;
+
+    writer.finalize(respond).await
+}
+
+/// An [`tokio::io::AsyncWrite`] adapter that buffers the HTTP/1.1 response
+/// bytes produced by the pipeline and later translates them into HTTP/2
+/// frames via [`H2ResponseWriter::finalize`].
+///
+/// The pipeline's existing response path serializes responses as HTTP/1.1
+/// (`build_response_bytes`) and writes them via `AsyncWrite`. By buffering
+/// those bytes here and re-parsing them, the entire HTTP/1.1 interception
+/// pipeline (mocks, breakpoints, rewrites, upstream forwarding) is reused
+/// for HTTP/2 streams without any duplication of that logic.
+struct H2ResponseWriter {
+    buffer: Vec<u8>,
+}
+
+impl H2ResponseWriter {
+    fn new() -> Self {
+        Self { buffer: Vec::new() }
+    }
+
+    /// Translate the buffered HTTP/1.1 response into HTTP/2 frames and send
+    /// them to the client over the h2 stream.
+    async fn finalize(self, respond: &mut h2::server::SendResponse<Bytes>) -> crate::Result<()> {
+        // If the pipeline wrote nothing (e.g. upstream forwarding failed
+        // without producing a client-facing response — see the error branch
+        // of `process_request`), send a 502 so the h2 stream is closed
+        // cleanly rather than left hanging.
+        if self.buffer.is_empty() {
+            let resp = http::Response::builder()
+                .status(502)
+                .header("content-type", "text/plain")
+                .body(())
+                .map_err(|e| Error::Proxy(format!("h2 response build: {}", e)))?;
+            let mut stream = respond
+                .send_response(resp, false)
+                .map_err(|e| Error::Proxy(format!("h2 send_response: {}", e)))?;
+            stream
+                .send_data(
+                    Bytes::from_static(b"Bad Gateway (upstream forwarding failed)"),
+                    true,
+                )
+                .map_err(|e| Error::Proxy(format!("h2 send_data: {}", e)))?;
+            return Ok(());
+        }
+
+        let (status, headers, body) = parse_http1_response(&self.buffer);
+        let mut builder = http::Response::builder().status(status);
+        for (name, value) in &headers {
+            let lower = name.to_lowercase();
+            // Strip hop-by-hop and length headers — HTTP/2 frames carry their
+            // own length and forbid connection-specific headers
+            // (RFC 7540 §8.1.2.2).
+            if matches!(
+                lower.as_str(),
+                "content-length" | "transfer-encoding" | "connection" | "keep-alive"
+            ) {
+                continue;
+            }
+            if let (Ok(n), Ok(v)) = (
+                http::HeaderName::from_bytes(name.as_bytes()),
+                http::HeaderValue::from_str(value),
+            ) {
+                builder = builder.header(n, v);
+            }
+        }
+
+        let body_bytes = body.unwrap_or_default();
+        let end_stream = body_bytes.is_empty();
+        let resp = builder
+            .body(())
+            .map_err(|e| Error::Proxy(format!("h2 response build: {}", e)))?;
+        let mut stream = respond
+            .send_response(resp, end_stream)
+            .map_err(|e| Error::Proxy(format!("h2 send_response: {}", e)))?;
+        if !body_bytes.is_empty() {
+            stream
+                .send_data(Bytes::from(body_bytes), true)
+                .map_err(|e| Error::Proxy(format!("h2 send_data: {}", e)))?;
+        }
+        Ok(())
+    }
+}
+
+impl tokio::io::AsyncWrite for H2ResponseWriter {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.get_mut().buffer.extend_from_slice(buf);
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+/// Parse a minimal HTTP/1.1 response (as produced by the pipeline's
+/// `build_response_bytes`) into `(status_code, headers, body)`.
+///
+/// This is the inverse of `Pipeline::build_response_bytes` and is used to
+/// recover the structured response from the bytes buffered in
+/// [`H2ResponseWriter`] so it can be re-encoded as HTTP/2 frames.
+fn parse_http1_response(buf: &[u8]) -> (u16, Vec<(String, String)>, Option<Vec<u8>>) {
+    let header_end = buf.windows(4).position(|w| w == b"\r\n\r\n");
+    let (head, body) = match header_end {
+        Some(p) => (&buf[..p], Some(&buf[p + 4..])),
+        None => (buf, None),
+    };
+    let head_str = String::from_utf8_lossy(head);
+    let mut lines = head_str.lines();
+    let status_line = lines.next().unwrap_or("");
+    let parts: Vec<&str> = status_line.split_whitespace().collect();
+    let status: u16 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(502);
+
+    let mut headers = Vec::new();
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            headers.push((k.trim().to_string(), v.trim().to_string()));
+        }
+    }
+    (status, headers, body.map(|b| b.to_vec()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_http1_response_basic() {
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello";
+        let (status, headers, body) = parse_http1_response(raw);
+        assert_eq!(status, 200);
+        assert_eq!(headers.len(), 2);
+        assert_eq!(
+            headers.iter().find(|(k, _)| k == "Content-Type"),
+            Some(&("Content-Type".to_string(), "text/plain".to_string()))
+        );
+        assert_eq!(body, Some(b"hello".to_vec()));
+    }
+
+    #[test]
+    fn test_parse_http1_response_no_body() {
+        let raw = b"HTTP/1.1 204 No Content\r\n\r\n";
+        let (status, headers, body) = parse_http1_response(raw);
+        assert_eq!(status, 204);
+        assert!(headers.is_empty());
+        assert_eq!(body, Some(Vec::new()));
+    }
+
+    #[test]
+    fn test_parse_http1_response_error_status() {
+        let raw = b"HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\n\r\nBad Gateway";
+        let (status, _, body) = parse_http1_response(raw);
+        assert_eq!(status, 502);
+        assert_eq!(body, Some(b"Bad Gateway".to_vec()));
+    }
+
+    #[test]
+    fn test_parse_http1_response_no_header_terminator() {
+        // No \r\n\r\n — entire buffer is treated as head, body is None.
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain";
+        let (status, headers, body) = parse_http1_response(raw);
+        assert_eq!(status, 200);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(body, None);
+    }
+
+    #[test]
+    fn test_parse_http1_response_empty_buffer() {
+        let (status, headers, body) = parse_http1_response(b"");
+        assert_eq!(status, 502); // Default fallback
+        assert!(headers.is_empty());
+        assert_eq!(body, None);
+    }
+
+    #[test]
+    fn test_h2_response_writer_buffers_writes() {
+        use tokio::io::AsyncWriteExt;
+
+        let mut writer = H2ResponseWriter::new();
+        // Simulate the pipeline writing an HTTP/1.1 response.
+        let data = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"ok\":true}";
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            writer.write_all(data).await.unwrap();
+        });
+
+        // The buffer should contain exactly what was written.
+        assert_eq!(writer.buffer, data);
+    }
+
+    #[test]
+    fn test_config_enable_h2_downstream_default_false() {
+        let config = crate::config::ProxyConfig::default();
+        assert!(!config.enable_h2_downstream);
+    }
 }

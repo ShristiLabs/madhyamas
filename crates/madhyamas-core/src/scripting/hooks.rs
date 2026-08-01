@@ -232,6 +232,7 @@ impl ScriptResponse {
             body: Some(self.body.as_bytes().to_vec()),
             content_type: self.headers.get("Content-Type").cloned(),
             duration_ms: 0,
+            http_version: None,
         }
     }
 }

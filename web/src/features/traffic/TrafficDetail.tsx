@@ -180,6 +180,16 @@ export function TrafficDetail({ entry }: TrafficDetailProps) {
               </div>
             </div>
 
+            {/* HTTP Version */}
+            {entry.request.http_version && (
+              <div>
+                <h4 className="font-semibold mb-2 text-sm">HTTP Version</h4>
+                <div className="font-mono text-sm bg-muted p-2 rounded-md">
+                  {entry.request.http_version}
+                </div>
+              </div>
+            )}
+
             {/* Request Headers Table */}
             <div>
               <h4 className="font-semibold mb-2 text-sm">Headers</h4>
@@ -225,6 +235,16 @@ export function TrafficDetail({ entry }: TrafficDetailProps) {
                     </span>
                   </div>
                 </div>
+
+                {/* HTTP Version (response) */}
+                {entry.response.http_version && (
+                  <div>
+                    <h4 className="font-semibold mb-2 text-sm">HTTP Version</h4>
+                    <div className="font-mono text-sm bg-muted p-2 rounded-md">
+                      {entry.response.http_version}
+                    </div>
+                  </div>
+                )}
 
                 {/* Response Headers Table */}
                 <div>
@@ -905,7 +925,7 @@ function generateHAR(entry: TrafficEntry): string {
           request: {
             method: entry.request.method,
             url: entry.request.url,
-            httpVersion: "HTTP/1.1",
+            httpVersion: entry.request.http_version || "HTTP/1.1",
             headers: Object.entries(entry.request.headers).map(
               ([name, value]) => ({
                 name,
@@ -926,7 +946,7 @@ function generateHAR(entry: TrafficEntry): string {
             ? {
                 status: entry.response.status_code,
                 statusText: entry.response.status_message || "",
-                httpVersion: "HTTP/1.1",
+                httpVersion: entry.response.http_version || "HTTP/1.1",
                 headers: Object.entries(entry.response.headers).map(
                   ([name, value]) => ({
                     name,

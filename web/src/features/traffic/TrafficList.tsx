@@ -273,7 +273,8 @@ const TrafficListItem = memo(function TrafficListItem({
   const time = new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
   const size = entry.response ? formatSize(calculateSize(entry)) : "—"
   const duration = entry.response ? `${entry.response.duration_ms}ms` : "—"
-  const protocol = entry.request.url.startsWith("https://") ? "HTTPS" : "HTTP"
+  const protocol = entry.request.http_version
+    || (entry.request.url.startsWith("https://") ? "HTTPS" : "HTTP")
 
   return (
     <div

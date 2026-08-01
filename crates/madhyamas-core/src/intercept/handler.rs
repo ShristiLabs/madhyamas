@@ -241,6 +241,7 @@ async fn build_mock_response(mock_response: &super::MockResponse) -> ResponseDat
         body: mock_response.body_bytes(),
         content_type: mock_response.headers.get("Content-Type").cloned(),
         duration_ms: mock_response.delay_ms.unwrap_or(0),
+        http_version: None,
     }
 }
 
@@ -267,6 +268,7 @@ fn breakpoint_decision_to_action(decision: BreakpointDecision) -> InterceptActio
             body: body.map(|b| b.into_bytes()),
             content_type: Some("application/json".to_string()),
             duration_ms: 0,
+            http_version: None,
         }),
     }
 }

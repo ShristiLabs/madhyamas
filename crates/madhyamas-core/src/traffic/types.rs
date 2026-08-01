@@ -83,12 +83,38 @@ pub struct RequestData {
     pub body: Option<Vec<u8>>,
     /// Content type
     pub content_type: Option<String>,
+    /// HTTP protocol version used for this request (e.g. `"HTTP/1.1"`,
+    /// `"HTTP/2"`). Populated by the proxy engine from the negotiated ALPN
+    /// protocol. Defaults to `None` for backwards compatibility with older
+    /// stored entries; the storage layer treats `None` as `"HTTP/1.1"`.
+    #[serde(default)]
+    pub http_version: Option<String>,
 }
 
 impl RequestData {
     /// Total size of the request in bytes, computed from headers + body.
     pub fn size(&self) -> usize {
         headers_size(&self.headers) + self.body.as_ref().map(|b| b.len()).unwrap_or(0)
+    }
+
+    /// Return the HTTP version label, defaulting to `"HTTP/1.1"` when unset.
+    pub fn http_version_label(&self) -> &str {
+        self.http_version.as_deref().unwrap_or("HTTP/1.1")
+    }
+}
+
+impl Default for RequestData {
+    fn default() -> Self {
+        Self {
+            method: HttpMethod::Get,
+            url: String::new(),
+            host: String::new(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            content_type: None,
+            http_version: None,
+        }
     }
 }
 
@@ -111,12 +137,21 @@ pub struct ResponseData {
     pub content_type: Option<String>,
     /// Response time in milliseconds
     pub duration_ms: u64,
+    /// HTTP protocol version of the response (e.g. `"HTTP/1.1"`, `"HTTP/2"`).
+    /// Defaults to `None`; the storage layer treats `None` as `"HTTP/1.1"`.
+    #[serde(default)]
+    pub http_version: Option<String>,
 }
 
 impl ResponseData {
     /// Total size of the response in bytes, computed from headers + body.
     pub fn size(&self) -> usize {
         headers_size(&self.headers) + self.body.as_ref().map(|b| b.len()).unwrap_or(0)
+    }
+
+    /// Return the HTTP version label, defaulting to `"HTTP/1.1"` when unset.
+    pub fn http_version_label(&self) -> &str {
+        self.http_version.as_deref().unwrap_or("HTTP/1.1")
     }
 }
 
@@ -370,6 +405,7 @@ mod tests {
                 headers: headers.clone(),
                 body: Some(b"{\"key\":\"value\"}".to_vec()),
                 content_type: Some("application/json".to_string()),
+                http_version: None,
             };
 
             assert_eq!(request.method, HttpMethod::Post);
@@ -393,6 +429,7 @@ mod tests {
                 headers: HashMap::new(),
                 body: None,
                 content_type: None,
+                http_version: None,
             };
 
             let json = serde_json::to_string(&request).unwrap();
@@ -433,6 +470,7 @@ mod tests {
                 body: Some(b"{\"success\":true}".to_vec()),
                 content_type: Some("application/json".to_string()),
                 duration_ms: 150,
+                http_version: None,
             };
 
             assert_eq!(response.status_code, 200);
@@ -449,11 +487,110 @@ mod tests {
                 body: None,
                 content_type: None,
                 duration_ms: 50,
+                http_version: None,
             };
 
             let json = serde_json::to_string(&response).unwrap();
             assert!(json.contains("\"status_code\":404"));
             assert!(json.contains("\"duration_ms\":50"));
+        }
+    }
+
+    mod http_version_tests {
+        use super::*;
+
+        #[test]
+        fn test_request_http_version_label_default() {
+            let request = RequestData {
+                method: HttpMethod::Get,
+                url: "https://example.com/".to_string(),
+                host: "example.com".to_string(),
+                path: "/".to_string(),
+                headers: HashMap::new(),
+                body: None,
+                content_type: None,
+                http_version: None,
+            };
+            assert_eq!(request.http_version_label(), "HTTP/1.1");
+        }
+
+        #[test]
+        fn test_request_http_version_label_h2() {
+            let request = RequestData {
+                method: HttpMethod::Get,
+                url: "https://example.com/".to_string(),
+                host: "example.com".to_string(),
+                path: "/".to_string(),
+                headers: HashMap::new(),
+                body: None,
+                content_type: None,
+                http_version: Some("HTTP/2".to_string()),
+            };
+            assert_eq!(request.http_version_label(), "HTTP/2");
+        }
+
+        #[test]
+        fn test_response_http_version_label_default() {
+            let response = ResponseData {
+                status_code: 200,
+                status_message: None,
+                headers: HashMap::new(),
+                body: None,
+                content_type: None,
+                duration_ms: 0,
+                http_version: None,
+            };
+            assert_eq!(response.http_version_label(), "HTTP/1.1");
+        }
+
+        #[test]
+        fn test_response_http_version_label_h2() {
+            let response = ResponseData {
+                status_code: 200,
+                status_message: None,
+                headers: HashMap::new(),
+                body: None,
+                content_type: None,
+                duration_ms: 0,
+                http_version: Some("HTTP/2".to_string()),
+            };
+            assert_eq!(response.http_version_label(), "HTTP/2");
+        }
+
+        #[test]
+        fn test_request_http_version_serde_roundtrip() {
+            let request = RequestData {
+                method: HttpMethod::Post,
+                url: "https://api.example.com/graphql".to_string(),
+                host: "api.example.com".to_string(),
+                path: "/graphql".to_string(),
+                headers: HashMap::new(),
+                body: None,
+                content_type: Some("application/grpc".to_string()),
+                http_version: Some("HTTP/2".to_string()),
+            };
+            let json = serde_json::to_string(&request).unwrap();
+            assert!(json.contains("\"http_version\":\"HTTP/2\""));
+
+            let decoded: RequestData = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded.http_version, Some("HTTP/2".to_string()));
+        }
+
+        #[test]
+        fn test_request_http_version_missing_defaults_to_none() {
+            // JSON without http_version should deserialize to None (serde default).
+            // `body` is required by the custom deserializer, so include it.
+            let json = r#"{
+                "method": "GET",
+                "url": "https://example.com/",
+                "host": "example.com",
+                "path": "/",
+                "headers": {},
+                "body": null
+            }"#;
+            let request: RequestData = serde_json::from_str(json).unwrap();
+            assert_eq!(request.http_version, None);
+            assert_eq!(request.http_version_label(), "HTTP/1.1");
         }
     }
 
@@ -549,6 +686,7 @@ mod tests {
                 headers: HashMap::new(),
                 body: Some(b"request body".to_vec()),
                 content_type: None,
+                http_version: None,
             }
         }
 
@@ -560,6 +698,7 @@ mod tests {
                 body: Some(b"response body".to_vec()),
                 content_type: Some("application/json".to_string()),
                 duration_ms: 100,
+                http_version: None,
             }
         }
 
@@ -599,6 +738,7 @@ mod tests {
                 headers: HashMap::new(),
                 body: None,
                 content_type: None,
+                http_version: None,
             };
             let entry = TrafficEntry::new("session-1", request);
 
@@ -615,6 +755,7 @@ mod tests {
                 headers: HashMap::new(),
                 body: None,
                 content_type: None,
+                http_version: None,
             };
             let https_entry = TrafficEntry::new("session-1", https_request);
             assert!(https_entry.is_https());
@@ -627,6 +768,7 @@ mod tests {
                 headers: HashMap::new(),
                 body: None,
                 content_type: None,
+                http_version: None,
             };
             let http_entry = TrafficEntry::new("session-2", http_request);
             assert!(!http_entry.is_https());

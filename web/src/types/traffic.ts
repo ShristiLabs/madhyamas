@@ -6,6 +6,8 @@ export interface RequestData {
   headers: Record<string, string>
   body?: string
   content_type?: string
+  /** HTTP protocol version negotiated with the proxy (e.g. "HTTP/1.1", "HTTP/2"). */
+  http_version?: string
 }
 
 export interface ResponseData {
@@ -15,6 +17,8 @@ export interface ResponseData {
   body?: string
   content_type?: string
   duration_ms: number
+  /** HTTP protocol version of the response (e.g. "HTTP/1.1", "HTTP/2"). */
+  http_version?: string
 }
 
 export interface TrafficEntry {

@@ -122,6 +122,7 @@ impl TrafficStore {
                 modified INTEGER DEFAULT 0,
                 notes TEXT,
                 is_passthrough INTEGER DEFAULT 0,
+                http_version TEXT,
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
             );
 
@@ -133,6 +134,7 @@ impl TrafficStore {
                 body BLOB,
                 content_type TEXT,
                 duration_ms INTEGER,
+                http_version TEXT,
                 FOREIGN KEY (request_id) REFERENCES requests(id)
             );
 
@@ -198,10 +200,42 @@ impl TrafficStore {
             !cols.iter().any(|c| c == "is_passthrough")
         };
         if needs_migration {
-            conn.execute_batch(
-                "ALTER TABLE requests ADD COLUMN is_passthrough INTEGER DEFAULT 0;",
-            )
-            .map_err(Error::Database)?;
+            conn.execute_batch("ALTER TABLE requests ADD COLUMN is_passthrough INTEGER DEFAULT 0;")
+                .map_err(Error::Database)?;
+        }
+
+        // Migration: add http_version column to requests/responses tables
+        // for older databases created before HTTP/2 downstream support.
+        let needs_req_h2: bool = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(requests)")
+                .map_err(Error::Database)?;
+            let cols: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(Error::Database)?
+                .filter_map(|r| r.ok())
+                .collect();
+            !cols.iter().any(|c| c == "http_version")
+        };
+        if needs_req_h2 {
+            conn.execute_batch("ALTER TABLE requests ADD COLUMN http_version TEXT;")
+                .map_err(Error::Database)?;
+        }
+
+        let needs_resp_h2: bool = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(responses)")
+                .map_err(Error::Database)?;
+            let cols: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(Error::Database)?
+                .filter_map(|r| r.ok())
+                .collect();
+            !cols.iter().any(|c| c == "http_version")
+        };
+        if needs_resp_h2 {
+            conn.execute_batch("ALTER TABLE responses ADD COLUMN http_version TEXT;")
+                .map_err(Error::Database)?;
         }
 
         Ok(())
@@ -298,8 +332,8 @@ impl TrafficStore {
         let content_type = entry.request.content_type.as_ref();
 
         conn.execute(
-            "INSERT OR REPLACE INTO requests (id, session_id, method, url, host, path, headers, body, content_type, timestamp, modified, notes, is_passthrough)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT OR REPLACE INTO requests (id, session_id, method, url, host, path, headers, body, content_type, timestamp, modified, notes, is_passthrough, http_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 entry.id,
                 entry.session_id,
@@ -313,7 +347,8 @@ impl TrafficStore {
                 entry.timestamp.timestamp(),
                 entry.modified as i32,
                 entry.notes,
-                entry.is_passthrough as i32
+                entry.is_passthrough as i32,
+                entry.request.http_version.as_deref()
             ]
         ).map_err(Error::Database)?;
 
@@ -346,8 +381,8 @@ impl TrafficStore {
         let content_type = response.content_type.as_ref();
 
         conn.execute(
-            "INSERT OR REPLACE INTO responses (request_id, status_code, status_message, headers, body, content_type, duration_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR REPLACE INTO responses (request_id, status_code, status_message, headers, body, content_type, duration_ms, http_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 request_id,
                 response.status_code,
@@ -355,7 +390,8 @@ impl TrafficStore {
                 headers,
                 body,
                 content_type,
-                response.duration_ms as i64
+                response.duration_ms as i64,
+                response.http_version.as_deref()
             ]
         ).map_err(Error::Database)?;
 
@@ -377,8 +413,8 @@ impl TrafficStore {
 
         let mut sql = String::from(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes, r.is_passthrough,
-                    rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms
+                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version,
+                    rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms, rs.http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
              WHERE r.session_id = ?1"
@@ -442,7 +478,10 @@ impl TrafficStore {
         }
 
         if let Some(passthrough) = filter.is_passthrough {
-            sql.push_str(&format!(" AND r.is_passthrough = ?{}", bind_params.len() + 1));
+            sql.push_str(&format!(
+                " AND r.is_passthrough = ?{}",
+                bind_params.len() + 1
+            ));
             bind_params.push(Box::new(passthrough as i32));
         }
 
@@ -476,12 +515,14 @@ impl TrafficStore {
                 let notes: Option<String> = row.get(11)?;
                 let is_passthrough: i32 = row.get(12)?;
 
-                let status_code: Option<i32> = row.get(13)?;
-                let status_message: Option<String> = row.get(14)?;
-                let resp_headers_json: Option<String> = row.get(15)?;
-                let resp_body: Option<Vec<u8>> = row.get(16)?;
-                let resp_content_type: Option<String> = row.get(17)?;
-                let duration_ms: Option<i64> = row.get(18)?;
+                let req_http_version: Option<String> = row.get(13)?;
+                let status_code: Option<i32> = row.get(14)?;
+                let status_message: Option<String> = row.get(15)?;
+                let resp_headers_json: Option<String> = row.get(16)?;
+                let resp_body: Option<Vec<u8>> = row.get(17)?;
+                let resp_content_type: Option<String> = row.get(18)?;
+                let duration_ms: Option<i64> = row.get(19)?;
+                let resp_http_version: Option<String> = row.get(20)?;
 
                 let headers: std::collections::HashMap<String, String> =
                     serde_json::from_str(&headers_json).unwrap_or_default();
@@ -494,6 +535,7 @@ impl TrafficStore {
                     headers,
                     body,
                     content_type,
+                    http_version: req_http_version,
                 };
 
                 let response = status_code.map(|code| {
@@ -509,6 +551,7 @@ impl TrafficStore {
                         body: resp_body,
                         content_type: resp_content_type,
                         duration_ms: duration_ms.unwrap_or(0) as u64,
+                        http_version: resp_http_version,
                     }
                 });
 
@@ -540,8 +583,8 @@ impl TrafficStore {
 
         let mut stmt = conn.prepare(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes, r.is_passthrough,
-                    rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms
+                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version,
+                    rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms, rs.http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
              WHERE r.id = ?1"
@@ -563,12 +606,14 @@ impl TrafficStore {
                 let notes: Option<String> = row.get(11)?;
                 let is_passthrough: i32 = row.get(12)?;
 
-                let status_code: Option<i32> = row.get(13)?;
-                let status_message: Option<String> = row.get(14)?;
-                let resp_headers_json: Option<String> = row.get(15)?;
-                let resp_body: Option<Vec<u8>> = row.get(16)?;
-                let resp_content_type: Option<String> = row.get(17)?;
-                let duration_ms: Option<i64> = row.get(18)?;
+                let req_http_version: Option<String> = row.get(13)?;
+                let status_code: Option<i32> = row.get(14)?;
+                let status_message: Option<String> = row.get(15)?;
+                let resp_headers_json: Option<String> = row.get(16)?;
+                let resp_body: Option<Vec<u8>> = row.get(17)?;
+                let resp_content_type: Option<String> = row.get(18)?;
+                let duration_ms: Option<i64> = row.get(19)?;
+                let resp_http_version: Option<String> = row.get(20)?;
 
                 let headers: std::collections::HashMap<String, String> =
                     serde_json::from_str(&headers_json).unwrap_or_default();
@@ -581,6 +626,7 @@ impl TrafficStore {
                     headers,
                     body,
                     content_type,
+                    http_version: req_http_version,
                 };
 
                 let response = status_code.map(|code| {
@@ -596,6 +642,7 @@ impl TrafficStore {
                         body: resp_body,
                         content_type: resp_content_type,
                         duration_ms: duration_ms.unwrap_or(0) as u64,
+                        http_version: resp_http_version,
                     }
                 });
 
@@ -706,7 +753,7 @@ impl TrafficStore {
                         "request": {
                             "method": entry.request.method.to_string(),
                             "url": entry.request.url,
-                            "httpVersion": "HTTP/1.1",
+                            "httpVersion": entry.request.http_version_label(),
                             "headers": entry.request.headers.iter().map(|(k, v)| {
                                 serde_json::json!({"name": k, "value": v})
                             }).collect::<Vec<_>>(),
@@ -716,7 +763,7 @@ impl TrafficStore {
                             serde_json::json!({
                                 "status": resp.status_code,
                                 "statusText": resp.status_message.clone().unwrap_or_default(),
-                                "httpVersion": "HTTP/1.1",
+                                "httpVersion": resp.http_version_label(),
                                 "headers": resp.headers.iter().map(|(k, v)| {
                                     serde_json::json!({"name": k, "value": v})
                                 }).collect::<Vec<_>>(),
@@ -834,8 +881,8 @@ impl TrafficStore {
 
         let mut stmt = conn.prepare(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes, r.is_passthrough,
-                    rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms
+                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version,
+                    rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms, rs.http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
              WHERE r.session_id = ?1
@@ -858,12 +905,14 @@ impl TrafficStore {
                 let notes: Option<String> = row.get(11)?;
                 let is_passthrough: i32 = row.get(12)?;
 
-                let status_code: Option<i32> = row.get(13)?;
-                let status_message: Option<String> = row.get(14)?;
-                let resp_headers_json: Option<String> = row.get(15)?;
-                let resp_body: Option<Vec<u8>> = row.get(16)?;
-                let resp_content_type: Option<String> = row.get(17)?;
-                let duration_ms: Option<i64> = row.get(18)?;
+                let req_http_version: Option<String> = row.get(13)?;
+                let status_code: Option<i32> = row.get(14)?;
+                let status_message: Option<String> = row.get(15)?;
+                let resp_headers_json: Option<String> = row.get(16)?;
+                let resp_body: Option<Vec<u8>> = row.get(17)?;
+                let resp_content_type: Option<String> = row.get(18)?;
+                let duration_ms: Option<i64> = row.get(19)?;
+                let resp_http_version: Option<String> = row.get(20)?;
 
                 let headers: std::collections::HashMap<String, String> =
                     serde_json::from_str(&headers_json).unwrap_or_default();
@@ -876,6 +925,7 @@ impl TrafficStore {
                     headers,
                     body,
                     content_type,
+                    http_version: req_http_version,
                 };
 
                 let response = status_code.map(|code| {
@@ -891,6 +941,7 @@ impl TrafficStore {
                         body: resp_body,
                         content_type: resp_content_type,
                         duration_ms: duration_ms.unwrap_or(0) as u64,
+                        http_version: resp_http_version,
                     }
                 });
 

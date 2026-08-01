@@ -318,7 +318,8 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse
         "intercept_https": config.intercept_https,
         "max_requests": config.max_requests,
         "max_body_size": config.max_body_size,
-        "passthrough_domains": config.passthrough_domains
+        "passthrough_domains": config.passthrough_domains,
+        "enable_h2_downstream": config.enable_h2_downstream
     }))
 }
 
@@ -353,6 +354,11 @@ pub struct PatchConfigRequest {
     pub max_body_size: Option<usize>,
     /// Domains to exclude from TLS interception (SSL passthrough)
     pub passthrough_domains: Option<Vec<String>>,
+    /// Enable HTTP/2 downstream (client-facing) support via ALPN h2 negotiation.
+    /// When enabled, the proxy advertises both h2 and http/1.1 and can parse
+    /// HTTP/2 frames, enabling gRPC interception. Requires restart to take
+    /// effect (ALPN advertisement is set at TLS config creation time).
+    pub enable_h2_downstream: Option<bool>,
 }
 
 /// Update runtime configuration fields
@@ -402,6 +408,12 @@ pub async fn patch_config(
         cleaned.dedup();
         config.passthrough_domains = cleaned;
     }
+    if let Some(v) = req.enable_h2_downstream {
+        config.enable_h2_downstream = v;
+        // Note: the ALPN advertisement is baked into the TLS ServerConfig at
+        // creation time. The change takes effect on new TLS handshakes after
+        // the config is re-read. Existing connections are unaffected.
+    }
 
     // Snapshot the updated config for the response (still holding the lock).
     let resp = serde_json::json!({
@@ -413,7 +425,8 @@ pub async fn patch_config(
         "max_requests": config.max_requests,
         "max_body_size": config.max_body_size,
         "verbose": config.verbose,
-        "passthrough_domains": config.passthrough_domains
+        "passthrough_domains": config.passthrough_domains,
+        "enable_h2_downstream": config.enable_h2_downstream
     });
 
     // Persist the updated config to disk so it survives restarts.
