@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Search, AlertCircle, Clock, Globe, X } from "lucide-react";
+import { Search, AlertCircle, Clock, Globe, X, ShieldOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { AddFilterPopover, FilterChip } from "@/features/traffic/FilterBuilder";
@@ -57,6 +57,18 @@ const QUICK_FILTERS: QuickFilterDef[] = [
       value: "/api/",
     },
     description: "API endpoints",
+  },
+  {
+    id: "qf-passthrough",
+    label: "Passthrough",
+    icon: ShieldOff,
+    activeFilter: {
+      id: "qf-passthrough",
+      fieldId: "is_passthrough",
+      operator: "eq",
+      value: "true",
+    },
+    description: "SSL passthrough (not intercepted)",
   },
 ];
 

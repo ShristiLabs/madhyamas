@@ -51,6 +51,13 @@ pub struct ProxyConfig {
     /// Maximum body size to capture in bytes (default 20 MB).
     /// Bodies larger than this are truncated when stored.
     pub max_body_size: usize,
+
+    /// Domains to exclude from TLS interception (SSL passthrough).
+    /// Connections to these hosts are tunneled directly without decryption.
+    /// The traffic is still listed but flagged as passthrough.
+    /// Supports suffix matching (e.g. "example.com" matches "api.example.com").
+    #[serde(default)]
+    pub passthrough_domains: Vec<String>,
 }
 
 impl Default for ProxyConfig {
@@ -68,6 +75,7 @@ impl Default for ProxyConfig {
             max_requests: 10000,
             intercept_https: true,
             max_body_size: 20 * 1024 * 1024, // 20 MB
+            passthrough_domains: Vec::new(),
         }
     }
 }
@@ -182,6 +190,54 @@ impl ProxyConfig {
         Ok(config)
     }
 
+    /// Get the default config file path (`~/.madhyamas/config.json`).
+    pub fn config_file_path() -> PathBuf {
+        get_data_dir().join("config.json")
+    }
+
+    /// Save the configuration to a file as JSON.
+    pub fn save_to_file(&self, path: &std::path::Path) -> crate::Result<()> {
+        // Ensure the parent directory exists
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| crate::Error::Config(format!("Failed to create config directory: {}", e)))?;
+        }
+
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| crate::Error::Config(format!("Failed to serialize config: {}", e)))?;
+
+        // Write atomically: write to a temp file then rename, so a crash
+        // during write doesn't corrupt the existing config.
+        let tmp_path = path.with_extension("json.tmp");
+        std::fs::write(&tmp_path, json)
+            .map_err(|e| crate::Error::Config(format!("Failed to write config file: {}", e)))?;
+        std::fs::rename(&tmp_path, path)
+            .map_err(|e| crate::Error::Config(format!("Failed to rename config file: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Save to the default config file path (`~/.madhyamas/config.json`).
+    pub fn save(&self) -> crate::Result<()> {
+        self.save_to_file(&Self::config_file_path())
+    }
+
+    /// Load the persisted config from the default path, if it exists.
+    /// Returns `None` if the file doesn't exist (first run or never saved).
+    pub fn load_saved() -> Option<Self> {
+        let path = Self::config_file_path();
+        if !path.exists() {
+            return None;
+        }
+        match Self::from_file(path.to_str()?) {
+            Ok(config) => Some(config),
+            Err(e) => {
+                tracing::warn!("Failed to load saved config, using defaults: {}", e);
+                None
+            }
+        }
+    }
+
     /// Get the proxy address
     pub fn proxy_addr(&self) -> String {
         format!("{}:{}", self.host, self.proxy_port)
@@ -209,5 +265,15 @@ impl ProxyConfig {
     /// Get the path to the CA private key
     pub fn ca_key_path(&self) -> PathBuf {
         PathBuf::from(&self.cert_path).join("madhyamas-ca-key.pem")
+    }
+
+    /// Check if a host should be SSL-passed-through (not intercepted).
+    /// Uses suffix matching so "example.com" matches "api.example.com".
+    pub fn should_passthrough(&self, host: &str) -> bool {
+        let host = host.trim_end_matches('.');
+        self.passthrough_domains.iter().any(|d| {
+            let d = d.trim().trim_end_matches('.');
+            !d.is_empty() && (host == d || host.ends_with(&format!(".{}", d)))
+        })
     }
 }

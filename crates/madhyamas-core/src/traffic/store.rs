@@ -121,6 +121,7 @@ impl TrafficStore {
                 timestamp INTEGER,
                 modified INTEGER DEFAULT 0,
                 notes TEXT,
+                is_passthrough INTEGER DEFAULT 0,
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
             );
 
@@ -182,6 +183,26 @@ impl TrafficStore {
             "#,
         )
         .map_err(Error::Database)?;
+
+        // Migration: add is_passthrough column to existing requests tables
+        // that were created before this feature existed.
+        let needs_migration: bool = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(requests)")
+                .map_err(Error::Database)?;
+            let cols: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(Error::Database)?
+                .filter_map(|r| r.ok())
+                .collect();
+            !cols.iter().any(|c| c == "is_passthrough")
+        };
+        if needs_migration {
+            conn.execute_batch(
+                "ALTER TABLE requests ADD COLUMN is_passthrough INTEGER DEFAULT 0;",
+            )
+            .map_err(Error::Database)?;
+        }
 
         Ok(())
     }
@@ -277,8 +298,8 @@ impl TrafficStore {
         let content_type = entry.request.content_type.as_ref();
 
         conn.execute(
-            "INSERT OR REPLACE INTO requests (id, session_id, method, url, host, path, headers, body, content_type, timestamp, modified, notes)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT OR REPLACE INTO requests (id, session_id, method, url, host, path, headers, body, content_type, timestamp, modified, notes, is_passthrough)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 entry.id,
                 entry.session_id,
@@ -291,7 +312,8 @@ impl TrafficStore {
                 content_type,
                 entry.timestamp.timestamp(),
                 entry.modified as i32,
-                entry.notes
+                entry.notes,
+                entry.is_passthrough as i32
             ]
         ).map_err(Error::Database)?;
 
@@ -355,7 +377,7 @@ impl TrafficStore {
 
         let mut sql = String::from(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes,
+                    r.timestamp, r.modified, r.notes, r.is_passthrough,
                     rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
@@ -419,6 +441,11 @@ impl TrafficStore {
             bind_params.push(Box::new(format!("%Cookie%{}%", cookie)));
         }
 
+        if let Some(passthrough) = filter.is_passthrough {
+            sql.push_str(&format!(" AND r.is_passthrough = ?{}", bind_params.len() + 1));
+            bind_params.push(Box::new(passthrough as i32));
+        }
+
         sql.push_str(" ORDER BY r.timestamp DESC");
 
         if let Some(limit) = filter.limit {
@@ -447,13 +474,14 @@ impl TrafficStore {
                 let timestamp_i64: i64 = row.get(9)?;
                 let modified: i32 = row.get(10)?;
                 let notes: Option<String> = row.get(11)?;
+                let is_passthrough: i32 = row.get(12)?;
 
-                let status_code: Option<i32> = row.get(12)?;
-                let status_message: Option<String> = row.get(13)?;
-                let resp_headers_json: Option<String> = row.get(14)?;
-                let resp_body: Option<Vec<u8>> = row.get(15)?;
-                let resp_content_type: Option<String> = row.get(16)?;
-                let duration_ms: Option<i64> = row.get(17)?;
+                let status_code: Option<i32> = row.get(13)?;
+                let status_message: Option<String> = row.get(14)?;
+                let resp_headers_json: Option<String> = row.get(15)?;
+                let resp_body: Option<Vec<u8>> = row.get(16)?;
+                let resp_content_type: Option<String> = row.get(17)?;
+                let duration_ms: Option<i64> = row.get(18)?;
 
                 let headers: std::collections::HashMap<String, String> =
                     serde_json::from_str(&headers_json).unwrap_or_default();
@@ -496,6 +524,7 @@ impl TrafficStore {
                     notes,
                     request_size,
                     response_size,
+                    is_passthrough: is_passthrough != 0,
                 })
             })
             .map_err(Error::Database)?
@@ -511,7 +540,7 @@ impl TrafficStore {
 
         let mut stmt = conn.prepare(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes,
+                    r.timestamp, r.modified, r.notes, r.is_passthrough,
                     rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
@@ -532,13 +561,14 @@ impl TrafficStore {
                 let timestamp_i64: i64 = row.get(9)?;
                 let modified: i32 = row.get(10)?;
                 let notes: Option<String> = row.get(11)?;
+                let is_passthrough: i32 = row.get(12)?;
 
-                let status_code: Option<i32> = row.get(12)?;
-                let status_message: Option<String> = row.get(13)?;
-                let resp_headers_json: Option<String> = row.get(14)?;
-                let resp_body: Option<Vec<u8>> = row.get(15)?;
-                let resp_content_type: Option<String> = row.get(16)?;
-                let duration_ms: Option<i64> = row.get(17)?;
+                let status_code: Option<i32> = row.get(13)?;
+                let status_message: Option<String> = row.get(14)?;
+                let resp_headers_json: Option<String> = row.get(15)?;
+                let resp_body: Option<Vec<u8>> = row.get(16)?;
+                let resp_content_type: Option<String> = row.get(17)?;
+                let duration_ms: Option<i64> = row.get(18)?;
 
                 let headers: std::collections::HashMap<String, String> =
                     serde_json::from_str(&headers_json).unwrap_or_default();
@@ -581,6 +611,7 @@ impl TrafficStore {
                     notes,
                     request_size,
                     response_size,
+                    is_passthrough: is_passthrough != 0,
                 })
             })
             .ok();
@@ -803,7 +834,7 @@ impl TrafficStore {
 
         let mut stmt = conn.prepare(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes,
+                    r.timestamp, r.modified, r.notes, r.is_passthrough,
                     rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
@@ -825,13 +856,14 @@ impl TrafficStore {
                 let timestamp_i64: i64 = row.get(9)?;
                 let modified: i32 = row.get(10)?;
                 let notes: Option<String> = row.get(11)?;
+                let is_passthrough: i32 = row.get(12)?;
 
-                let status_code: Option<i32> = row.get(12)?;
-                let status_message: Option<String> = row.get(13)?;
-                let resp_headers_json: Option<String> = row.get(14)?;
-                let resp_body: Option<Vec<u8>> = row.get(15)?;
-                let resp_content_type: Option<String> = row.get(16)?;
-                let duration_ms: Option<i64> = row.get(17)?;
+                let status_code: Option<i32> = row.get(13)?;
+                let status_message: Option<String> = row.get(14)?;
+                let resp_headers_json: Option<String> = row.get(15)?;
+                let resp_body: Option<Vec<u8>> = row.get(16)?;
+                let resp_content_type: Option<String> = row.get(17)?;
+                let duration_ms: Option<i64> = row.get(18)?;
 
                 let headers: std::collections::HashMap<String, String> =
                     serde_json::from_str(&headers_json).unwrap_or_default();
@@ -874,6 +906,7 @@ impl TrafficStore {
                     notes,
                     request_size,
                     response_size,
+                    is_passthrough: is_passthrough != 0,
                 })
             })
             .map_err(Error::Database)?

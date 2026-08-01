@@ -18,6 +18,7 @@ export interface TrafficEntrySnapshot {
   modified: boolean;
   has_request_body: boolean;
   has_response_body: boolean;
+  is_passthrough: boolean;
 }
 
 // Traffic events from server

@@ -193,6 +193,11 @@ pub struct TrafficEntry {
     /// Total response size in bytes (headers + body), if a response was received.
     #[serde(default)]
     pub response_size: Option<usize>,
+    /// Whether this connection was SSL-passed-through (not intercepted).
+    /// When true, the TLS connection was tunneled directly to the upstream
+    /// without decryption. Only connection-level metadata is recorded.
+    #[serde(default)]
+    pub is_passthrough: bool,
 }
 
 fn serialize_datetime<S>(dt: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
@@ -216,6 +221,7 @@ impl TrafficEntry {
             notes: None,
             request_size,
             response_size: None,
+            is_passthrough: false,
         }
     }
 
@@ -281,6 +287,9 @@ pub struct TrafficFilter {
     pub header: Option<String>,
     /// Filter by cookie (name or value contains)
     pub cookie: Option<String>,
+    /// Filter by passthrough flag: Some(true) = only passthrough,
+    /// Some(false) = only intercepted, None = both
+    pub is_passthrough: Option<bool>,
 }
 
 #[cfg(test)]
@@ -728,6 +737,7 @@ mod tests {
                 file_type: Some(".json".to_string()),
                 header: Some("Authorization".to_string()),
                 cookie: Some("session".to_string()),
+                is_passthrough: None,
             };
 
             assert_eq!(filter.url_pattern, Some("api".to_string()));

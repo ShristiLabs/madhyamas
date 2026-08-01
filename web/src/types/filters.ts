@@ -85,6 +85,14 @@ export const FILTER_FIELDS: FilterFieldDef[] = [
   { id: 'response_content_type', label: 'Response Content-Type', category: 'response', valueType: 'text', operators: TEXT_OPS, placeholder: 'text/html' },
   { id: 'duration', label: 'Duration (ms)', category: 'response', valueType: 'number', operators: NUM_OPS, placeholder: '1000' },
   { id: 'response_size', label: 'Response Size (bytes)', category: 'response', valueType: 'number', operators: NUM_OPS, placeholder: '10000' },
+  {
+    id: 'is_passthrough', label: 'SSL Passthrough', category: 'request', valueType: 'select',
+    operators: ['eq', 'neq'],
+    options: [
+      { value: 'true', label: 'Passthrough' },
+      { value: 'false', label: 'Intercepted' },
+    ],
+  },
 ]
 
 function getFieldValue(entry: TrafficEntry, filter: ActiveFilter): string | number | undefined {
@@ -139,6 +147,8 @@ function getFieldValue(entry: TrafficEntry, filter: ActiveFilter): string | numb
       return entry.response?.duration_ms
     case 'response_size':
       return entry.response?.body?.length ?? 0
+    case 'is_passthrough':
+      return entry.is_passthrough ? 'true' : 'false'
     default:
       return undefined
   }

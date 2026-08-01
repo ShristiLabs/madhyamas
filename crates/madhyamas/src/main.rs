@@ -24,7 +24,7 @@ use madhyamas_core::{PluginExtension, PluginManager};
 #[cfg(feature = "scripting")]
 use madhyamas_core::{ScriptExtension, ScriptRuntime};
 
-use tracing::{info, Level};
+use tracing::{debug, info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 // Re-export CLI commands from the madhyamas-cli library
@@ -226,21 +226,42 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     info!("Starting Madhyamas...");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
 
-    // Create configuration with defaults, then override with CLI args
+    // Load the persisted config (if it exists) as the base, then override
+    // with CLI args. This ensures that runtime config changes made via the
+    // API (e.g. passthrough domains, max_body_size, intercept_https) survive
+    // restarts. CLI args always take precedence over saved values so users
+    // can temporarily override settings without editing the config file.
+    let saved = ProxyConfig::load_saved();
     let defaults = ProxyConfig::default();
     let config = ProxyConfig {
         proxy_port: args.proxy_port,
         api_port: args.api_port,
         host: args.host,
         public_ip: args.public_ip,
-        cert_path: args.cert_path.unwrap_or(defaults.cert_path),
-        db_path: args.db_path.unwrap_or(defaults.db_path),
-        log_path: args.log_path.unwrap_or(defaults.log_path),
+        cert_path: args.cert_path.unwrap_or_else(|| {
+            saved.as_ref().map(|s| s.cert_path.clone()).unwrap_or(defaults.cert_path)
+        }),
+        db_path: args.db_path.unwrap_or_else(|| {
+            saved.as_ref().map(|s| s.db_path.clone()).unwrap_or(defaults.db_path)
+        }),
+        log_path: args.log_path.unwrap_or_else(|| {
+            saved.as_ref().map(|s| s.log_path.clone()).unwrap_or(defaults.log_path)
+        }),
         verbose: args.verbose,
         max_requests: args.max_requests,
         intercept_https: !args.no_https,
-        max_body_size: defaults.max_body_size,
+        // These fields have no CLI arg — preserve the saved value if present,
+        // otherwise use the default. This is what makes runtime API changes
+        // (passthrough_domains, max_body_size) persist across restarts.
+        max_body_size: saved.as_ref().map(|s| s.max_body_size).unwrap_or(defaults.max_body_size),
+        passthrough_domains: saved.as_ref().map(|s| s.passthrough_domains.clone()).unwrap_or(defaults.passthrough_domains),
     };
+
+    if saved.is_some() {
+        info!("Loaded saved config from {}", ProxyConfig::config_file_path().display());
+    } else {
+        debug!("No saved config found, using defaults");
+    }
 
     // Ensure data directories exist
     config.ensure_directories()?;
@@ -317,7 +338,13 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     let memory_manager = Arc::new(MemoryManager::new());
     let performance_monitor = Arc::new(PerformanceMonitor::new());
 
-    let proxy_engine = ProxyEngine::new(config.clone(), cert_manager, traffic_store.clone())
+    // Create a single shared config that both the proxy engine and the API
+    // layer reference. This allows runtime config changes made via the API
+    // (e.g. adding SSL passthrough domains in the web UI) to take effect
+    // immediately in the proxy engine without a restart.
+    let shared_config = Arc::new(parking_lot::RwLock::new(config.clone()));
+
+    let proxy_engine = ProxyEngine::new(shared_config.clone(), cert_manager, traffic_store.clone())
         .await?
         .with_mock_manager(mock_manager.clone())
         .with_rewrite_manager(rewrite_manager.clone())
@@ -343,7 +370,7 @@ async fn run_proxy_server(args: Args) -> Result<()> {
 
     let api_state = madhyamas_api::AppState::new(traffic_store.clone())
         .with_cert_manager(cert_manager_for_api)
-        .with_proxy_config(Arc::new(parking_lot::RwLock::new(config.clone())))
+        .with_proxy_config(shared_config)
         .with_mock_manager(mock_manager)
         .with_rewrite_manager(rewrite_manager)
         .with_breakpoint_manager(breakpoint_manager)

@@ -29,6 +29,8 @@ export interface TrafficEntry {
   request_size?: number
   /** Total response size in bytes (headers + body), if a response was received. */
   response_size?: number
+  /** Whether this connection was SSL-passed-through (not intercepted). */
+  is_passthrough?: boolean
 }
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'CONNECT' | 'TRACE'

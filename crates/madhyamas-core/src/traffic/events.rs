@@ -42,6 +42,7 @@ pub struct TrafficEntrySnapshot {
     pub modified: bool,
     pub has_request_body: bool,
     pub has_response_body: bool,
+    pub is_passthrough: bool,
 }
 
 impl From<&TrafficEntry> for TrafficEntrySnapshot {
@@ -73,6 +74,7 @@ impl From<&TrafficEntry> for TrafficEntrySnapshot {
                 .as_ref()
                 .map(|r| r.body.is_some())
                 .unwrap_or(false),
+            is_passthrough: entry.is_passthrough,
         }
     }
 }

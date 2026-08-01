@@ -61,6 +61,7 @@ function snapshotToTrafficEntry(snapshot: TrafficEntrySnapshot): TrafficEntry {
     notes: undefined,
     request_size: snapshot.request_size,
     response_size: snapshot.response_size ?? undefined,
+    is_passthrough: snapshot.is_passthrough ?? false,
   };
 }
 

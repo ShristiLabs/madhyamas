@@ -58,7 +58,9 @@ pub enum RequestOutcome {
 /// Borrows the relevant managers and stores from the proxy engine for the
 /// duration of processing one or more requests on a connection.
 pub struct Pipeline<'a> {
-    config: &'a ProxyConfig,
+    config: ProxyConfig,
+    /// Shared, pooled HTTP client for upstream forwarding.
+    http_client: reqwest::Client,
     traffic_store: &'a TrafficStore,
     traffic_tx: &'a broadcast::Sender<TrafficEntry>,
     mock_manager: Option<&'a Arc<MockManager>>,
@@ -83,7 +85,8 @@ impl<'a> Pipeline<'a> {
     /// Create a new pipeline from the shared engine state.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        config: &'a ProxyConfig,
+        config: ProxyConfig,
+        http_client: reqwest::Client,
         traffic_store: &'a TrafficStore,
         traffic_tx: &'a broadcast::Sender<TrafficEntry>,
         mock_manager: Option<&'a Arc<MockManager>>,
@@ -99,6 +102,7 @@ impl<'a> Pipeline<'a> {
     ) -> Self {
         Self {
             config,
+            http_client,
             traffic_store,
             traffic_tx,
             mock_manager,
@@ -476,13 +480,30 @@ impl<'a> Pipeline<'a> {
                 if let Some(metrics) = self.metrics_collector {
                     metrics.record_error();
                 }
-                // Store error response so request doesn't remain in "pending" state
+                // Store error response so request doesn't remain in "pending" state.
+                // Include the full request details (method, URL, headers) in the
+                // error body so the user can diagnose the failure from the UI.
                 if should_capture {
+                    let error_detail = format!(
+                        "Proxy error forwarding request to upstream server.\n\n\
+                         Request: {} {}\n\
+                         Error: {}\n\n\
+                         Request headers:\n{}",
+                        request_data.method,
+                        request_data.url,
+                        e,
+                        request_data
+                            .headers
+                            .iter()
+                            .map(|(k, v)| format!("  {}: {}", k, v))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    );
                     let error_response = ResponseData {
                         status_code: 502,
                         status_message: Some("Bad Gateway".to_string()),
                         headers: std::collections::HashMap::new(),
-                        body: Some(format!("Proxy error: {}", e).into_bytes()),
+                        body: Some(error_detail.into_bytes()),
                         content_type: Some("text/plain".to_string()),
                         duration_ms: start.elapsed().as_millis() as u64,
                     };
@@ -693,26 +714,18 @@ impl<'a> Pipeline<'a> {
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        // Build a reqwest client that:
-        // - Does NOT follow redirects (proxy must return 3xx to client)
-        // - Does NOT use a system proxy (avoid feedback loop)
-        // - Has a generous timeout
-        // - Enables both HTTP/1.1 and HTTP/2 (ALPN negotiation picks the
-        //   best protocol with the upstream server)
-        // - Does NOT auto-decompress responses. We store the raw compressed
-        //   body and preserve the Content-Encoding header so the frontend
-        //   can toggle between compressed and decompressed views. The client
-        //   receives the original compressed response and decompresses it
-        //   normally.
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .timeout(std::time::Duration::from_secs(120))
-            .gzip(false)
-            .deflate(false)
-            .brotli(false)
-            .build()
-            .map_err(|e| Error::Proxy(format!("Failed to create HTTP client: {}", e)))?;
+        // Use the shared, pooled HTTP client from the engine. This reuses
+        // TCP/TLS connections across requests (connection pooling), enables
+        // HTTP/2 multiplexing, and TLS session resumption — all critical for
+        // compatibility with servers that rate-limit or reject clients that
+        // open a new connection for every request.
+        //
+        // The client is configured with:
+        // - No redirects (proxy returns 3xx to client)
+        // - No system proxy (avoid feedback loop)
+        // - No auto-decompression (we store raw compressed body + Content-Encoding)
+        // - 120s timeout, 90s idle pool timeout, 20 idle conns per host
+        let client = &self.http_client;
 
         // Build the reqwest request from RequestData
         let method = reqwest::Method::from_bytes(request_data.method.to_string().as_bytes())

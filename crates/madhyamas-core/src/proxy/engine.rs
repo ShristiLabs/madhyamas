@@ -33,9 +33,18 @@ use tracing::{debug, info, warn};
 
 /// Proxy engine state
 pub struct ProxyEngine {
-    config: ProxyConfig,
+    /// Shared, live-updatable configuration. The same `Arc<RwLock<ProxyConfig>>`
+    /// is held by the API layer so that config changes (e.g. passthrough domains
+    /// added via the web UI) are immediately visible to the proxy engine.
+    config: Arc<RwLock<ProxyConfig>>,
     cert_manager: Arc<CertificateManager>,
     traffic_store: Arc<TrafficStore>,
+    /// Shared HTTP client for upstream forwarding. Reused across all requests
+    /// for connection pooling, TLS session resumption, and HTTP/2 multiplexing.
+    /// Creating a new client per request (as done previously) causes many
+    /// servers to rate-limit or reject connections, and prevents HTTP/2
+    /// stream multiplexing.
+    http_client: reqwest::Client,
     mock_manager: OnceLock<Arc<MockManager>>,
     rewrite_manager: OnceLock<Arc<RewriteManager>>,
     breakpoint_manager: OnceLock<Arc<BreakpointManager>>,
@@ -68,16 +77,44 @@ pub struct ProxyEngine {
 impl ProxyEngine {
     /// Create a new proxy engine
     pub async fn new(
-        config: ProxyConfig,
+        config: Arc<RwLock<ProxyConfig>>,
         cert_manager: Arc<CertificateManager>,
         traffic_store: Arc<TrafficStore>,
     ) -> crate::Result<Arc<Self>> {
         let (traffic_tx, _) = broadcast::channel(1024);
 
+        // Build a shared HTTP client for all upstream forwarding.
+        //
+        // Key settings:
+        // - `no_proxy()`: never use system proxy settings (avoids feedback loop
+        //   where the proxy forwards to itself).
+        // - `redirect(Policy::none())`: the proxy must return 3xx responses to
+        //   the client; it should not silently follow redirects upstream.
+        // - No auto-decompression: we store the raw compressed body and
+        //   preserve Content-Encoding so the frontend can toggle views.
+        // - Connection pool: reqwest reuses TCP/TLS connections across
+        //   requests to the same host, enabling HTTP/2 multiplexing and TLS
+        //   session resumption. This is critical for compatibility — many
+        //   servers reject or rate-limit clients that open a new connection
+        //   for every request.
+        // - Generous timeout (120s) for slow APIs / large downloads.
+        let http_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(120))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .pool_max_idle_per_host(20)
+            .gzip(false)
+            .deflate(false)
+            .brotli(false)
+            .build()
+            .map_err(|e| Error::Proxy(format!("Failed to create HTTP client: {}", e)))?;
+
         Ok(Arc::new(Self {
             config,
             cert_manager,
             traffic_store,
+            http_client,
             mock_manager: OnceLock::new(),
             rewrite_manager: OnceLock::new(),
             breakpoint_manager: OnceLock::new(),
@@ -101,8 +138,13 @@ impl ProxyEngine {
     /// Build a [`Pipeline`] borrowing the shared engine state for processing
     /// one or more requests on a connection.
     fn pipeline(&self) -> Pipeline<'_> {
+        // Snapshot the current config so the pipeline sees live updates
+        // (e.g. passthrough domains added via the API) while still borrowing
+        // the other shared state for the connection's lifetime.
+        let config = self.config.read().clone();
         Pipeline::new(
-            &self.config,
+            config,
+            self.http_client.clone(),
             &self.traffic_store,
             &self.traffic_tx,
             self.mock_manager.get(),
@@ -238,6 +280,7 @@ impl ProxyEngine {
     pub async fn start(self: Arc<Self>) -> crate::Result<()> {
         let addr: SocketAddr = self
             .config
+            .read()
             .proxy_addr()
             .parse()
             .map_err(|e| Error::Proxy(format!("Invalid proxy address: {}", e)))?;
@@ -341,7 +384,24 @@ impl ProxyEngine {
             (target, 443)
         };
 
+        // Parse CONNECT request headers (everything after the request line).
+        // These headers (User-Agent, Proxy-Authorization, etc.) are captured
+        // so they can be included in traffic entries for passthrough and SSL
+        // error cases, giving the user maximum visibility into the connection
+        // attempt even when the actual HTTP request is not visible.
+        let connect_headers = parse_connect_headers(request_str);
+
         info!("HTTPS CONNECT: {}:{}", host, port);
+
+        // Check if this host is in the SSL passthrough exclusion list.
+        // If so, tunnel the connection directly without TLS interception.
+        // We read the shared config so live updates from the API are honored.
+        if self.config.read().should_passthrough(host) {
+            info!("SSL passthrough for {}:{}", host, port);
+            return self
+                .handle_passthrough_tunnel(client_socket, host, port, &connect_headers)
+                .await;
+        }
 
         // Generate certificate for this host
         let cert = self.cert_manager.generate_cert_for_host(host)?;
@@ -370,6 +430,7 @@ impl ProxyEngine {
                 );
 
                 // Record a traffic entry so the failed attempt is visible.
+                // Include the CONNECT request headers for debugging context.
                 let session_id = self.traffic_store.current_session_id();
                 let entry = TrafficEntry::new(
                     &session_id,
@@ -377,8 +438,8 @@ impl ProxyEngine {
                         method: crate::traffic::HttpMethod::Connect,
                         url: format!("https://{}:{}/", host, port),
                         host: host.to_string(),
-                        path: "/".to_string(),
-                        headers: std::collections::HashMap::new(),
+                        path: format!(":{}", port),
+                        headers: connect_headers.clone(),
                         body: None,
                         content_type: None,
                     },
@@ -388,13 +449,23 @@ impl ProxyEngine {
                     &entry.id,
                     &crate::traffic::ResponseData {
                         status_code: 502,
-                        status_message: Some("Bad Gateway".to_string()),
+                        status_message: Some("Bad Gateway (TLS Handshake Failed)".to_string()),
                         headers: std::collections::HashMap::new(),
                         body: Some(
                             format!(
-                                "TLS handshake failed: the client does not \
-                                 trust the proxy CA certificate. Error: {}",
-                                e
+                                "TLS handshake failed for {}:{}.\n\n\
+                                 The client does not trust the proxy CA certificate.\n\
+                                 This is common with apps using certificate pinning.\n\n\
+                                 Error: {}\n\n\
+                                 CONNECT request headers:\n{}",
+                                host,
+                                port,
+                                e,
+                                connect_headers
+                                    .iter()
+                                    .map(|(k, v)| format!("  {}: {}", k, v))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
                             )
                             .into_bytes(),
                         ),
@@ -445,6 +516,201 @@ impl ProxyEngine {
 
         // Now we can intercept the actual HTTP request over TLS
         self.handle_tls_request(&mut tls_stream, host, port).await
+    }
+
+    /// Handle an HTTPS CONNECT request in SSL passthrough mode.
+    ///
+    /// Instead of performing a TLS handshake with the client and intercepting
+    /// the decrypted traffic, we tunnel the raw TCP connection directly to the
+    /// upstream server. The client's TLS session goes through untouched.
+    ///
+    /// We still record a traffic entry (flagged as `is_passthrough`) so the
+    /// connection is visible in the web UI, but we cannot inspect the
+    /// request/response contents.
+    async fn handle_passthrough_tunnel(
+        &self,
+        mut client_socket: TcpStream,
+        host: &str,
+        port: u16,
+        connect_headers: &std::collections::HashMap<String, String>,
+    ) -> crate::Result<()> {
+        // Send 200 Connection Established so the client starts TLS
+        let response = "HTTP/1.1 200 Connection Established\r\n\r\n";
+        client_socket.write_all(response.as_bytes()).await?;
+
+        // Record a passthrough traffic entry so the connection is visible.
+        // Include the CONNECT request headers for debugging context — since
+        // the actual HTTP request is encrypted inside the TLS tunnel, these
+        // headers are the only metadata we can capture.
+        let session_id = self.traffic_store.current_session_id();
+        let mut entry = TrafficEntry::new(
+            &session_id,
+            RequestData {
+                method: crate::traffic::HttpMethod::Connect,
+                url: format!("https://{}:{}/", host, port),
+                host: host.to_string(),
+                path: format!(":{}", port),
+                headers: connect_headers.clone(),
+                body: None,
+                content_type: None,
+            },
+        );
+        entry.is_passthrough = true;
+        let _ = self.traffic_store.store_request(&entry);
+        let _ = self.traffic_tx.send(entry.clone());
+
+        // Connect to the upstream server
+        let upstream_addr = format!("{}:{}", host, port);
+        let mut upstream_socket = match tokio::time::timeout(
+            Duration::from_secs(30),
+            TcpStream::connect(&upstream_addr),
+        )
+        .await
+        {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => {
+                warn!("Passthrough: failed to connect to {}: {}", upstream_addr, e);
+                let _ = self.traffic_store.store_response(
+                    &entry.id,
+                    &crate::traffic::ResponseData {
+                        status_code: 502,
+                        status_message: Some("Bad Gateway (Passthrough Connect Failed)".to_string()),
+                        headers: std::collections::HashMap::new(),
+                        body: Some(
+                            format!(
+                                "SSL passthrough connection failed.\n\n\
+                                 Target: {}\n\
+                                 Error: {}\n\n\
+                                 CONNECT request headers:\n{}",
+                                upstream_addr,
+                                e,
+                                connect_headers
+                                    .iter()
+                                    .map(|(k, v)| format!("  {}: {}", k, v))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            )
+                            .into_bytes(),
+                        ),
+                        content_type: Some("text/plain".to_string()),
+                        duration_ms: 0,
+                    },
+                );
+                let _ = self.traffic_tx.send(entry);
+                return Err(Error::Proxy(format!(
+                    "Passthrough connect failed: {}",
+                    e
+                )));
+            }
+            Err(_) => {
+                warn!("Passthrough: timeout connecting to {}", upstream_addr);
+                let _ = self.traffic_store.store_response(
+                    &entry.id,
+                    &crate::traffic::ResponseData {
+                        status_code: 504,
+                        status_message: Some("Gateway Timeout (Passthrough)".to_string()),
+                        headers: std::collections::HashMap::new(),
+                        body: Some(
+                            format!(
+                                "SSL passthrough connection timed out.\n\n\
+                                 Target: {}\n\
+                                 Timeout: 30 seconds\n\n\
+                                 CONNECT request headers:\n{}",
+                                upstream_addr,
+                                connect_headers
+                                    .iter()
+                                    .map(|(k, v)| format!("  {}: {}", k, v))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            )
+                            .into_bytes(),
+                        ),
+                        content_type: Some("text/plain".to_string()),
+                        duration_ms: 30000,
+                    },
+                );
+                let _ = self.traffic_tx.send(entry);
+                return Err(Error::Proxy("Passthrough connect timeout".into()));
+            }
+        };
+
+        // Record successful connection with a 200 response.
+        // Include a descriptive body explaining what happened (visible in
+        // the traffic detail view).
+        let _ = self.traffic_store.store_response(
+            &entry.id,
+            &crate::traffic::ResponseData {
+                status_code: 200,
+                status_message: Some("Connection Established (SSL Passthrough)".to_string()),
+                headers: std::collections::HashMap::new(),
+                body: Some(
+                    format!(
+                        "SSL Passthrough — connection tunneled directly to {}.\n\n\
+                         The TLS session was not intercepted; request and response\n\
+                         contents (URL path, query parameters, headers, body) are\n\
+                         not visible because they are encrypted inside the tunnel.\n\n\
+                         CONNECT request headers:\n{}",
+                        upstream_addr,
+                        connect_headers
+                            .iter()
+                            .map(|(k, v)| format!("  {}: {}", k, v))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    )
+                    .into_bytes(),
+                ),
+                content_type: Some("text/plain".to_string()),
+                duration_ms: 0,
+            },
+        );
+        let _ = self.traffic_tx.send(entry);
+
+        // Bidirectional byte forwarding: client ↔ upstream
+        // We split both sockets and copy in both directions simultaneously.
+        let (mut client_rx, mut client_tx) = client_socket.split();
+        let (mut upstream_rx, mut upstream_tx) = upstream_socket.split();
+
+        let client_to_upstream = async {
+            let mut buf = vec![0u8; 8192];
+            loop {
+                match client_rx.read(&mut buf).await {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        if upstream_tx.write_all(&buf[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let _ = upstream_tx.shutdown().await;
+        };
+
+        let upstream_to_client = async {
+            let mut buf = vec![0u8; 8192];
+            loop {
+                match upstream_rx.read(&mut buf).await {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        if client_tx.write_all(&buf[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let _ = client_tx.shutdown().await;
+        };
+
+        // Run both directions concurrently until either side closes
+        tokio::try_join!(
+            tokio::time::timeout(Duration::from_secs(300), client_to_upstream),
+            tokio::time::timeout(Duration::from_secs(300), upstream_to_client),
+        )
+        .ok();
+
+        debug!("Passthrough tunnel closed for {}:{}", host, port);
+        Ok(())
     }
 
     /// Create TLS server config with the generated certificate.
@@ -1079,6 +1345,38 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
         self.supported_schemes.clone()
     }
+}
+
+/// Parse headers from a CONNECT request string.
+///
+/// A CONNECT request looks like:
+/// ```text
+/// CONNECT example.com:443 HTTP/1.1
+/// Host: example.com:443
+/// User-Agent: curl/7.88.1
+/// Proxy-Connection: Keep-Alive
+///
+/// ```
+///
+/// This function extracts all headers (lines after the request line, up to
+/// the first blank line) into a `HashMap<String, String>`. The header names
+/// are preserved as-is (case preserved) for fidelity.
+fn parse_connect_headers(request_str: &str) -> std::collections::HashMap<String, String> {
+    let mut headers = std::collections::HashMap::new();
+    for line in request_str.lines().skip(1) {
+        let line = line.trim();
+        if line.is_empty() {
+            break; // End of headers
+        }
+        if let Some((key, value)) = line.split_once(':') {
+            let key = key.trim().to_string();
+            let value = value.trim().to_string();
+            if !key.is_empty() {
+                headers.insert(key, value);
+            }
+        }
+    }
+    headers
 }
 
 /// WebSocket Ping opcode (RFC 6455).

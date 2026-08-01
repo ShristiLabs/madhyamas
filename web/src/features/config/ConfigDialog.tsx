@@ -27,8 +27,11 @@ import {
   Network,
   Camera,
   Palette,
+  ShieldOff,
+  Plus,
+  X,
 } from "lucide-react";
-import { apiGet, apiPatch } from "@/lib/api/client";
+import { apiGet, apiPatch, ApiError } from "@/lib/api/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +43,7 @@ interface RuntimeConfig {
   intercept_https: boolean;
   max_requests: number;
   verbose: boolean;
+  passthrough_domains?: string[];
 }
 
 interface UpstreamConfig {
@@ -161,6 +165,7 @@ function GeneralTab() {
     intercept_https: true,
     max_requests: 10000,
     verbose: false,
+    passthrough_domains: [],
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -176,6 +181,7 @@ function GeneralTab() {
           intercept_https: data.intercept_https ?? true,
           max_requests: data.max_requests ?? 10000,
           verbose: data.verbose ?? false,
+          passthrough_domains: data.passthrough_domains ?? [],
         });
       })
       .catch(() => {})
@@ -190,13 +196,17 @@ function GeneralTab() {
         max_requests: config.max_requests,
         verbose: config.verbose,
         public_ip: config.public_ip || null,
+        passthrough_domains: config.passthrough_domains ?? [],
       });
       toast({ description: "Configuration saved successfully." });
-    } catch {
-      toast({
-        description: "Failed to save configuration.",
-        variant: "destructive",
-      });
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? `Failed to save configuration (HTTP ${err.status}): ${err.body.slice(0, 200)}`
+          : err instanceof Error
+            ? `Failed to save configuration: ${err.message}`
+            : "Failed to save configuration.";
+      toast({ description: msg, variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -673,6 +683,144 @@ function AppearanceTab() {
   );
 }
 
+// ─── SSL Passthrough Tab ──────────────────────────────────────────────────────
+
+function SslPassthroughTab() {
+  const { toast } = useToast();
+  const [domains, setDomains] = useState<string[]>([]);
+  const [newDomain, setNewDomain] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    apiGet<RuntimeConfig>("/config")
+      .then((data) => {
+        setDomains(data.passthrough_domains ?? []);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleAdd = () => {
+    const trimmed = newDomain.trim().toLowerCase();
+    if (!trimmed) return;
+    if (domains.includes(trimmed)) {
+      toast({ description: "Domain already in the list." });
+      return;
+    }
+    setDomains([...domains, trimmed].sort());
+    setNewDomain("");
+  };
+
+  const handleRemove = (domain: string) => {
+    setDomains(domains.filter((d) => d !== domain));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await apiPatch("/config", {
+        passthrough_domains: domains,
+      });
+      toast({ description: "SSL passthrough domains saved." });
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? `Failed to save passthrough domains (HTTP ${err.status}): ${err.body.slice(0, 200)}`
+          : err instanceof Error
+            ? `Failed to save passthrough domains: ${err.message}`
+            : "Failed to save passthrough domains.";
+      toast({ description: msg, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-48 text-muted-foreground">
+        Loading…
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <Section title="SSL Passthrough Domains">
+        <p className="text-sm text-muted-foreground">
+          Domains listed here will bypass TLS interception. The proxy tunnels
+          the connection directly to the upstream server without decrypting
+          traffic. The connections are still visible in the traffic list but
+          flagged as passthrough (request/response bodies are not captured).
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Suffix matching is used: <code className="text-xs">example.com</code>{" "}
+          matches <code className="text-xs">api.example.com</code> and{" "}
+          <code className="text-xs">www.example.com</code>.
+        </p>
+
+        {/* Add domain input */}
+        <div className="flex items-center gap-2">
+          <Input
+            placeholder="example.com"
+            value={newDomain}
+            onChange={(e) => setNewDomain(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleAdd();
+              }
+            }}
+            className="flex-1"
+          />
+          <Button onClick={handleAdd} size="sm" disabled={!newDomain.trim()}>
+            <Plus className="h-4 w-4 mr-1" />
+            Add
+          </Button>
+        </div>
+
+        {/* Domain list */}
+        <div className="space-y-1.5">
+          {domains.length === 0 ? (
+            <div className="text-sm text-muted-foreground italic py-4 text-center border border-dashed rounded-md">
+              No passthrough domains configured.
+              <br />
+              All HTTPS traffic will be intercepted.
+            </div>
+          ) : (
+            domains.map((domain) => (
+              <div
+                key={domain}
+                className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border bg-muted/30"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <ShieldOff className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                  <span className="font-mono text-sm truncate">{domain}</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleRemove(domain)}
+                  className="h-7 px-2 text-muted-foreground hover:text-destructive"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))
+          )}
+        </div>
+      </Section>
+
+      <div className="flex justify-end pt-2">
+        <Button onClick={handleSave} disabled={saving}>
+          <Save className="h-4 w-4 mr-2" />
+          {saving ? "Saving…" : "Save Changes"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main dialog ───────────────────────────────────────────────────────────────
 
 interface ConfigDialogProps {
@@ -706,6 +854,10 @@ export function ConfigDialog({ trigger }: ConfigDialogProps) {
               <Network className="h-3.5 w-3.5" />
               Upstream Proxy
             </TabsTrigger>
+            <TabsTrigger value="ssl" className="flex items-center gap-1.5">
+              <ShieldOff className="h-3.5 w-3.5" />
+              SSL Passthrough
+            </TabsTrigger>
             <TabsTrigger value="capture" className="flex items-center gap-1.5">
               <Camera className="h-3.5 w-3.5" />
               Capture
@@ -724,6 +876,9 @@ export function ConfigDialog({ trigger }: ConfigDialogProps) {
             </TabsContent>
             <TabsContent value="upstream" className="mt-0">
               <UpstreamProxyTab />
+            </TabsContent>
+            <TabsContent value="ssl" className="mt-0">
+              <SslPassthroughTab />
             </TabsContent>
             <TabsContent value="capture" className="mt-0">
               <CaptureTab />

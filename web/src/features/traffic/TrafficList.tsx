@@ -268,6 +268,7 @@ const TrafficListItem = memo(function TrafficListItem({
   const statusClass = entry.response
     ? `status-${Math.floor(entry.response.status_code / 100)}xx`
     : ""
+  const isPassthrough = entry.is_passthrough === true
 
   const time = new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
   const size = entry.response ? formatSize(calculateSize(entry)) : "—"
@@ -279,6 +280,7 @@ const TrafficListItem = memo(function TrafficListItem({
       className={cn(
         "flex cursor-pointer items-center px-2 text-2xs transition-colors hover:bg-muted/40",
         isSelected && "bg-primary/10 hover:bg-primary/15",
+        isPassthrough && "opacity-70",
       )}
       style={{ height: ROW_HEIGHT }}
       onClick={onClick}
@@ -312,15 +314,20 @@ const TrafficListItem = memo(function TrafficListItem({
       <span
         className="shrink-0 truncate px-1 text-2xs text-muted-foreground"
         style={{ width: colWidths.domain }}
-        title={entry.request.host}
+        title={isPassthrough ? `${entry.request.host} (SSL passthrough)` : entry.request.host}
       >
+        {isPassthrough && (
+          <span className="mr-1 inline-block rounded bg-amber-500/20 px-1 py-px text-2xs font-semibold text-amber-600 dark:text-amber-400" title="SSL Passthrough">
+            PT
+          </span>
+        )}
         {entry.request.host}
       </span>
       <span className="min-w-0 flex-1 truncate px-1 font-mono text-2xs" title={entry.request.path}>
         {entry.request.path}
       </span>
-      <span className={cn("shrink-0 text-right font-mono", statusClass)} style={{ width: colWidths.status }}>
-        {entry.response?.status_code || "—"}
+      <span className={cn("shrink-0 text-right font-mono", isPassthrough ? "text-amber-600 dark:text-amber-400" : statusClass)} style={{ width: colWidths.status }}>
+        {isPassthrough ? "PASS" : (entry.response?.status_code || "—")}
       </span>
       <span className="shrink-0 text-right text-2xs text-muted-foreground" style={{ width: colWidths.duration }}>
         {duration}

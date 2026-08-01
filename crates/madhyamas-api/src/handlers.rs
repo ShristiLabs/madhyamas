@@ -24,6 +24,8 @@ pub struct TrafficQuery {
     pub file_type: Option<String>,
     pub header: Option<String>,
     pub cookie: Option<String>,
+    /// Filter by passthrough: "true" = only passthrough, "false" = only intercepted
+    pub is_passthrough: Option<String>,
 }
 
 /// Get all traffic entries
@@ -54,6 +56,11 @@ pub async fn get_traffic(
         file_type: query.file_type,
         header: query.header,
         cookie: query.cookie,
+        is_passthrough: query.is_passthrough.and_then(|s| match s.as_str() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }),
     };
 
     match state.traffic_store.get_traffic(&filter) {
@@ -310,7 +317,8 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse
         "public_ip": config.public_ip,
         "intercept_https": config.intercept_https,
         "max_requests": config.max_requests,
-        "max_body_size": config.max_body_size
+        "max_body_size": config.max_body_size,
+        "passthrough_domains": config.passthrough_domains
     }))
 }
 
@@ -343,6 +351,8 @@ pub struct PatchConfigRequest {
     pub public_ip: Option<serde_json::Value>,
     #[validate(range(min = 0, max = 1_073_741_824))]
     pub max_body_size: Option<usize>,
+    /// Domains to exclude from TLS interception (SSL passthrough)
+    pub passthrough_domains: Option<Vec<String>>,
 }
 
 /// Update runtime configuration fields
@@ -381,6 +391,17 @@ pub async fn patch_config(
         // Apply to the traffic store immediately
         state.traffic_store.set_max_body_size(v);
     }
+    if let Some(domains) = req.passthrough_domains {
+        // Normalize: trim, lowercase, deduplicate, drop empties
+        let mut cleaned: Vec<String> = domains
+            .iter()
+            .map(|d| d.trim().to_lowercase())
+            .filter(|d| !d.is_empty())
+            .collect();
+        cleaned.sort();
+        cleaned.dedup();
+        config.passthrough_domains = cleaned;
+    }
 
     // Snapshot the updated config for the response (still holding the lock).
     let resp = serde_json::json!({
@@ -391,8 +412,18 @@ pub async fn patch_config(
         "intercept_https": config.intercept_https,
         "max_requests": config.max_requests,
         "max_body_size": config.max_body_size,
-        "verbose": config.verbose
+        "verbose": config.verbose,
+        "passthrough_domains": config.passthrough_domains
     });
+
+    // Persist the updated config to disk so it survives restarts.
+    // We clone here because `save()` takes `&self` and we're holding a
+    // write lock — cloning avoids extending the lock scope across I/O.
+    let config_snapshot = config.clone();
+    drop(config); // release the write lock before disk I/O
+    if let Err(e) = config_snapshot.save() {
+        tracing::warn!("Failed to persist config to disk: {}", e);
+    }
 
     (StatusCode::OK, Json(resp)).into_response()
 }
