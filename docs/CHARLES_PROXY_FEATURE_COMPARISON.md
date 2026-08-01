@@ -70,7 +70,7 @@ It was produced by:
 |---|---|---|---|---|
 | 1 | HTTP proxy (plain HTTP capture) | ✅ | ✅ | `engine.rs::handle_http_proxy` |
 | 2 | HTTPS/SSL MITM proxying | ✅ | ✅ | `tls/certificate.rs` CA + leaf certs, `handle_https_tunnel` |
-| 3 | SOCKS proxy (v4/v5) | ✅ | 🔴 | UI dropdown only (`ConfigDialog.tsx:359`); no backend |
+| 3 | SOCKS proxy (v4/v5) | ✅ | ✅ | SOCKS5 (RFC 1928/1929) via `proxy/socks.rs`; `--enable-socks --socks-port`; see [SOCKS_PROXY.md](SOCKS_PROXY.md) |
 | 4 | HTTP/2 proxying (downstream) | ✅ (5.2) | 🟡 | ALPN upstream only; downstream advertises http/1.1 (`engine.rs:484`) |
 | 5 | HTTP/1.1 keep-alive | ✅ | ✅ | hyper handles keep-alive |
 | 6 | WebSocket inspection | ✅ | ✅ | `websocket.rs` (947 lines), frame parsing, fragment reassembly |

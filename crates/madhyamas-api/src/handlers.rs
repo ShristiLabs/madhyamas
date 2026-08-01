@@ -319,7 +319,20 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse
         "max_requests": config.max_requests,
         "max_body_size": config.max_body_size,
         "passthrough_domains": config.passthrough_domains,
-        "enable_h2_downstream": config.enable_h2_downstream
+        "enable_h2_downstream": config.enable_h2_downstream,
+        "enable_socks": config.enable_socks,
+        "socks_port": config.socks_port(),
+        "socks_auth_enabled": config.socks_auth_enabled(),
+        "socks_auth_username": config.socks_auth_username,
+        "upstream_proxy": {
+            "enabled": config.upstream_proxy.enabled,
+            "protocol": config.upstream_proxy.protocol,
+            "host": config.upstream_proxy.host,
+            "port": config.upstream_proxy.port,
+            "auth_enabled": config.upstream_proxy.auth_enabled(),
+            "auth_username": config.upstream_proxy.auth_username,
+            "no_proxy_hosts": config.upstream_proxy.no_proxy_hosts,
+        }
     }))
 }
 
@@ -359,6 +372,58 @@ pub struct PatchConfigRequest {
     /// HTTP/2 frames, enabling gRPC interception. Requires restart to take
     /// effect (ALPN advertisement is set at TLS config creation time).
     pub enable_h2_downstream: Option<bool>,
+
+    /// Enable the SOCKS5 proxy listener. Requires restart to take effect
+    /// (the SOCKS TCP listener is bound at startup).
+    pub enable_socks: Option<bool>,
+
+    /// Port for the SOCKS5 listener. Requires restart to take effect.
+    #[validate(range(min = 1, max = 65535))]
+    pub socks_port: Option<u16>,
+
+    /// Username for SOCKS5 username/password auth. Set to null/None to
+    /// disable auth. When set, --socks-password must also be provided.
+    /// Requires restart to take effect.
+    pub socks_auth_username: Option<serde_json::Value>,
+
+    /// Password for SOCKS5 username/password auth. Ignored unless
+    /// socks_auth_username is set. Requires restart to take effect.
+    pub socks_auth_password: Option<serde_json::Value>,
+
+    /// Upstream (external) proxy chaining configuration.
+    ///
+    /// When provided, updates the upstream proxy settings. The HTTP
+    /// forwarding path (reqwest) picks up the change on the next request
+    /// (the client is rebuilt when the engine detects a config change).
+    /// Raw TCP tunneling (CONNECT/passthrough) reads the live config on
+    /// each connection, so changes take effect immediately for new
+    /// connections.
+    ///
+    /// Note: changing the upstream proxy protocol/host/port requires a
+    /// restart for the reqwest client to pick up the new proxy (the
+    /// client is built once at engine startup). The bypass list and
+    /// auth credentials are read live and don't require a restart.
+    pub upstream_proxy: Option<UpstreamProxyPatch>,
+}
+
+/// Patchable subset of [`UpstreamProxyConfig`].
+///
+/// The `auth_password` field is write-only (never returned in GET
+/// responses) to avoid leaking credentials. Set it to `null` to clear
+/// existing credentials.
+#[derive(Debug, Deserialize, validator::Validate)]
+pub struct UpstreamProxyPatch {
+    pub enabled: Option<bool>,
+    pub protocol: Option<String>,
+    pub host: Option<String>,
+    #[validate(range(min = 0, max = 65535))]
+    pub port: Option<u16>,
+    /// Username for upstream proxy auth. Set to null to clear.
+    pub auth_username: Option<serde_json::Value>,
+    /// Password for upstream proxy auth. Set to null to clear.
+    /// Never returned in GET responses.
+    pub auth_password: Option<serde_json::Value>,
+    pub no_proxy_hosts: Option<Vec<String>>,
 }
 
 /// Update runtime configuration fields
@@ -414,8 +479,144 @@ pub async fn patch_config(
         // creation time. The change takes effect on new TLS handshakes after
         // the config is re-read. Existing connections are unaffected.
     }
+    if let Some(v) = req.enable_socks {
+        config.enable_socks = v;
+        // The SOCKS TCP listener is bound at startup; this change takes
+        // effect after a restart.
+    }
+    if let Some(v) = req.socks_port {
+        config.socks_port = Some(v);
+        // Requires restart to rebind the SOCKS listener.
+    }
+    // socks_auth_username / socks_auth_password accept either a string or
+    // null (to clear auth). A non-string, non-null value is rejected.
+    if let Some(v) = req.socks_auth_username {
+        match v {
+            serde_json::Value::Null => {
+                config.socks_auth_username = None;
+                config.socks_auth_password = None;
+            }
+            serde_json::Value::String(s) => {
+                config.socks_auth_username = Some(s);
+            }
+            other => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "socks_auth_username must be a string or null",
+                        "value": other
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+    if let Some(v) = req.socks_auth_password {
+        match v {
+            serde_json::Value::Null => {
+                // Only clear the password; keep username unless explicitly cleared.
+                config.socks_auth_password = None;
+            }
+            serde_json::Value::String(s) => {
+                config.socks_auth_password = Some(s);
+            }
+            other => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "socks_auth_password must be a string or null",
+                        "value": other
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // Upstream proxy patching. Each field is optional; only provided
+    // fields are mutated. The auth_password is write-only (never echoed
+    // back in the response). Protocol changes are validated against the
+    // allowed set (http/https/socks5).
+    if let Some(patch) = req.upstream_proxy {
+        if let Some(v) = patch.enabled {
+            config.upstream_proxy.enabled = v;
+        }
+        if let Some(v) = patch.protocol {
+            let normalized = v.trim().to_lowercase();
+            if !matches!(normalized.as_str(), "http" | "https" | "socks5") {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "upstream_proxy.protocol must be one of: http, https, socks5",
+                        "value": v
+                    })),
+                )
+                    .into_response();
+            }
+            config.upstream_proxy.protocol = normalized;
+        }
+        if let Some(v) = patch.host {
+            config.upstream_proxy.host = v.trim().to_string();
+        }
+        if let Some(v) = patch.port {
+            config.upstream_proxy.port = v;
+        }
+        if let Some(v) = patch.auth_username {
+            match v {
+                serde_json::Value::Null => {
+                    config.upstream_proxy.auth_username = None;
+                    config.upstream_proxy.auth_password = None;
+                }
+                serde_json::Value::String(s) => {
+                    config.upstream_proxy.auth_username = Some(s);
+                }
+                other => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": "upstream_proxy.auth_username must be a string or null",
+                            "value": other
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+        if let Some(v) = patch.auth_password {
+            match v {
+                serde_json::Value::Null => {
+                    config.upstream_proxy.auth_password = None;
+                }
+                serde_json::Value::String(s) => {
+                    config.upstream_proxy.auth_password = Some(s);
+                }
+                other => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": "upstream_proxy.auth_password must be a string or null",
+                            "value": other
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+        if let Some(v) = patch.no_proxy_hosts {
+            // Normalize: trim, lowercase, deduplicate, drop empties
+            let mut cleaned: Vec<String> = v
+                .iter()
+                .map(|d| d.trim().to_lowercase())
+                .filter(|d| !d.is_empty())
+                .collect();
+            cleaned.sort();
+            cleaned.dedup();
+            config.upstream_proxy.no_proxy_hosts = cleaned;
+        }
+    }
 
     // Snapshot the updated config for the response (still holding the lock).
+    // Note: auth_password is intentionally omitted to avoid leaking secrets.
     let resp = serde_json::json!({
         "proxy_port": config.proxy_port,
         "api_port": config.api_port,
@@ -426,7 +627,20 @@ pub async fn patch_config(
         "max_body_size": config.max_body_size,
         "verbose": config.verbose,
         "passthrough_domains": config.passthrough_domains,
-        "enable_h2_downstream": config.enable_h2_downstream
+        "enable_h2_downstream": config.enable_h2_downstream,
+        "enable_socks": config.enable_socks,
+        "socks_port": config.socks_port(),
+        "socks_auth_enabled": config.socks_auth_enabled(),
+        "socks_auth_username": config.socks_auth_username,
+        "upstream_proxy": {
+            "enabled": config.upstream_proxy.enabled,
+            "protocol": config.upstream_proxy.protocol,
+            "host": config.upstream_proxy.host,
+            "port": config.upstream_proxy.port,
+            "auth_enabled": config.upstream_proxy.auth_enabled(),
+            "auth_username": config.upstream_proxy.auth_username,
+            "no_proxy_hosts": config.upstream_proxy.no_proxy_hosts,
+        }
     });
 
     // Persist the updated config to disk so it survives restarts.

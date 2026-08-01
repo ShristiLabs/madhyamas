@@ -17,7 +17,7 @@ use madhyamas_core::GrpcManager;
 use madhyamas_core::{
     BreakpointManager, CertificateManager, ExtensionManager, InterceptStore, MemoryManager,
     MetricsCollector, MockManager, PerformanceMonitor, Persistable, ProxyConfig, ProxyEngine,
-    RewriteManager, ThrottleManager, TrafficStore,
+    RewriteManager, ThrottleManager, TrafficStore, UpstreamProxyConfig,
 };
 #[cfg(feature = "plugins")]
 use madhyamas_core::{PluginExtension, PluginManager};
@@ -103,6 +103,61 @@ struct Args {
     /// Disable HTTPS interception
     #[arg(long, env = "MADHYAMAS_NO_HTTPS", global = true)]
     no_https: bool,
+
+    /// Enable the SOCKS5 proxy listener (RFC 1928). When enabled, Madhyamas
+    /// also listens on a SOCKS5 port (see --socks-port) in addition to the
+    /// HTTP/HTTPS proxy port. SOCKS5 is a blind TCP tunnel — HTTPS traffic
+    /// sent over SOCKS cannot be MITM-intercepted; use the HTTP proxy port
+    /// with CONNECT for HTTPS interception.
+    #[arg(long, env = "MADHYAMAS_ENABLE_SOCKS", global = true)]
+    enable_socks: bool,
+
+    /// Port for the SOCKS5 proxy listener (only used with --enable-socks).
+    /// Defaults to 1080 (the conventional SOCKS port).
+    #[arg(long, env = "MADHYAMAS_SOCKS_PORT", global = true)]
+    socks_port: Option<u16>,
+
+    /// Username for SOCKS5 username/password authentication (RFC 1929).
+    /// When set together with --socks-password, the SOCKS listener requires
+    /// clients to authenticate. Omit for no-auth (open) SOCKS.
+    #[arg(long, env = "MADHYAMAS_SOCKS_USERNAME", global = true)]
+    socks_username: Option<String>,
+
+    /// Password for SOCKS5 username/password authentication. Ignored unless
+    /// --socks-username is also set.
+    #[arg(long, env = "MADHYAMAS_SOCKS_PASSWORD", global = true)]
+    socks_password: Option<String>,
+
+    /// Enable upstream (external) proxy chaining. When set, all outbound
+    /// traffic is forwarded through the upstream proxy specified by
+    /// --upstream-proxy. This is essential for corporate networks with a
+    /// mandatory egress proxy.
+    #[arg(long, env = "MADHYAMAS_UPSTREAM_PROXY_ENABLED", global = true)]
+    upstream_proxy_enabled: bool,
+
+    /// Upstream proxy host:port (e.g. `corp-proxy.example.com:8080`).
+    /// When --upstream-proxy-enabled is set, this must be provided.
+    /// The protocol is determined by --upstream-protocol (default: http).
+    #[arg(long, env = "MADHYAMAS_UPSTREAM_PROXY", global = true)]
+    upstream_proxy: Option<String>,
+
+    /// Upstream proxy protocol: `http`, `https`, or `socks5`.
+    /// Defaults to `http`. `https` uses a TLS-wrapped HTTP proxy (works
+    /// for HTTP forwarding via reqwest; not supported for raw TCP
+    /// tunneling). `socks5` uses SOCKS5 (RFC 1928/1929).
+    #[arg(long, env = "MADHYAMAS_UPSTREAM_PROTOCOL", global = true)]
+    upstream_protocol: Option<String>,
+
+    /// Upstream proxy Basic-auth credentials in `username:password` format.
+    /// For SOCKS5, this uses RFC 1929 username/password authentication.
+    #[arg(long, env = "MADHYAMAS_UPSTREAM_AUTH", global = true)]
+    upstream_auth: Option<String>,
+
+    /// Comma-separated list of hosts/CIDRs to bypass the upstream proxy
+    /// (e.g. `localhost,127.0.0.0/8,*.internal.corp`). Matching is
+    /// case-insensitive; supports suffix matching and CIDR notation.
+    #[arg(long, env = "MADHYAMAS_UPSTREAM_NO_PROXY", global = true)]
+    upstream_no_proxy: Option<String>,
 
     /// Enable API rate limiting (disabled by default).
     ///
@@ -222,6 +277,116 @@ async fn main() -> Result<()> {
     }
 }
 
+/// Build the [`UpstreamProxyConfig`] from CLI args, falling back to the
+/// saved config when CLI flags are not provided.
+///
+/// Precedence (per field):
+/// 1. CLI flag (if set)
+/// 2. Saved config (if present)
+/// 3. Default
+///
+/// The `--upstream-proxy` flag accepts `host:port` and is split into the
+/// `host` and `port` fields. The `--upstream-auth` flag accepts
+/// `username:password` and is split into `auth_username`/`auth_password`.
+/// The `--upstream-no-proxy` flag is a comma-separated list.
+fn build_upstream_proxy_config(args: &Args, saved: &Option<ProxyConfig>) -> UpstreamProxyConfig {
+    let default = UpstreamProxyConfig::default();
+    let saved_upstream = saved.as_ref().map(|s| &s.upstream_proxy);
+
+    // Determine enabled state: CLI flag OR saved config (so runtime API
+    // changes persist). If neither is set, defaults to false.
+    let enabled = if args.upstream_proxy_enabled {
+        true
+    } else {
+        saved_upstream.map(|u| u.enabled).unwrap_or(default.enabled)
+    };
+
+    // Parse host:port from --upstream-proxy, or fall back to saved/default.
+    let (host, port) = if let Some(ref proxy_str) = args.upstream_proxy {
+        parse_host_port(proxy_str).unwrap_or((String::new(), 0))
+    } else {
+        (
+            saved_upstream.map(|u| u.host.clone()).unwrap_or(default.host.clone()),
+            saved_upstream.map(|u| u.port).unwrap_or(default.port),
+        )
+    };
+
+    // Protocol: CLI flag > saved > default
+    let protocol = args
+        .upstream_protocol
+        .as_ref()
+        .map(|s| s.trim().to_lowercase())
+        .or_else(|| saved_upstream.map(|u| u.protocol.clone()))
+        .unwrap_or(default.protocol);
+
+    // Auth: CLI flag > saved > default
+    let (auth_username, auth_password) = if let Some(ref auth_str) = args.upstream_auth {
+        parse_auth_credentials(auth_str)
+    } else {
+        (
+            saved_upstream.and_then(|u| u.auth_username.clone()),
+            saved_upstream.and_then(|u| u.auth_password.clone()),
+        )
+    };
+
+    // No-proxy hosts: CLI flag > saved > default
+    let no_proxy_hosts = if let Some(ref no_proxy_str) = args.upstream_no_proxy {
+        no_proxy_str
+            .split(',')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        saved_upstream
+            .map(|u| u.no_proxy_hosts.clone())
+            .unwrap_or(default.no_proxy_hosts)
+    };
+
+    UpstreamProxyConfig {
+        enabled,
+        protocol,
+        host,
+        port,
+        auth_username,
+        auth_password,
+        no_proxy_hosts,
+    }
+}
+
+/// Parse a `host:port` string into its components.
+fn parse_host_port(s: &str) -> Option<(String, u16)> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // Handle IPv6 addresses in brackets: [::1]:8080
+    if let Some(rest) = s.strip_prefix('[') {
+        if let Some(end) = rest.find(']') {
+            let host = &rest[..end];
+            let after = &rest[end + 1..];
+            if let Some(port_str) = after.strip_prefix(':') {
+                let port = port_str.parse::<u16>().ok()?;
+                return Some((host.to_string(), port));
+            }
+        }
+    }
+    // Regular host:port
+    if let Some((host, port_str)) = s.rsplit_once(':') {
+        let port = port_str.parse::<u16>().ok()?;
+        return Some((host.to_string(), port));
+    }
+    None
+}
+
+/// Parse `username:password` into its components.
+fn parse_auth_credentials(s: &str) -> (Option<String>, Option<String>) {
+    if let Some((user, pass)) = s.split_once(':') {
+        (Some(user.to_string()), Some(pass.to_string()))
+    } else {
+        (Some(s.to_string()), None)
+    }
+}
+
 async fn run_proxy_server(args: Args) -> Result<()> {
     info!("Starting Madhyamas...");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
@@ -233,6 +398,9 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     // can temporarily override settings without editing the config file.
     let saved = ProxyConfig::load_saved();
     let defaults = ProxyConfig::default();
+    // Compute the upstream proxy config before the struct construction
+    // because several `args.*` fields are moved by `unwrap_or_else` below.
+    let upstream_proxy = build_upstream_proxy_config(&args, &saved);
     let config = ProxyConfig {
         proxy_port: args.proxy_port,
         api_port: args.api_port,
@@ -274,6 +442,32 @@ async fn run_proxy_server(args: Args) -> Result<()> {
             .as_ref()
             .map(|s| s.enable_h2_downstream)
             .unwrap_or(defaults.enable_h2_downstream),
+        // SOCKS5 listener: --enable-socks turns it on; the port/auth fields
+        // fall back to the saved config (if any) so runtime API changes to
+        // SOCKS auth persist across restarts, then to CLI args, then defaults.
+        enable_socks: args.enable_socks
+            || saved
+                .as_ref()
+                .map(|s| s.enable_socks)
+                .unwrap_or(defaults.enable_socks),
+        socks_port: Some(args.socks_port.unwrap_or_else(|| {
+            saved
+                .as_ref()
+                .and_then(|s| s.socks_port)
+                .unwrap_or(defaults.socks_port.unwrap_or(1080))
+        })),
+        socks_auth_username: args
+            .socks_username
+            .clone()
+            .or_else(|| saved.as_ref().and_then(|s| s.socks_auth_username.clone())),
+        socks_auth_password: args
+            .socks_password
+            .clone()
+            .or_else(|| saved.as_ref().and_then(|s| s.socks_auth_password.clone())),
+        // Upstream proxy chaining: CLI flags take precedence over saved
+        // config. When --upstream-proxy-enabled is not set, fall back to
+        // the saved config (if any) so runtime API changes persist.
+        upstream_proxy,
     };
 
     if saved.is_some() {
@@ -423,6 +617,37 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     info!("Configure your browser/app to use the proxy:");
     info!("  HTTP Proxy: {}:{}", config.host, config.proxy_port);
     info!("  HTTPS Proxy: {}:{}", config.host, config.proxy_port);
+    if config.enable_socks {
+        info!(
+            "  SOCKS5 Proxy: {}:{}{}",
+            config.host,
+            config.socks_port(),
+            if config.socks_auth_enabled() {
+                " (auth required)"
+            } else {
+                ""
+            }
+        );
+    }
+    if config.upstream_proxy_active() {
+        info!(
+            "  Upstream proxy: {}://{}:{}{}",
+            config.upstream_proxy.protocol,
+            config.upstream_proxy.host,
+            config.upstream_proxy.port,
+            if config.upstream_proxy.auth_enabled() {
+                " (auth required)"
+            } else {
+                ""
+            }
+        );
+        if !config.upstream_proxy.no_proxy_hosts.is_empty() {
+            info!(
+                "  Upstream bypass: {}",
+                config.upstream_proxy.no_proxy_hosts.join(", ")
+            );
+        }
+    }
     info!("");
     info!("To intercept HTTPS, install the CA certificate:");
     info!(
@@ -474,3 +699,73 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     info!("Madhyamas stopped. Goodbye!");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_host_port_regular() {
+        let (host, port) = parse_host_port("proxy.example.com:8080").unwrap();
+        assert_eq!(host, "proxy.example.com");
+        assert_eq!(port, 8080);
+    }
+
+    #[test]
+    fn parse_host_port_ip() {
+        let (host, port) = parse_host_port("127.0.0.1:1080").unwrap();
+        assert_eq!(host, "127.0.0.1");
+        assert_eq!(port, 1080);
+    }
+
+    #[test]
+    fn parse_host_port_ipv6_bracketed() {
+        let (host, port) = parse_host_port("[::1]:1080").unwrap();
+        assert_eq!(host, "::1");
+        assert_eq!(port, 1080);
+    }
+
+    #[test]
+    fn parse_host_port_trims_whitespace() {
+        let (host, port) = parse_host_port("  proxy.example.com:8080  ").unwrap();
+        assert_eq!(host, "proxy.example.com");
+        assert_eq!(port, 8080);
+    }
+
+    #[test]
+    fn parse_host_port_missing_port_returns_none() {
+        assert!(parse_host_port("proxy.example.com").is_none());
+    }
+
+    #[test]
+    fn parse_host_port_invalid_port_returns_none() {
+        assert!(parse_host_port("proxy.example.com:abc").is_none());
+    }
+
+    #[test]
+    fn parse_host_port_empty_returns_none() {
+        assert!(parse_host_port("").is_none());
+    }
+
+    #[test]
+    fn parse_auth_credentials_with_password() {
+        let (user, pass) = parse_auth_credentials("alice:secret");
+        assert_eq!(user.as_deref(), Some("alice"));
+        assert_eq!(pass.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn parse_auth_credentials_without_password() {
+        let (user, pass) = parse_auth_credentials("alice");
+        assert_eq!(user.as_deref(), Some("alice"));
+        assert!(pass.is_none());
+    }
+
+    #[test]
+    fn parse_auth_credentials_empty_password() {
+        let (user, pass) = parse_auth_credentials("alice:");
+        assert_eq!(user.as_deref(), Some("alice"));
+        assert_eq!(pass.as_deref(), Some(""));
+    }
+}
+

@@ -58,6 +58,17 @@ interface UpstreamConfig {
   no_proxy: string;
 }
 
+// Shape returned by GET /api/config → upstream_proxy
+interface UpstreamProxyApiConfig {
+  enabled: boolean;
+  protocol: string;
+  host: string;
+  port: number;
+  auth_enabled: boolean;
+  auth_username: string | null;
+  no_proxy_hosts: string[];
+}
+
 interface CaptureConfig {
   capture_request_bodies: boolean;
   capture_response_bodies: boolean;
@@ -339,13 +350,74 @@ function GeneralTab() {
 
 function UpstreamProxyTab() {
   const { toast } = useToast();
-  const [cfg, setCfg] = useState<UpstreamConfig>(() =>
-    loadLS(LS_UPSTREAM, DEFAULT_UPSTREAM),
-  );
+  const [cfg, setCfg] = useState<UpstreamConfig>(DEFAULT_UPSTREAM);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const save = useCallback(() => {
-    localStorage.setItem(LS_UPSTREAM, JSON.stringify(cfg));
-    toast({ description: "Upstream proxy settings saved." });
+  // Load upstream proxy config from the backend API on mount.
+  useEffect(() => {
+    apiGet<RuntimeConfig & { upstream_proxy?: UpstreamProxyApiConfig }>(
+      "/config",
+    )
+      .then((data) => {
+        const up = data.upstream_proxy;
+        if (up) {
+          setCfg({
+            enabled: up.enabled,
+            protocol: (up.protocol as "http" | "https" | "socks5") ?? "http",
+            host: up.host ?? "",
+            port: up.port ? String(up.port) : "",
+            auth_enabled: up.auth_enabled ?? false,
+            username: up.auth_username ?? "",
+            password: "", // password is write-only; never returned by API
+            no_proxy: (up.no_proxy_hosts ?? []).join(", "),
+          });
+        }
+      })
+      .catch(() => {
+        // Fall back to localStorage if the API is unavailable (e.g. older
+        // server version that doesn't support upstream_proxy in the config).
+        const ls = loadLS(LS_UPSTREAM, DEFAULT_UPSTREAM);
+        setCfg(ls);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = useCallback(async () => {
+    setSaving(true);
+    try {
+      const noProxyHosts = cfg.no_proxy
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+
+      await apiPatch("/config", {
+        upstream_proxy: {
+          enabled: cfg.enabled,
+          protocol: cfg.protocol,
+          host: cfg.host,
+          port: cfg.port ? parseInt(cfg.port) : 0,
+          auth_username: cfg.auth_enabled
+            ? cfg.username || null
+            : null,
+          auth_password: cfg.auth_enabled ? cfg.password || null : null,
+          no_proxy_hosts: noProxyHosts,
+        },
+      });
+      toast({ description: "Upstream proxy settings saved." });
+      // Clear the password field after save (it's write-only).
+      setCfg((p) => ({ ...p, password: "" }));
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? `Failed to save upstream proxy (HTTP ${err.status}): ${err.body.slice(0, 200)}`
+          : err instanceof Error
+            ? `Failed to save upstream proxy: ${err.message}`
+            : "Failed to save upstream proxy settings.";
+      toast({ description: msg, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
   }, [cfg, toast]);
 
   const reset = useCallback(() => {
@@ -353,6 +425,14 @@ function UpstreamProxyTab() {
     localStorage.removeItem(LS_UPSTREAM);
     toast({ description: "Upstream proxy settings reset." });
   }, [toast]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-48 text-muted-foreground">
+        Loading…
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -471,9 +551,9 @@ function UpstreamProxyTab() {
           <RotateCcw className="h-4 w-4 mr-2" />
           Reset
         </Button>
-        <Button onClick={save}>
+        <Button onClick={save} disabled={saving}>
           <Save className="h-4 w-4 mr-2" />
-          Save Changes
+          {saving ? "Saving…" : "Save Changes"}
         </Button>
       </div>
     </div>

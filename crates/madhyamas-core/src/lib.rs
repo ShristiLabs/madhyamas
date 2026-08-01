@@ -22,7 +22,7 @@ pub mod traffic;
 pub mod websocket;
 
 // Re-exports from config
-pub use config::ProxyConfig;
+pub use config::{ProxyConfig, UpstreamProxyConfig};
 
 // Re-exports from traffic
 pub use traffic::{

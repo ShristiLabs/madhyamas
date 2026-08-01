@@ -113,7 +113,7 @@ cd web && npm run build
 
 ## Configuration
 
-**CLI Flags**: `--proxy-port`, `--api-port`, `--host`, `--public-ip`, `--verbose`, `--no-https`
+**CLI Flags**: `--proxy-port`, `--api-port`, `--host`, `--public-ip`, `--verbose`, `--no-https`, `--enable-socks`, `--socks-port`, `--socks-username`, `--socks-password`, `--upstream-proxy-enabled`, `--upstream-proxy`, `--upstream-protocol`, `--upstream-auth`, `--upstream-no-proxy`
 
 **Environment Variables**:
 - `RUST_LOG` - Logging level (trace/debug/info/warn/error)
@@ -123,6 +123,27 @@ cd web && npm run build
 - `MADHYAMAS_PUBLIC_IP` - Public IP shown to users for remote access
 - `MADHYAMAS_API_URL` - API URL for CLI/MCP modes (default: http://127.0.0.1:3001)
 - `MADHYAMAS_WEB_DIR` - Override web asset directory (dev only; defaults to embedded)
+- `MADHYAMAS_ENABLE_SOCKS` - Enable the SOCKS5 listener (default: false)
+- `MADHYAMAS_SOCKS_PORT` - SOCKS5 listener port (default: 1080)
+- `MADHYAMAS_SOCKS_USERNAME` - SOCKS5 username/password auth username (optional)
+- `MADHYAMAS_SOCKS_PASSWORD` - SOCKS5 username/password auth password (optional)
+- `MADHYAMAS_UPSTREAM_PROXY_ENABLED` - Enable upstream proxy chaining (default: false)
+- `MADHYAMAS_UPSTREAM_PROXY` - Upstream proxy host:port (e.g. `corp-proxy:8080`)
+- `MADHYAMAS_UPSTREAM_PROTOCOL` - Upstream proxy protocol: http/https/socks5 (default: http)
+- `MADHYAMAS_UPSTREAM_AUTH` - Upstream proxy auth as `username:password`
+- `MADHYAMAS_UPSTREAM_NO_PROXY` - Comma-separated bypass list (e.g. `localhost,127.0.0.0/8`)
+
+**SOCKS5 Proxy**: When `--enable-socks` is set, Madhyamas also listens on the
+SOCKS5 port (default `1080`) as a blind TCP tunnel (RFC 1928/1929). SOCKS
+connections are recorded as passthrough traffic entries (`http_version:
+SOCKS5`). HTTPS cannot be MITM-intercepted via SOCKS — use the HTTP proxy port
+with `CONNECT` for that. See [docs/SOCKS_PROXY.md](docs/SOCKS_PROXY.md).
+
+**Upstream Proxy Chaining**: When `--upstream-proxy-enabled` is set, all
+outbound traffic is routed through the configured upstream proxy (HTTP
+CONNECT, HTTPS, or SOCKS5). A bypass list (`--upstream-no-proxy`) excludes
+specified hosts/CIDRs from the upstream proxy. See
+[docs/UPSTREAM_PROXY.md](docs/UPSTREAM_PROXY.md).
 
 **Data Directory**: `~/.madhyamas/` (certs, logs, traffic.db)
 

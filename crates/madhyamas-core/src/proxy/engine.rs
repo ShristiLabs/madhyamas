@@ -88,7 +88,11 @@ impl ProxyEngine {
         // Build a shared HTTP client for all upstream forwarding.
         //
         // Key settings:
-        // - `no_proxy()`: never use system proxy settings (avoids feedback loop
+        // - Upstream proxy chaining: when `upstream_proxy` is enabled in the
+        //   config, we attach a `reqwest::Proxy` so all outbound HTTP/HTTPS
+        //   requests are forwarded through the configured corporate/SOCKS5
+        //   proxy. Otherwise we call `no_proxy()` to avoid picking up system
+        //   proxy environment variables (which could create a feedback loop
         //   where the proxy forwards to itself).
         // - `redirect(Policy::none())`: the proxy must return 3xx responses to
         //   the client; it should not silently follow redirects upstream.
@@ -100,15 +104,40 @@ impl ProxyEngine {
         //   servers reject or rate-limit clients that open a new connection
         //   for every request.
         // - Generous timeout (120s) for slow APIs / large downloads.
-        let http_client = reqwest::Client::builder()
+        let upstream_cfg = config.read().upstream_proxy.clone();
+        let mut client_builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
             .timeout(std::time::Duration::from_secs(120))
             .pool_idle_timeout(std::time::Duration::from_secs(90))
             .pool_max_idle_per_host(20)
             .gzip(false)
             .deflate(false)
-            .brotli(false)
+            .brotli(false);
+
+        if let Some(proxy_url) = upstream_cfg.proxy_url()? {
+            info!(
+                "Upstream proxy chaining enabled: {} (protocol={}, auth={})",
+                proxy_url,
+                upstream_cfg.protocol,
+                if upstream_cfg.auth_enabled() { "yes" } else { "no" }
+            );
+            let mut proxy = reqwest::Proxy::all(&proxy_url).map_err(|e| {
+                Error::Proxy(format!("Failed to configure upstream proxy: {}", e))
+            })?;
+            if upstream_cfg.auth_enabled() {
+                proxy = proxy.basic_auth(
+                    upstream_cfg.auth_username.as_deref().unwrap_or(""),
+                    upstream_cfg.auth_password.as_deref().unwrap_or(""),
+                );
+            }
+            client_builder = client_builder.proxy(proxy);
+        } else {
+            // No upstream proxy configured — explicitly disable system proxy
+            // detection to avoid feedback loops and unexpected routing.
+            client_builder = client_builder.no_proxy();
+        }
+
+        let http_client = client_builder
             .build()
             .map_err(|e| Error::Proxy(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -293,6 +322,33 @@ impl ProxyEngine {
 
         *self.running.write() = true;
         info!("Proxy server listening on {}", addr);
+
+        // Optionally start a SOCKS5 listener on a separate port. SOCKS5 is a
+        // blind TCP tunnel (RFC 1928); it runs alongside the HTTP/HTTPS proxy
+        // listener and shares the traffic store so SOCKS connections are
+        // visible in the web UI. See [`crate::proxy::socks`] for details.
+        //
+        // We spawn the SOCKS server in its own task because `serve_socks5`
+        // owns its accept loop and must run concurrently with the HTTP proxy
+        // accept loop below. The shared components are cloned out of `self`
+        // so the task is `'static` and doesn't borrow the engine.
+        if self.config.read().enable_socks {
+            let socks_config = Arc::new(self.config.read().clone());
+            let socks_traffic_store = self.traffic_store.clone();
+            let socks_traffic_tx = self.traffic_tx.clone();
+            let socks_engine = self.clone();
+            tokio::spawn(async move {
+                let ctx = crate::proxy::socks::SocksContext {
+                    config: socks_config,
+                    traffic_store: socks_traffic_store,
+                    traffic_tx: socks_traffic_tx,
+                };
+                if let Err(e) = crate::proxy::socks::serve_socks5(ctx).await {
+                    tracing::error!("SOCKS5 server error: {}", e);
+                }
+                drop(socks_engine); // keep engine alive for the task's lifetime
+            });
+        }
 
         loop {
             let (client_socket, client_addr) = listener
@@ -559,11 +615,81 @@ impl ProxyEngine {
         let _ = self.traffic_store.store_request(&entry);
         let _ = self.traffic_tx.send(entry.clone());
 
-        // Connect to the upstream server
+        // Connect to the upstream server.
+        //
+        // When upstream proxy chaining is active and the target host is not
+        // in the bypass list, we tunnel through the upstream proxy using
+        // HTTP CONNECT or SOCKS5 (depending on the configured protocol).
+        // Otherwise we connect directly to the target.
         let upstream_addr = format!("{}:{}", host, port);
-        let mut upstream_socket =
-            match tokio::time::timeout(Duration::from_secs(30), TcpStream::connect(&upstream_addr))
-                .await
+        let config_snapshot = self.config.read().clone();
+        let use_upstream_proxy =
+            config_snapshot.upstream_proxy_active() && !config_snapshot.should_bypass_upstream(host);
+
+        let mut upstream_socket = if use_upstream_proxy {
+            info!(
+                "Passthrough: tunneling {} via upstream proxy {}:{} ({})",
+                upstream_addr,
+                config_snapshot.upstream_proxy.host,
+                config_snapshot.upstream_proxy.port,
+                config_snapshot.upstream_proxy.protocol
+            );
+            match crate::proxy::upstream_proxy::connect_through_upstream(
+                &config_snapshot.upstream_proxy,
+                host,
+                port,
+            )
+            .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(
+                        "Passthrough: upstream proxy connect to {} failed: {}",
+                        upstream_addr, e
+                    );
+                    let _ = self.traffic_store.store_response(
+                        &entry.id,
+                        &crate::traffic::ResponseData {
+                            status_code: 502,
+                            status_message: Some(
+                                "Bad Gateway (Upstream Proxy Connect Failed)".to_string(),
+                            ),
+                            headers: std::collections::HashMap::new(),
+                            body: Some(
+                                format!(
+                                    "SSL passthrough connection through upstream proxy failed.\n\n\
+                                     Target: {}\n\
+                                     Upstream proxy: {}:{} ({})\n\
+                                     Error: {}\n\n\
+                                     CONNECT request headers:\n{}",
+                                    upstream_addr,
+                                    config_snapshot.upstream_proxy.host,
+                                    config_snapshot.upstream_proxy.port,
+                                    config_snapshot.upstream_proxy.protocol,
+                                    e,
+                                    connect_headers
+                                        .iter()
+                                        .map(|(k, v)| format!("  {}: {}", k, v))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                )
+                                .into_bytes(),
+                            ),
+                            content_type: Some("text/plain".to_string()),
+                            duration_ms: 0,
+                            http_version: Some("HTTP/1.1".to_string()),
+                        },
+                    );
+                    let _ = self.traffic_tx.send(entry);
+                    return Err(Error::Proxy(format!("Upstream proxy connect failed: {}", e)));
+                }
+            }
+        } else {
+            match tokio::time::timeout(
+                Duration::from_secs(30),
+                TcpStream::connect(&upstream_addr),
+            )
+            .await
             {
                 Ok(Ok(s)) => s,
                 Ok(Err(e)) => {
@@ -631,7 +757,8 @@ impl ProxyEngine {
                     let _ = self.traffic_tx.send(entry);
                     return Err(Error::Proxy("Passthrough connect timeout".into()));
                 }
-            };
+            }
+        };
 
         // Record successful connection with a 200 response.
         // Include a descriptive body explaining what happened (visible in
@@ -1037,10 +1164,26 @@ impl ProxyEngine {
     ) -> crate::Result<()> {
         info!("WebSocket upgrade detected (TLS): {}", request_data.url);
 
-        // Connect to upstream WebSocket server
-        let upstream_socket = TcpStream::connect((host, port))
+        // Connect to upstream WebSocket server. When upstream proxy chaining
+        // is active and the target is not bypassed, tunnel through the proxy.
+        let config_snapshot = self.config.read().clone();
+        let use_upstream_proxy = config_snapshot.upstream_proxy_active()
+            && !config_snapshot.should_bypass_upstream(host);
+        let upstream_socket = if use_upstream_proxy {
+            crate::proxy::upstream_proxy::connect_through_upstream(
+                &config_snapshot.upstream_proxy,
+                host,
+                port,
+            )
             .await
-            .map_err(|e| Error::Proxy(format!("Failed to connect to upstream: {}", e)))?;
+            .map_err(|e| {
+                Error::Proxy(format!("Failed to connect via upstream proxy: {}", e))
+            })?
+        } else {
+            TcpStream::connect((host, port))
+                .await
+                .map_err(|e| Error::Proxy(format!("Failed to connect to upstream: {}", e)))?
+        };
 
         // Create TLS connector for upstream
         let tls_config = self.create_tls_client_config();
@@ -1141,10 +1284,26 @@ impl ProxyEngine {
     ) -> crate::Result<()> {
         info!("WebSocket upgrade detected (HTTP): {}", request_data.url);
 
-        // Connect to upstream WebSocket server
-        let mut upstream_socket = TcpStream::connect((host, port))
+        // Connect to upstream WebSocket server. When upstream proxy chaining
+        // is active and the target is not bypassed, tunnel through the proxy.
+        let config_snapshot = self.config.read().clone();
+        let use_upstream_proxy = config_snapshot.upstream_proxy_active()
+            && !config_snapshot.should_bypass_upstream(host);
+        let mut upstream_socket = if use_upstream_proxy {
+            crate::proxy::upstream_proxy::connect_through_upstream(
+                &config_snapshot.upstream_proxy,
+                host,
+                port,
+            )
             .await
-            .map_err(|e| Error::Proxy(format!("Failed to connect to upstream: {}", e)))?;
+            .map_err(|e| {
+                Error::Proxy(format!("Failed to connect via upstream proxy: {}", e))
+            })?
+        } else {
+            TcpStream::connect((host, port))
+                .await
+                .map_err(|e| Error::Proxy(format!("Failed to connect to upstream: {}", e)))?
+        };
 
         // Forward the WebSocket upgrade request to upstream
         let upgrade_request = self.build_websocket_upgrade_request(request_data);

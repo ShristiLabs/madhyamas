@@ -71,6 +71,299 @@ pub struct ProxyConfig {
     /// Defaults to `false` for safety; flip to `true` once validated.
     #[serde(default)]
     pub enable_h2_downstream: bool,
+
+    /// Enable a SOCKS5 proxy listener (RFC 1928) in addition to the HTTP/HTTPS
+    /// proxy listener. SOCKS5 is a blind TCP tunnel: the client asks the proxy
+    /// to connect to an arbitrary `host:port` and then relays raw bytes in both
+    /// directions. This is convenient for clients (browsers, CLI tools, mobile
+    /// devices) that prefer SOCKS over HTTP CONNECT.
+    ///
+    /// Because SOCKS tunnels the client's TLS session end-to-end, HTTPS
+    /// traffic cannot be MITM-intercepted via the SOCKS port — the connection
+    /// is forwarded directly to the target. To intercept HTTPS, configure the
+    /// client to use the HTTP proxy port with CONNECT instead. HTTP traffic
+    /// sent over SOCKS is also tunneled blindly (a connection entry is still
+    /// recorded so the activity is visible in the web UI).
+    ///
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub enable_socks: bool,
+
+    /// Port for the SOCKS5 proxy listener. Only used when `enable_socks` is
+    /// `true`. Defaults to `1080` (the conventional SOCKS port). The SOCKS
+    /// listener binds to the same `host` as the HTTP proxy.
+    #[serde(default)]
+    pub socks_port: Option<u16>,
+
+    /// Optional username for SOCKS5 username/password authentication
+    /// (RFC 1929). When `None`, the SOCKS listener advertises only the
+    /// "no authentication required" method. When set together with
+    /// `socks_auth_password`, the listener requires credentials from
+    /// clients. Defaults to `None` (no auth).
+    #[serde(default)]
+    pub socks_auth_username: Option<String>,
+
+    /// Optional password for SOCKS5 username/password authentication.
+    /// Ignored unless `socks_auth_username` is also set.
+    #[serde(default)]
+    pub socks_auth_password: Option<String>,
+
+    /// Upstream (external) proxy chaining configuration.
+    ///
+    /// When enabled, all outbound traffic — both the `reqwest`-based HTTP
+    /// forwarding path and the raw TCP `CONNECT`/passthrough tunnels — is
+    /// routed through the configured upstream proxy. This is essential for
+    /// corporate environments where direct internet access is blocked and a
+    /// mandatory egress proxy must be used.
+    ///
+    /// Supported upstream protocols: `http`, `https`, and `socks5`.
+    /// Basic authentication (username/password) is supported for all three.
+    /// The `no_proxy_hosts` bypass list allows specific hosts/CIDRs to skip
+    /// the upstream proxy and connect directly.
+    ///
+    /// See [`UpstreamProxyConfig`] for field details.
+    #[serde(default)]
+    pub upstream_proxy: UpstreamProxyConfig,
+}
+
+/// Upstream (external) proxy chaining configuration.
+///
+/// Madhyamas forwards all outbound traffic through this proxy when `enabled`
+/// is `true`. This is the equivalent of Charles Proxy's "External Proxy"
+/// feature and is critical for:
+///
+/// - Corporate networks with a mandatory egress proxy
+/// - Chaining multiple debugging proxies (e.g. Madhyamas → mitmproxy → internet)
+/// - Routing traffic through a SOCKS5 gateway (e.g. SSH dynamic forwarding)
+///
+/// # Protocols
+///
+/// | Protocol | Use case |
+/// |----------|----------|
+/// | `http`   | Plain HTTP CONNECT proxy (most common corporate proxy) |
+/// | `https`  | TLS-wrapped HTTP proxy (proxy URL is `https://...`) |
+/// | `socks5` | SOCKS5 proxy (e.g. `ssh -D 1080` dynamic forwarding) |
+///
+/// # Bypass list
+///
+/// `no_proxy_hosts` is a list of hostnames/CIDRs that should bypass the
+/// upstream proxy and connect directly. Matching is case-insensitive and
+/// supports suffix matching (e.g. `example.com` matches `api.example.com`)
+/// and exact CIDR matching (e.g. `192.168.0.0/16`). The special token `*`
+/// disables bypass (everything goes through the proxy); an empty list also
+/// means "no bypass".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpstreamProxyConfig {
+    /// Master switch. When `false`, all upstream proxy fields are ignored
+    /// and Madhyamas connects directly to target servers (the default).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Upstream proxy protocol: `"http"`, `"https"`, or `"socks5"`.
+    /// Defaults to `"http"` when unset.
+    #[serde(default = "default_upstream_protocol")]
+    pub protocol: String,
+
+    /// Upstream proxy hostname or IP address (e.g. `corp-proxy.example.com`).
+    #[serde(default)]
+    pub host: String,
+
+    /// Upstream proxy port (e.g. `8080`).
+    #[serde(default)]
+    pub port: u16,
+
+    /// Optional Basic-auth username. When set, `auth_password` must also be
+    /// set. For SOCKS5 this uses RFC 1929 username/password authentication.
+    #[serde(default)]
+    pub auth_username: Option<String>,
+
+    /// Optional Basic-auth password. Ignored unless `auth_username` is set.
+    #[serde(default)]
+    pub auth_password: Option<String>,
+
+    /// Bypass list: hosts/CIDRs that connect directly, bypassing the upstream
+    /// proxy. See the type-level docs for matching semantics.
+    #[serde(default)]
+    pub no_proxy_hosts: Vec<String>,
+}
+
+impl Default for UpstreamProxyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            protocol: default_upstream_protocol(),
+            host: String::new(),
+            port: 0,
+            auth_username: None,
+            auth_password: None,
+            no_proxy_hosts: Vec::new(),
+        }
+    }
+}
+
+/// Default value provider for [`UpstreamProxyConfig::protocol`].
+fn default_upstream_protocol() -> String {
+    "http".to_string()
+}
+
+impl UpstreamProxyConfig {
+    /// Build the reqwest-compatible proxy URL string.
+    ///
+    /// Returns `None` when the config is disabled or the host is empty.
+    /// The returned URL has the form `<protocol>://<host>:<port>` (no
+    /// credentials — those are attached separately via `reqwest::Proxy::
+    /// basic_auth` to avoid leaking them in logs/URLs).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `protocol` is not one of `http`, `https`, or
+    /// `socks5`.
+    pub fn proxy_url(&self) -> crate::Result<Option<String>> {
+        if !self.enabled || self.host.trim().is_empty() {
+            return Ok(None);
+        }
+        let scheme = match self.protocol.to_lowercase().as_str() {
+            "http" => "http",
+            "https" => "https",
+            "socks5" => "socks5",
+            other => {
+                return Err(crate::Error::Config(format!(
+                    "Invalid upstream proxy protocol: `{other}` (expected http, https, or socks5)"
+                )));
+            }
+        };
+        Ok(Some(format!("{}://{}:{}", scheme, self.host, self.port)))
+    }
+
+    /// Whether Basic/SOCKS5 authentication credentials are configured.
+    pub fn auth_enabled(&self) -> bool {
+        self.auth_username.is_some() && self.auth_password.is_some()
+    }
+
+    /// Check whether a target host should bypass the upstream proxy.
+    ///
+    /// Matching is case-insensitive. Supports:
+    /// - Suffix matching: `example.com` matches `api.example.com`
+    /// - Exact hostname: `localhost`
+    /// - CIDR notation: `192.168.0.0/16`, `10.0.0.0/8`
+    /// - Bare IP: `127.0.0.1`
+    ///
+    /// An empty bypass list never bypasses (returns `false`).
+    pub fn should_bypass(&self, target_host: &str) -> bool {
+        if self.no_proxy_hosts.is_empty() {
+            return false;
+        }
+        let target = target_host.trim().trim_end_matches('.').to_lowercase();
+        if target.is_empty() {
+            return false;
+        }
+
+        for entry in &self.no_proxy_hosts {
+            let entry = entry.trim().trim_end_matches('.').to_lowercase();
+            if entry.is_empty() {
+                continue;
+            }
+
+            // CIDR notation (contains '/'): parse and check IP containment.
+            if let Some((ip_str, cidr_str)) = entry.split_once('/') {
+                if let (Ok(ip), Ok(cidr)) = (
+                    ip_str.parse::<std::net::IpAddr>(),
+                    cidr_str.parse::<u8>(),
+                ) {
+                    if let Ok(net) = ipnet_like(ip, cidr) {
+                        if let Ok(target_ip) = target.parse::<std::net::IpAddr>() {
+                            if net.contains(&target_ip) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Bare IP address: exact match.
+            if entry.parse::<std::net::IpAddr>().is_ok() {
+                if entry == target {
+                    return true;
+                }
+                continue;
+            }
+
+            // Wildcard suffix: "*.example.com" matches "api.example.com".
+            let entry_pattern = entry.strip_prefix("*.").unwrap_or(&entry);
+            if target == entry_pattern || target.ends_with(&format!(".{entry_pattern}")) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+/// Minimal CIDR containment helper that avoids pulling in a new dependency.
+///
+/// Constructs an `IpNet`-like range from an IP address and a prefix length
+/// and provides `contains()` for membership tests. Returns `Err` if the
+/// prefix length is out of range for the address family.
+fn ipnet_like(ip: std::net::IpAddr, prefix: u8) -> Result<CidrRange, String> {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            if prefix > 32 {
+                return Err(format!("IPv4 prefix too large: {prefix}"));
+            }
+            let mask: u32 = if prefix == 0 {
+                0
+            } else {
+                (!0u32) << (32 - prefix)
+            };
+            let network = u32::from_be_bytes(v4.octets()) & mask;
+            Ok(CidrRange::V4 { network, mask })
+        }
+        std::net::IpAddr::V6(v6) => {
+            if prefix > 128 {
+                return Err(format!("IPv6 prefix too large: {prefix}"));
+            }
+            let octets = v6.octets();
+            let mut network = [0u8; 16];
+            let mut mask = [0u8; 16];
+            // Build the mask one bit at a time.
+            for i in 0..128 {
+                if i < prefix as usize {
+                    mask[i / 8] |= 0x80 >> (i % 8);
+                }
+            }
+            for i in 0..16 {
+                network[i] = octets[i] & mask[i];
+            }
+            Ok(CidrRange::V6 { network, mask })
+        }
+    }
+}
+
+/// A minimal CIDR range supporting both IPv4 and IPv6 containment tests.
+enum CidrRange {
+    V4 { network: u32, mask: u32 },
+    V6 { network: [u8; 16], mask: [u8; 16] },
+}
+
+impl CidrRange {
+    fn contains(&self, addr: &std::net::IpAddr) -> bool {
+        match (self, addr) {
+            (CidrRange::V4 { network, mask }, std::net::IpAddr::V4(v4)) => {
+                (u32::from_be_bytes(v4.octets()) & mask) == *network
+            }
+            (CidrRange::V6 { network, mask }, std::net::IpAddr::V6(v6)) => {
+                let octets = v6.octets();
+                for i in 0..16 {
+                    if (octets[i] & mask[i]) != network[i] {
+                        return false;
+                    }
+                }
+                true
+            }
+            _ => false, // address family mismatch
+        }
+    }
 }
 
 impl Default for ProxyConfig {
@@ -90,6 +383,11 @@ impl Default for ProxyConfig {
             max_body_size: 20 * 1024 * 1024, // 20 MB
             passthrough_domains: Vec::new(),
             enable_h2_downstream: false,
+            enable_socks: false,
+            socks_port: None,
+            socks_auth_username: None,
+            socks_auth_password: None,
+            upstream_proxy: UpstreamProxyConfig::default(),
         }
     }
 }
@@ -263,6 +561,22 @@ impl ProxyConfig {
         format!("{}:{}", self.host, self.api_port)
     }
 
+    /// Get the effective SOCKS5 port. Returns the configured `socks_port`
+    /// if set, otherwise the conventional default of `1080`.
+    pub fn socks_port(&self) -> u16 {
+        self.socks_port.unwrap_or(1080)
+    }
+
+    /// Get the SOCKS5 listener address (`host:socks_port`).
+    pub fn socks_addr(&self) -> String {
+        format!("{}:{}", self.host, self.socks_port())
+    }
+
+    /// Whether SOCKS5 username/password authentication is configured.
+    pub fn socks_auth_enabled(&self) -> bool {
+        self.socks_auth_username.is_some()
+    }
+
     /// Ensure all required data directories exist
     pub fn ensure_directories(&self) -> crate::Result<()> {
         std::fs::create_dir_all(&self.cert_path)
@@ -290,5 +604,337 @@ impl ProxyConfig {
             let d = d.trim().trim_end_matches('.');
             !d.is_empty() && (host == d || host.ends_with(&format!(".{}", d)))
         })
+    }
+
+    /// Check if a target host should bypass the upstream proxy.
+    ///
+    /// Delegates to [`UpstreamProxyConfig::should_bypass`]. When the upstream
+    /// proxy is disabled, this always returns `false` (no bypass needed —
+    /// there is nothing to bypass).
+    pub fn should_bypass_upstream(&self, host: &str) -> bool {
+        self.upstream_proxy.enabled && self.upstream_proxy.should_bypass(host)
+    }
+
+    /// Whether upstream proxy chaining is active (enabled with a non-empty host).
+    pub fn upstream_proxy_active(&self) -> bool {
+        self.upstream_proxy.enabled && !self.upstream_proxy.host.trim().is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(enabled: bool, protocol: &str, host: &str, port: u16) -> UpstreamProxyConfig {
+        UpstreamProxyConfig {
+            enabled,
+            protocol: protocol.to_string(),
+            host: host.to_string(),
+            port,
+            auth_username: None,
+            auth_password: None,
+            no_proxy_hosts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn proxy_url_returns_none_when_disabled() {
+        let c = cfg(false, "http", "proxy.example.com", 8080);
+        assert_eq!(c.proxy_url().unwrap(), None);
+    }
+
+    #[test]
+    fn proxy_url_returns_none_when_host_empty() {
+        let c = cfg(true, "http", "", 8080);
+        assert_eq!(c.proxy_url().unwrap(), None);
+    }
+
+    #[test]
+    fn proxy_url_builds_http_url() {
+        let c = cfg(true, "http", "corp-proxy.example.com", 8080);
+        assert_eq!(
+            c.proxy_url().unwrap().as_deref(),
+            Some("http://corp-proxy.example.com:8080")
+        );
+    }
+
+    #[test]
+    fn proxy_url_builds_https_url() {
+        let c = cfg(true, "https", "secure-proxy.example.com", 443);
+        assert_eq!(
+            c.proxy_url().unwrap().as_deref(),
+            Some("https://secure-proxy.example.com:443")
+        );
+    }
+
+    #[test]
+    fn proxy_url_builds_socks5_url() {
+        let c = cfg(true, "socks5", "127.0.0.1", 1080);
+        assert_eq!(
+            c.proxy_url().unwrap().as_deref(),
+            Some("socks5://127.0.0.1:1080")
+        );
+    }
+
+    #[test]
+    fn proxy_url_rejects_invalid_protocol() {
+        let c = cfg(true, "ftp", "proxy.example.com", 8080);
+        assert!(c.proxy_url().is_err());
+    }
+
+    #[test]
+    fn proxy_url_normalizes_protocol_case() {
+        let c = cfg(true, "SOCKS5", "127.0.0.1", 1080);
+        assert_eq!(c.proxy_url().unwrap().as_deref(), Some("socks5://127.0.0.1:1080"));
+    }
+
+    #[test]
+    fn auth_enabled_requires_both_username_and_password() {
+        let mut c = cfg(true, "http", "proxy", 8080);
+        assert!(!c.auth_enabled());
+        c.auth_username = Some("user".to_string());
+        assert!(!c.auth_enabled());
+        c.auth_password = Some("pass".to_string());
+        assert!(c.auth_enabled());
+    }
+
+    #[test]
+    fn should_bypass_empty_list_never_bypasses() {
+        let c = cfg(true, "http", "proxy", 8080);
+        assert!(!c.should_bypass("localhost"));
+        assert!(!c.should_bypass("example.com"));
+    }
+
+    #[test]
+    fn should_bypass_exact_hostname_match() {
+        let c = UpstreamProxyConfig {
+            no_proxy_hosts: vec!["localhost".to_string()],
+            ..cfg(true, "http", "proxy", 8080)
+        };
+        assert!(c.should_bypass("localhost"));
+        // Suffix matching: "localhost" matches "api.localhost" (consistent
+        // with the existing should_passthrough logic).
+        assert!(c.should_bypass("api.localhost"));
+        // But not a completely different host.
+        assert!(!c.should_bypass("example.com"));
+    }
+
+    #[test]
+    fn should_bypass_suffix_match() {
+        let c = UpstreamProxyConfig {
+            no_proxy_hosts: vec!["example.com".to_string()],
+            ..cfg(true, "http", "proxy", 8080)
+        };
+        assert!(c.should_bypass("example.com"));
+        assert!(c.should_bypass("api.example.com"));
+        assert!(c.should_bypass("www.example.com"));
+        assert!(!c.should_bypass("notexample.com"));
+    }
+
+    #[test]
+    fn should_bypass_wildcard_suffix() {
+        let c = UpstreamProxyConfig {
+            no_proxy_hosts: vec!["*.internal.corp".to_string()],
+            ..cfg(true, "http", "proxy", 8080)
+        };
+        assert!(c.should_bypass("api.internal.corp"));
+        assert!(c.should_bypass("internal.corp"));
+        assert!(!c.should_bypass("external.corp"));
+    }
+
+    #[test]
+    fn should_bypass_bare_ipv4() {
+        let c = UpstreamProxyConfig {
+            no_proxy_hosts: vec!["127.0.0.1".to_string()],
+            ..cfg(true, "http", "proxy", 8080)
+        };
+        assert!(c.should_bypass("127.0.0.1"));
+        assert!(!c.should_bypass("127.0.0.2"));
+    }
+
+    #[test]
+    fn should_bypass_ipv4_cidr() {
+        let c = UpstreamProxyConfig {
+            no_proxy_hosts: vec!["192.168.0.0/16".to_string()],
+            ..cfg(true, "http", "proxy", 8080)
+        };
+        assert!(c.should_bypass("192.168.1.100"));
+        assert!(c.should_bypass("192.168.0.0"));
+        assert!(c.should_bypass("192.168.255.255"));
+        assert!(!c.should_bypass("192.169.0.1"));
+        assert!(!c.should_bypass("10.0.0.1"));
+    }
+
+    #[test]
+    fn should_bypass_ipv4_cidr_24() {
+        let c = UpstreamProxyConfig {
+            no_proxy_hosts: vec!["10.0.0.0/24".to_string()],
+            ..cfg(true, "http", "proxy", 8080)
+        };
+        assert!(c.should_bypass("10.0.0.0"));
+        assert!(c.should_bypass("10.0.0.255"));
+        assert!(!c.should_bypass("10.0.1.0"));
+    }
+
+    #[test]
+    fn should_bypass_ipv6_cidr() {
+        let c = UpstreamProxyConfig {
+            no_proxy_hosts: vec!["fd00::/8".to_string()],
+            ..cfg(true, "http", "proxy", 8080)
+        };
+        assert!(c.should_bypass("fd00::1"));
+        assert!(c.should_bypass("fd12:3456::abcd"));
+        assert!(!c.should_bypass("fe00::1"));
+    }
+
+    #[test]
+    fn should_bypass_case_insensitive() {
+        let c = UpstreamProxyConfig {
+            no_proxy_hosts: vec!["Example.COM".to_string()],
+            ..cfg(true, "http", "proxy", 8080)
+        };
+        assert!(c.should_bypass("API.example.com"));
+        assert!(c.should_bypass("EXAMPLE.com"));
+    }
+
+    #[test]
+    fn should_bypass_multiple_entries() {
+        let c = UpstreamProxyConfig {
+            no_proxy_hosts: vec![
+                "localhost".to_string(),
+                "127.0.0.0/8".to_string(),
+                "*.internal.corp".to_string(),
+            ],
+            ..cfg(true, "http", "proxy", 8080)
+        };
+        assert!(c.should_bypass("localhost"));
+        assert!(c.should_bypass("127.0.0.1"));
+        assert!(c.should_bypass("127.255.255.255"));
+        assert!(c.should_bypass("api.internal.corp"));
+        assert!(!c.should_bypass("example.com"));
+    }
+
+    #[test]
+    fn should_bypass_trims_entries() {
+        let c = UpstreamProxyConfig {
+            no_proxy_hosts: vec!["  localhost  ".to_string()],
+            ..cfg(true, "http", "proxy", 8080)
+        };
+        assert!(c.should_bypass("localhost"));
+    }
+
+    #[test]
+    fn default_upstream_proxy_is_disabled() {
+        let c = UpstreamProxyConfig::default();
+        assert!(!c.enabled);
+        assert_eq!(c.protocol, "http");
+        assert!(c.host.is_empty());
+        assert_eq!(c.port, 0);
+        assert!(!c.auth_enabled());
+        assert!(c.no_proxy_hosts.is_empty());
+    }
+
+    #[test]
+    fn proxy_config_default_has_disabled_upstream() {
+        let c = ProxyConfig::default();
+        assert!(!c.upstream_proxy_active());
+        assert!(!c.should_bypass_upstream("anything.com"));
+    }
+
+    #[test]
+    fn proxy_config_upstream_proxy_active_when_enabled_with_host() {
+        let mut c = ProxyConfig::default();
+        c.upstream_proxy = cfg(true, "http", "corp-proxy", 8080);
+        assert!(c.upstream_proxy_active());
+    }
+
+    #[test]
+    fn proxy_config_upstream_proxy_inactive_when_enabled_but_no_host() {
+        let mut c = ProxyConfig::default();
+        c.upstream_proxy = cfg(true, "http", "", 8080);
+        assert!(!c.upstream_proxy_active());
+    }
+
+    #[test]
+    fn proxy_config_should_bypass_upstream_respects_disabled_state() {
+        let mut c = ProxyConfig::default();
+        c.upstream_proxy = UpstreamProxyConfig {
+            enabled: false,
+            no_proxy_hosts: vec!["localhost".to_string()],
+            ..cfg(false, "http", "proxy", 8080)
+        };
+        // Even though "localhost" is in the bypass list, the proxy is
+        // disabled so should_bypass_upstream must return false.
+        assert!(!c.should_bypass_upstream("localhost"));
+    }
+
+    #[test]
+    fn upstream_config_serializes_and_deserializes() {
+        let c = UpstreamProxyConfig {
+            enabled: true,
+            protocol: "socks5".to_string(),
+            host: "proxy.example.com".to_string(),
+            port: 1080,
+            auth_username: Some("user".to_string()),
+            auth_password: Some("pass".to_string()),
+            no_proxy_hosts: vec!["localhost".to_string(), "10.0.0.0/8".to_string()],
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back: UpstreamProxyConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn upstream_config_deserializes_with_defaults_for_missing_fields() {
+        // Simulates an old config file that predates the upstream_proxy field.
+        let json = r#"{"enabled": true, "host": "proxy", "port": 8080}"#;
+        let c: UpstreamProxyConfig = serde_json::from_str(json).unwrap();
+        assert!(c.enabled);
+        assert_eq!(c.protocol, "http"); // default applied
+        assert_eq!(c.host, "proxy");
+        assert_eq!(c.port, 8080);
+        assert!(c.auth_username.is_none());
+        assert!(c.no_proxy_hosts.is_empty());
+    }
+
+    #[test]
+    fn proxy_config_with_upstream_serializes_roundtrip() {
+        let mut c = ProxyConfig::default();
+        c.upstream_proxy = UpstreamProxyConfig {
+            enabled: true,
+            protocol: "https".to_string(),
+            host: "secure-proxy.example.com".to_string(),
+            port: 443,
+            auth_username: Some("alice".to_string()),
+            auth_password: Some("secret".to_string()),
+            no_proxy_hosts: vec!["localhost".to_string()],
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back: ProxyConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(c.upstream_proxy, back.upstream_proxy);
+    }
+
+    #[test]
+    fn proxy_config_without_upstream_field_deserializes_with_default() {
+        // A config JSON that omits the upstream_proxy field entirely (as
+        // written by older versions of Madhyamas) must deserialize with the
+        // default disabled upstream proxy.
+        let json = r#"{
+            "proxy_port": 8888,
+            "api_port": 3001,
+            "host": "127.0.0.1",
+            "public_ip": null,
+            "cert_path": "/tmp/certs",
+            "db_path": "/tmp/db",
+            "log_path": "/tmp/logs",
+            "verbose": false,
+            "max_requests": 10000,
+            "intercept_https": true,
+            "max_body_size": 20971520,
+            "passthrough_domains": []
+        }"#;
+        let c: ProxyConfig = serde_json::from_str(json).unwrap();
+        assert!(!c.upstream_proxy_active());
+        assert_eq!(c.upstream_proxy, UpstreamProxyConfig::default());
     }
 }
