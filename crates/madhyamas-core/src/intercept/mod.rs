@@ -1,5 +1,6 @@
 //! Interception, breakpoints, and traffic modification
 
+mod block_list;
 mod breakpoint;
 mod handler;
 mod mock;
@@ -8,6 +9,7 @@ mod rewrite;
 mod throttle;
 mod types;
 
+pub use block_list::{matches_pattern, BlockListEntry, BlockListManager, BlockListStats};
 pub use breakpoint::{
     BreakpointDecision, BreakpointManager, BreakpointRule, BreakpointState, PausedTraffic,
 };

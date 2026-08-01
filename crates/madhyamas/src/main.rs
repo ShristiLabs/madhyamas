@@ -15,9 +15,9 @@ use madhyamas_api::{create_router, RateLimitConfig};
 #[cfg(feature = "grpc")]
 use madhyamas_core::GrpcManager;
 use madhyamas_core::{
-    BreakpointManager, CertificateManager, ExtensionManager, InterceptStore, MemoryManager,
-    MetricsCollector, MockManager, PerformanceMonitor, Persistable, ProxyConfig, ProxyEngine,
-    RewriteManager, ThrottleManager, TrafficStore, UpstreamProxyConfig,
+    BlockListManager, BreakpointManager, CertificateManager, ExtensionManager, InterceptStore,
+    MemoryManager, MetricsCollector, MockManager, PerformanceMonitor, Persistable, ProxyConfig,
+    ProxyEngine, RewriteManager, ThrottleManager, TrafficStore, UpstreamProxyConfig,
 };
 #[cfg(feature = "plugins")]
 use madhyamas_core::{PluginExtension, PluginManager};
@@ -588,6 +588,13 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         }
         m
     });
+    let block_list_manager = Arc::new({
+        let m = BlockListManager::new().with_store(intercept_store.clone());
+        if let Err(e) = m.load() {
+            tracing::warn!("Failed to load block list entries from store: {}", e);
+        }
+        m
+    });
     #[cfg(feature = "grpc")]
     let grpc_manager = Arc::new(GrpcManager::default());
     #[cfg(feature = "scripting")]
@@ -626,6 +633,7 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         .with_rewrite_manager(rewrite_manager.clone())
         .with_breakpoint_manager(breakpoint_manager.clone())
         .with_throttle_manager(throttle_manager.clone())
+        .with_block_list_manager(block_list_manager.clone())
         .with_extension_manager(extension_manager)
         .with_metrics_collector(metrics_collector)
         .with_memory_manager(memory_manager)
@@ -650,7 +658,8 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         .with_mock_manager(mock_manager)
         .with_rewrite_manager(rewrite_manager)
         .with_breakpoint_manager(breakpoint_manager)
-        .with_throttle_manager(throttle_manager);
+        .with_throttle_manager(throttle_manager)
+        .with_block_list_manager(block_list_manager);
     #[cfg(feature = "grpc")]
     let api_state = api_state.with_grpc_manager(grpc_manager);
     #[cfg(feature = "scripting")]

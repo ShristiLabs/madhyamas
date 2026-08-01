@@ -24,8 +24,9 @@ use madhyamas_core::PluginManager;
 #[cfg(feature = "scripting")]
 use madhyamas_core::ScriptRuntime;
 use madhyamas_core::{
-    BreakpointManager, CertificateManager, InterceptStore, MockManager, ProxyConfig, ReplayManager,
-    RewriteManager, SessionManager, ThrottleManager, TrafficStore, WsManager,
+    BlockListManager, BreakpointManager, CertificateManager, InterceptStore, MockManager,
+    ProxyConfig, ReplayManager, RewriteManager, SessionManager, ThrottleManager, TrafficStore,
+    WsManager,
 };
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -69,6 +70,7 @@ pub struct AppState {
     pub mock_manager: Arc<MockManager>,
     pub rewrite_manager: Arc<RewriteManager>,
     pub throttle_manager: Arc<ThrottleManager>,
+    pub block_list_manager: Arc<BlockListManager>,
     pub replay_manager: Arc<ReplayManager>,
     #[cfg(feature = "grpc")]
     pub grpc_manager: Arc<GrpcManager>,
@@ -96,6 +98,7 @@ impl AppState {
             mock_manager: Arc::new(MockManager::default()),
             rewrite_manager: Arc::new(RewriteManager::default()),
             throttle_manager: Arc::new(ThrottleManager::default()),
+            block_list_manager: Arc::new(BlockListManager::default()),
             replay_manager: Arc::new(ReplayManager::default()),
             #[cfg(feature = "grpc")]
             grpc_manager: Arc::new(GrpcManager::default()),
@@ -134,6 +137,11 @@ impl AppState {
 
     pub fn with_throttle_manager(mut self, manager: Arc<ThrottleManager>) -> Self {
         self.throttle_manager = manager;
+        self
+    }
+
+    pub fn with_block_list_manager(mut self, manager: Arc<BlockListManager>) -> Self {
+        self.block_list_manager = manager;
         self
     }
 

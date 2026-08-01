@@ -9,6 +9,7 @@ import {
   Code,
   Puzzle,
   FolderTree,
+  Shield,
   type LucideIcon,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -33,6 +34,7 @@ const ICONS: Record<string, LucideIcon> = {
   Code,
   Puzzle,
   FolderTree,
+  Shield,
 }
 
 interface NavRailProps {

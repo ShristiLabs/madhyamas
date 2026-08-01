@@ -9,6 +9,7 @@ import { Loader2 } from "lucide-react"
 
 // Lazy-load tool views — they get the full main area.
 const BreakpointsPanel = lazy(() => import("@/features/tools/BreakpointsPanel").then((m) => ({ default: m.BreakpointsPanel })))
+const BlockListPanel = lazy(() => import("@/features/tools/BlockListPanel").then((m) => ({ default: m.BlockListPanel })))
 const ThrottlePanel = lazy(() => import("@/features/tools/ThrottlePanel").then((m) => ({ default: m.ThrottlePanel })))
 const MocksPanel = lazy(() => import("@/features/tools/MocksPanel").then((m) => ({ default: m.MocksPanel })))
 const RewritesPanel = lazy(() => import("@/features/tools/RewritesPanel").then((m) => ({ default: m.RewritesPanel })))
@@ -63,6 +64,7 @@ function useTheme() {
 const TOOL_VIEWS: NavView[] = [
   { id: "traffic", label: "Traffic", icon: "Activity" },
   { id: "breakpoints", label: "Breakpoints", icon: "Pause" },
+  { id: "blocklist", label: "Block List", icon: "Shield" },
   { id: "throttle", label: "Throttle", icon: "Gauge" },
   { id: "mocks", label: "Mocks", icon: "Theater" },
   { id: "rewrites", label: "Rewrites", icon: "Pencil" },
@@ -96,6 +98,7 @@ export default function App() {
               <Suspense fallback={<PanelFallback />}>
                 {activeView === "traffic" && <TrafficView />}
                 {activeView === "breakpoints" && <BreakpointsPanel />}
+                {activeView === "blocklist" && <BlockListPanel />}
                 {activeView === "throttle" && <ThrottlePanel />}
                 {activeView === "mocks" && <MocksPanel />}
                 {activeView === "rewrites" && <RewritesPanel />}

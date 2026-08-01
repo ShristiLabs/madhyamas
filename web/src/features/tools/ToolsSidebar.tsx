@@ -11,6 +11,7 @@ const ReplayPanel = lazy(() => import('@/features/tools/ReplayPanel').then((m) =
 const GrpcPanel = lazy(() => import('@/features/tools/GrpcPanel').then((m) => ({ default: m.GrpcPanel })))
 const ScriptsPanel = lazy(() => import('@/features/tools/ScriptsPanel').then((m) => ({ default: m.ScriptsPanel })))
 const PluginsPanel = lazy(() => import('@/features/tools/PluginsPanel').then((m) => ({ default: m.PluginsPanel })))
+const BlockListPanel = lazy(() => import('@/features/tools/BlockListPanel').then((m) => ({ default: m.BlockListPanel })))
 import {
   Pause,
   Theater,
@@ -20,6 +21,7 @@ import {
   Zap,
   Code,
   Puzzle,
+  Shield,
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -30,7 +32,7 @@ interface ToolsSidebarProps {
   onClose: () => void
 }
 
-type TabValue = 'mocks' | 'rewrites' | 'breakpoints' | 'throttle' | 'replay' | 'grpc' | 'scripts' | 'plugins'
+type TabValue = 'mocks' | 'rewrites' | 'breakpoints' | 'throttle' | 'replay' | 'grpc' | 'scripts' | 'plugins' | 'blocklist'
 
 interface TabConfig {
   value: TabValue
@@ -41,6 +43,7 @@ interface TabConfig {
 
 const tabs: TabConfig[] = [
   { value: 'breakpoints', label: 'Breakpoints', icon: Pause, category: 'intercept' },
+  { value: 'blocklist', label: 'Block List', icon: Shield, category: 'intercept' },
   { value: 'throttle', label: 'Throttle', icon: Gauge, category: 'intercept' },
   { value: 'mocks', label: 'Mocks', icon: Theater, category: 'modify' },
   { value: 'rewrites', label: 'Rewrites', icon: Pencil, category: 'modify' },
@@ -122,6 +125,7 @@ export function ToolsSidebar({ selectedEntry, isOpen, onClose }: ToolsSidebarPro
           }
         >
           {activeTab === 'breakpoints' && <BreakpointsPanel />}
+          {activeTab === 'blocklist' && <BlockListPanel />}
           {activeTab === 'mocks' && <MocksPanel />}
           {activeTab === 'rewrites' && <RewritesPanel />}
           {activeTab === 'throttle' && <ThrottlePanel />}

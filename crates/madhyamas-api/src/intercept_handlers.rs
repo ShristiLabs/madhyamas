@@ -6,9 +6,9 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use madhyamas_core::{
-    BreakpointDecision, BreakpointRule, InterceptDirection, MatchCondition, MockCollection,
-    MockResponse, MockRule, RequestData, RequestModifications, ResponseConfig, RewriteAction,
-    RewriteDirection, RewriteRule, SavedRequest, ThrottleProfile,
+    BlockListEntry, BreakpointDecision, BreakpointRule, InterceptDirection, MatchCondition,
+    MockCollection, MockResponse, MockRule, RequestData, RequestModifications, ResponseConfig,
+    RewriteAction, RewriteDirection, RewriteRule, SavedRequest, ThrottleProfile,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -1078,4 +1078,136 @@ pub async fn get_replay_history(State(state): State<Arc<AppState>>) -> impl Into
 pub async fn clear_replay_history(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     state.replay_manager.clear_history();
     StatusCode::NO_CONTENT
+}
+
+// ============================================================================
+// Block List
+// ============================================================================
+
+/// Get all block list entries
+pub async fn get_block_list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let entries = state.block_list_manager.get_entries();
+    Json(entries)
+}
+
+/// Get block list summary statistics
+pub async fn get_block_list_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let stats = state.block_list_manager.stats();
+    Json(stats)
+}
+
+/// Create a block list entry
+#[derive(Debug, Deserialize, validator::Validate)]
+pub struct CreateBlockListEntryRequest {
+    #[validate(length(min = 1, max = 255))]
+    pub pattern: String,
+    pub note: Option<String>,
+    pub enabled: Option<bool>,
+    pub status_code: Option<u16>,
+    pub response_body: Option<String>,
+    pub content_type: Option<String>,
+}
+
+pub async fn create_block_list_entry(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateBlockListEntryRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
+    let mut entry = BlockListEntry::new(req.pattern);
+    if let Some(note) = req.note {
+        entry.note = Some(note);
+    }
+    if let Some(enabled) = req.enabled {
+        entry.enabled = enabled;
+    }
+    if let Some(status_code) = req.status_code {
+        entry.status_code = status_code;
+    }
+    if let Some(response_body) = req.response_body {
+        entry.response_body = response_body;
+    }
+    if let Some(content_type) = req.content_type {
+        entry.content_type = content_type;
+    }
+
+    let id = state.block_list_manager.add_entry(entry);
+    (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
+}
+
+/// Get a specific block list entry
+pub async fn get_block_list_entry(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.block_list_manager.get_entry(&id) {
+        Some(entry) => Json(entry).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Block list entry not found".to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// Update a block list entry
+pub async fn update_block_list_entry(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(entry): Json<BlockListEntry>,
+) -> impl IntoResponse {
+    if entry.pattern.trim().is_empty() {
+        return super::error::ApiError::bad_request("pattern cannot be empty").into_response();
+    }
+    if state.block_list_manager.update_entry(&id, entry) {
+        StatusCode::OK.into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Block list entry not found".to_string(),
+            }),
+        )
+            .into_response()
+    }
+}
+
+/// Delete a block list entry
+pub async fn delete_block_list_entry(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    if state.block_list_manager.remove_entry(&id) {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Block list entry not found".to_string(),
+            }),
+        )
+            .into_response()
+    }
+}
+
+/// Toggle a block list entry
+pub async fn toggle_block_list_entry(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<ToggleRequest>,
+) -> impl IntoResponse {
+    if state.block_list_manager.toggle_entry(&id, req.enabled) {
+        StatusCode::OK.into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Block list entry not found".to_string(),
+            }),
+        )
+            .into_response()
+    }
 }

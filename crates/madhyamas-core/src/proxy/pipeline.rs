@@ -22,8 +22,8 @@ use crate::extension::{ExtensionContext, ExtensionManager, ExtensionRequest, Ext
 #[cfg(feature = "grpc")]
 use crate::grpc::{is_grpc_content_type, is_grpc_path, parse_frame, GrpcDirection, GrpcManager};
 use crate::intercept::{
-    BreakpointDecision, BreakpointManager, InterceptHandler, MockManager, RewriteManager,
-    ThrottleManager,
+    BlockListManager, BreakpointDecision, BreakpointManager, InterceptAction, InterceptHandler,
+    MockManager, RewriteManager, ThrottleManager,
 };
 use crate::performance::{MemoryManager, MemoryPressure, MetricsCollector};
 #[cfg(feature = "plugins")]
@@ -67,6 +67,7 @@ pub struct Pipeline<'a> {
     rewrite_manager: Option<&'a Arc<RewriteManager>>,
     breakpoint_manager: Option<&'a Arc<BreakpointManager>>,
     throttle_manager: Option<&'a Arc<ThrottleManager>>,
+    block_list_manager: Option<&'a Arc<BlockListManager>>,
     #[cfg(feature = "grpc")]
     grpc_manager: Option<&'a Arc<GrpcManager>>,
     #[cfg(feature = "scripting")]
@@ -93,6 +94,7 @@ impl<'a> Pipeline<'a> {
         rewrite_manager: Option<&'a Arc<RewriteManager>>,
         breakpoint_manager: Option<&'a Arc<BreakpointManager>>,
         throttle_manager: Option<&'a Arc<ThrottleManager>>,
+        block_list_manager: Option<&'a Arc<BlockListManager>>,
         #[cfg(feature = "grpc")] grpc_manager: Option<&'a Arc<GrpcManager>>,
         #[cfg(feature = "scripting")] script_runtime: Option<&'a Arc<ScriptRuntime>>,
         #[cfg(feature = "plugins")] plugin_manager: Option<&'a Arc<PluginManager>>,
@@ -109,6 +111,7 @@ impl<'a> Pipeline<'a> {
             rewrite_manager,
             breakpoint_manager,
             throttle_manager,
+            block_list_manager,
             #[cfg(feature = "grpc")]
             grpc_manager,
             #[cfg(feature = "scripting")]
@@ -164,6 +167,9 @@ impl<'a> Pipeline<'a> {
     /// touching the pipeline's request/response loops.
     pub fn handlers(&self) -> Vec<Arc<dyn InterceptHandler>> {
         let mut handlers: Vec<Arc<dyn InterceptHandler>> = Vec::new();
+        if let Some(m) = self.block_list_manager {
+            handlers.push(m.clone() as Arc<dyn InterceptHandler>);
+        }
         if let Some(m) = self.rewrite_manager {
             handlers.push(m.clone() as Arc<dyn InterceptHandler>);
         }
@@ -267,6 +273,25 @@ impl<'a> Pipeline<'a> {
                     debug!("Memory pressure elevated for {}", request_data.url);
                 }
                 MemoryPressure::Normal => {}
+            }
+        }
+
+        // Check block list (priority 5 — before rewrites, mocks, breakpoints).
+        // A blocked request is short-circuited immediately without forwarding
+        // upstream or running any other intercept handlers.
+        if let Some(block_list_manager) = self.block_list_manager {
+            let action = block_list_manager.on_request(request_data).await;
+            if let InterceptAction::Respond(response) = action {
+                debug!(
+                    "Request blocked by block list: {} for {}",
+                    request_data.host, request_data.url
+                );
+                if let Some(metrics) = self.metrics_collector {
+                    metrics.record_mock_hit();
+                }
+                return self
+                    .short_circuit_response(request_data, &response, client_stream, "blocked")
+                    .await;
             }
         }
 

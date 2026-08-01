@@ -745,3 +745,105 @@ export function useReplayRequest() {
     },
   });
 }
+
+// ==================== Block List API ====================
+
+export interface BlockListEntry {
+  id: string;
+  pattern: string;
+  note: string | null;
+  enabled: boolean;
+  hit_count: number;
+  status_code: number;
+  response_body: string;
+  content_type: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BlockListStats {
+  total: number;
+  enabled: number;
+  disabled: number;
+  total_hits: number;
+}
+
+export interface CreateBlockListEntryRequest {
+  pattern: string;
+  note?: string;
+  enabled?: boolean;
+  status_code?: number;
+  response_body?: string;
+  content_type?: string;
+}
+
+export function useBlockList() {
+  return useQuery({
+    queryKey: ['blocklist'],
+    queryFn: async (): Promise<BlockListEntry[]> => {
+      return apiGet<BlockListEntry[]>('/blocklist');
+    },
+  });
+}
+
+export function useBlockListStats() {
+  return useQuery({
+    queryKey: ['blocklist-stats'],
+    queryFn: async (): Promise<BlockListStats> => {
+      return apiGet<BlockListStats>('/blocklist/stats');
+    },
+  });
+}
+
+export function useCreateBlockListEntry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (entry: CreateBlockListEntryRequest): Promise<{ id: string }> => {
+      return apiPost<{ id: string }>('/blocklist', entry);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['blocklist'] });
+      queryClient.invalidateQueries({ queryKey: ['blocklist-stats'] });
+    },
+  });
+}
+
+export function useUpdateBlockListEntry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, entry }: { id: string; entry: BlockListEntry }): Promise<void> => {
+      return apiPut<void>(`/blocklist/${id}`, entry);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['blocklist'] });
+      queryClient.invalidateQueries({ queryKey: ['blocklist-stats'] });
+    },
+  });
+}
+
+export function useDeleteBlockListEntry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      return apiDeleteVoid(`/blocklist/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['blocklist'] });
+      queryClient.invalidateQueries({ queryKey: ['blocklist-stats'] });
+    },
+  });
+}
+
+export function useToggleBlockListEntry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }): Promise<void> => {
+      return apiPostVoid(`/blocklist/${id}/toggle`, { enabled });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['blocklist'] });
+      queryClient.invalidateQueries({ queryKey: ['blocklist-stats'] });
+    },
+  });
+}
+

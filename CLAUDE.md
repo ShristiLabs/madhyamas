@@ -66,7 +66,7 @@ madhyamas --help  # See all commands
 - `proxy/engine.rs` - Main proxy engine logic
 - `tls/certificate.rs` - TLS certificate management
 - `traffic/store.rs` - SQLite-based traffic storage
-- `intercept/` - Breakpoints, mocks, rewrites, throttling
+- `intercept/` - Breakpoints, mocks, rewrites, throttling, block list
 
 ### API Crate (`madhyamas-api`)
 - `lib.rs` - API server setup
@@ -154,6 +154,15 @@ listed IP addresses or CIDR ranges are accepted. Loopback (`127.0.0.1`,
 connections. API updates via `PATCH /api/config` take effect immediately
 for new connections. See [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md).
 
+**Block List**: Domain/pattern-based request blocking. When a block list
+entry's pattern matches a request's host, the proxy returns a configurable
+response (default `403 Forbidden`) instead of forwarding upstream. Runs at
+priority 5 in the intercept pipeline (before rewrites, mocks, breakpoints,
+throttle). Supports exact domains, wildcard subdomains (`*.example.com`),
+and glob patterns (`*ads*`). Managed via `GET/POST/PUT/DELETE /api/blocklist`.
+Entries persist to SQLite and survive restarts. See
+[docs/BLOCK_LIST.md](docs/BLOCK_LIST.md).
+
 **Data Directory**: `~/.madhyamas/` (certs, logs, traffic.db)
 
 **API Endpoints** (all under `/api` prefix):
@@ -172,6 +181,7 @@ for new connections. See [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md).
 | Rewrites | `GET/POST /rewrites`, `GET/DELETE /rewrites/{id}`, `POST /rewrites/{id}/toggle` |
 | Throttle | `GET/POST /throttle`, `POST /throttle/enabled`, `GET /throttle/presets` |
 | Replay | `GET/POST /replay/saved`, `POST /replay/execute/{id}`, `GET /replay/history` |
+| Block List | `GET/POST /blocklist`, `GET /blocklist/stats`, `GET/PUT/DELETE /blocklist/{id}`, `POST /blocklist/{id}/toggle` |
 | gRPC | `GET /grpc/connections`, `GET /grpc/streams`, `GET /grpc/frames`, `GET /grpc/stats` |
 | Scripts | `GET/POST /scripts`, `GET/PUT/DELETE /scripts/{id}`, `POST /scripts/{id}/toggle` |
 | Plugins | `GET /plugins`, `POST /plugins/{id}/enable`, `POST /plugins/{id}/disable`, `POST /plugins/reload` |

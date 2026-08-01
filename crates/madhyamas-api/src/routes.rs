@@ -278,6 +278,32 @@ fn create_routes_inner(
             "/replay/history",
             delete(intercept_handlers::clear_replay_history),
         )
+        // Block List endpoints
+        .route("/blocklist", get(intercept_handlers::get_block_list))
+        .route(
+            "/blocklist",
+            post(intercept_handlers::create_block_list_entry),
+        )
+        .route(
+            "/blocklist/stats",
+            get(intercept_handlers::get_block_list_stats),
+        )
+        .route(
+            "/blocklist/{id}",
+            get(intercept_handlers::get_block_list_entry),
+        )
+        .route(
+            "/blocklist/{id}",
+            put(intercept_handlers::update_block_list_entry),
+        )
+        .route(
+            "/blocklist/{id}",
+            delete(intercept_handlers::delete_block_list_entry),
+        )
+        .route(
+            "/blocklist/{id}/toggle",
+            post(intercept_handlers::toggle_block_list_entry),
+        )
         // === Persistence endpoints ===
         .route("/persistence/export", get(handlers::export_all_rules))
         .route("/persistence/import", post(handlers::import_all_rules))

@@ -48,12 +48,14 @@ pub use websocket::{
 
 // Re-exports from intercept
 pub use intercept::{
-    BreakpointAction, BreakpointDecision, BreakpointManager, BreakpointRule, ConditionalResponse,
-    InterceptAction, InterceptDecision, InterceptDirection, InterceptHandler, MatchCondition,
-    MockCollection, MockExpiration, MockHitRecord, MockHitStats, MockManager, MockPreviewResult,
-    MockResponse, MockRule, MockRuleVersion, MockTemplates, MockTestResult, PausedTraffic,
-    ProbabilisticResponse, RequestCondition, ResponseConfig, RewriteAction, RewriteDirection,
-    RewriteManager, RewriteRule, RewriteTemplates, ThrottleManager, ThrottleProfile,
+    matches_pattern as block_list_matches_pattern, BlockListEntry, BlockListManager,
+    BlockListStats, BreakpointAction, BreakpointDecision, BreakpointManager, BreakpointRule,
+    ConditionalResponse, InterceptAction, InterceptDecision, InterceptDirection, InterceptHandler,
+    MatchCondition, MockCollection, MockExpiration, MockHitRecord, MockHitStats, MockManager,
+    MockPreviewResult, MockResponse, MockRule, MockRuleVersion, MockTemplates, MockTestResult,
+    PausedTraffic, ProbabilisticResponse, RequestCondition, ResponseConfig, RewriteAction,
+    RewriteDirection, RewriteManager, RewriteRule, RewriteTemplates, ThrottleManager,
+    ThrottleProfile,
 };
 
 // Re-exports from persistence

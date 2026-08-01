@@ -1,6 +1,6 @@
 //! SQLite persistence for intercept rules (mocks, rewrites, breakpoints)
 
-use crate::intercept::{BreakpointRule, MockRule, RewriteRule, ThrottleProfile};
+use crate::intercept::{BlockListEntry, BreakpointRule, MockRule, RewriteRule, ThrottleProfile};
 use crate::Error;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -89,12 +89,27 @@ impl InterceptStore {
                 enabled INTEGER NOT NULL DEFAULT 0
             );
 
+            -- Block list entries table
+            CREATE TABLE IF NOT EXISTS block_list_entries (
+                id TEXT PRIMARY KEY,
+                pattern TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                hit_count INTEGER NOT NULL DEFAULT 0,
+                status_code INTEGER NOT NULL DEFAULT 403,
+                response_body TEXT NOT NULL DEFAULT 'Blocked by Madhyamas',
+                content_type TEXT NOT NULL DEFAULT 'text/plain',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
             -- Create indexes
             CREATE INDEX IF NOT EXISTS idx_mock_enabled ON mock_rules(enabled);
             CREATE INDEX IF NOT EXISTS idx_mock_priority ON mock_rules(priority);
             CREATE INDEX IF NOT EXISTS idx_rewrite_enabled ON rewrite_rules(enabled);
             CREATE INDEX IF NOT EXISTS idx_rewrite_priority ON rewrite_rules(priority);
             CREATE INDEX IF NOT EXISTS idx_breakpoint_enabled ON breakpoint_rules(enabled);
+            CREATE INDEX IF NOT EXISTS idx_block_list_enabled ON block_list_entries(enabled);
             "#,
         )
         .map_err(Error::Database)?;
@@ -455,6 +470,106 @@ impl InterceptStore {
         Ok(result)
     }
 
+    // ==================== Block List Entries ====================
+
+    /// Save a block list entry (insert or replace).
+    pub fn save_block_list_entry(&self, entry: &BlockListEntry) -> crate::Result<()> {
+        let conn = self.conn.lock();
+        let note = entry.note.as_deref().unwrap_or("");
+        conn.execute(
+            r#"INSERT OR REPLACE INTO block_list_entries
+               (id, pattern, note, enabled, hit_count, status_code, response_body, content_type, created_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"#,
+            params![
+                entry.id,
+                entry.pattern,
+                note,
+                entry.enabled as i32,
+                entry.hit_count as i64,
+                entry.status_code as i32,
+                entry.response_body,
+                entry.content_type,
+                entry.created_at.timestamp(),
+                entry.updated_at.timestamp(),
+            ],
+        )
+        .map_err(Error::Database)?;
+        Ok(())
+    }
+
+    /// Load all block list entries, ordered by creation time.
+    pub fn load_block_list_entries(&self) -> crate::Result<Vec<BlockListEntry>> {
+        let conn = self.conn.lock();
+        let entries = conn
+            .prepare(
+                "SELECT id, pattern, note, enabled, hit_count, status_code, response_body, content_type, created_at, updated_at FROM block_list_entries ORDER BY created_at",
+            )
+            .map_err(Error::Database)?
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let pattern: String = row.get(1)?;
+                let note: String = row.get(2)?;
+                let enabled: i32 = row.get(3)?;
+                let hit_count: i64 = row.get(4)?;
+                let status_code: i32 = row.get(5)?;
+                let response_body: String = row.get(6)?;
+                let content_type: String = row.get(7)?;
+                let created_at: i64 = row.get(8)?;
+                let updated_at: i64 = row.get(9)?;
+
+                Ok(BlockListEntry {
+                    id,
+                    pattern,
+                    note: if note.is_empty() {
+                        None
+                    } else {
+                        Some(note)
+                    },
+                    enabled: enabled != 0,
+                    hit_count: hit_count as u64,
+                    status_code: status_code as u16,
+                    response_body,
+                    content_type,
+                    created_at: chrono::DateTime::from_timestamp(created_at, 0)
+                        .unwrap_or(chrono::Utc::now()),
+                    updated_at: chrono::DateTime::from_timestamp(updated_at, 0)
+                        .unwrap_or(chrono::Utc::now()),
+                })
+            })
+            .map_err(Error::Database)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Error::Database)?;
+        Ok(entries)
+    }
+
+    /// Delete a block list entry by ID.
+    pub fn delete_block_list_entry(&self, id: &str) -> crate::Result<bool> {
+        let conn = self.conn.lock();
+        let rows = conn
+            .execute("DELETE FROM block_list_entries WHERE id = ?1", params![id])
+            .map_err(Error::Database)?;
+        Ok(rows > 0)
+    }
+
+    /// Increment the hit count of a block list entry.
+    pub fn increment_block_list_hit_count(&self, id: &str) -> crate::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE block_list_entries SET hit_count = hit_count + 1 WHERE id = ?1",
+            params![id],
+        )
+        .map_err(Error::Database)?;
+        Ok(())
+    }
+
+    /// Clear all block list entries.
+    pub fn clear_block_list_entries(&self) -> crate::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM block_list_entries", [])
+            .map_err(Error::Database)?;
+        Ok(())
+    }
+
     // ==================== Bulk Operations ====================
 
     /// Clear all rules of a specific type
@@ -487,12 +602,14 @@ impl InterceptStore {
         let rewrites = self.load_rewrite_rules()?;
         let breakpoints = self.load_breakpoint_rules()?;
         let throttle = self.load_throttle_profile()?;
+        let block_list = self.load_block_list_entries()?;
 
         let export = serde_json::json!({
             "mocks": mocks,
             "rewrites": rewrites,
             "breakpoints": breakpoints,
             "throttle": throttle,
+            "block_list": block_list,
         });
 
         Ok(serde_json::to_string_pretty(&export)?)
@@ -520,6 +637,13 @@ impl InterceptStore {
             let rules: Vec<BreakpointRule> = serde_json::from_value(breakpoints.clone())?;
             for rule in rules {
                 self.save_breakpoint_rule(&rule)?;
+            }
+        }
+
+        if let Some(block_list) = import.get("block_list") {
+            let entries: Vec<BlockListEntry> = serde_json::from_value(block_list.clone())?;
+            for entry in entries {
+                self.save_block_list_entry(&entry)?;
             }
         }
 

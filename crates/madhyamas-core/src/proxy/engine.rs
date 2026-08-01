@@ -9,7 +9,9 @@ use crate::config::ProxyConfig;
 use crate::extension::ExtensionManager;
 #[cfg(feature = "grpc")]
 use crate::grpc::GrpcManager;
-use crate::intercept::{BreakpointManager, MockManager, RewriteManager, ThrottleManager};
+use crate::intercept::{
+    BlockListManager, BreakpointManager, MockManager, RewriteManager, ThrottleManager,
+};
 use crate::performance::{MemoryManager, MetricsCollector, PerformanceMonitor};
 #[cfg(feature = "plugins")]
 use crate::plugin::PluginManager;
@@ -51,6 +53,8 @@ pub struct ProxyEngine {
     rewrite_manager: OnceLock<Arc<RewriteManager>>,
     breakpoint_manager: OnceLock<Arc<BreakpointManager>>,
     throttle_manager: OnceLock<Arc<ThrottleManager>>,
+    /// Block list manager (blocks requests to matching domains)
+    block_list_manager: OnceLock<Arc<BlockListManager>>,
     /// WebSocket traffic manager
     ws_manager: OnceLock<Arc<WsManager>>,
     /// gRPC traffic manager
@@ -153,6 +157,7 @@ impl ProxyEngine {
             rewrite_manager: OnceLock::new(),
             breakpoint_manager: OnceLock::new(),
             throttle_manager: OnceLock::new(),
+            block_list_manager: OnceLock::new(),
             ws_manager: OnceLock::new(),
             #[cfg(feature = "grpc")]
             grpc_manager: OnceLock::new(),
@@ -185,6 +190,7 @@ impl ProxyEngine {
             self.rewrite_manager.get(),
             self.breakpoint_manager.get(),
             self.throttle_manager.get(),
+            self.block_list_manager.get(),
             #[cfg(feature = "grpc")]
             self.grpc_manager.get(),
             #[cfg(feature = "scripting")]
@@ -218,6 +224,12 @@ impl ProxyEngine {
     /// Set the throttle manager
     pub fn with_throttle_manager(self: Arc<Self>, manager: Arc<ThrottleManager>) -> Arc<Self> {
         let _ = self.throttle_manager.set(manager);
+        self
+    }
+
+    /// Set the block list manager
+    pub fn with_block_list_manager(self: Arc<Self>, manager: Arc<BlockListManager>) -> Arc<Self> {
+        let _ = self.block_list_manager.set(manager);
         self
     }
 
@@ -1058,6 +1070,7 @@ impl ProxyEngine {
             let rewrite_manager = self.rewrite_manager.get().cloned();
             let breakpoint_manager = self.breakpoint_manager.get().cloned();
             let throttle_manager = self.throttle_manager.get().cloned();
+            let block_list_manager = self.block_list_manager.get().cloned();
             #[cfg(feature = "grpc")]
             let grpc_manager = self.grpc_manager.get().cloned();
             #[cfg(feature = "scripting")]
@@ -1081,6 +1094,7 @@ impl ProxyEngine {
                     rewrite_manager.as_ref(),
                     breakpoint_manager.as_ref(),
                     throttle_manager.as_ref(),
+                    block_list_manager.as_ref(),
                     #[cfg(feature = "grpc")]
                     grpc_manager.as_ref(),
                     #[cfg(feature = "scripting")]

@@ -1009,6 +1009,19 @@ pub async fn save_all_rules(
                 }
             }
 
+            // Save block list entries
+            for entry in state.block_list_manager.get_entries() {
+                if let Err(e) = store.save_block_list_entry(&entry) {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: e.to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
+            }
+
             Json(serde_json::json!({ "success": true })).into_response()
         }
         None => (
@@ -1087,6 +1100,25 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
                     state.throttle_manager.set_enabled(enabled);
                 }
                 Ok(None) => {}
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: e.to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
+            }
+
+            // Load block list entries
+            match store.load_block_list_entries() {
+                Ok(entries) => {
+                    state.block_list_manager.clear();
+                    for entry in entries {
+                        state.block_list_manager.add_entry(entry);
+                    }
+                }
                 Err(e) => {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
