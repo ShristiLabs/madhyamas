@@ -15,9 +15,10 @@ use madhyamas_api::{create_router, RateLimitConfig};
 #[cfg(feature = "grpc")]
 use madhyamas_core::GrpcManager;
 use madhyamas_core::{
-    BlockListManager, BreakpointManager, CertificateManager, ExtensionManager, InterceptStore,
-    MemoryManager, MetricsCollector, MockManager, PerformanceMonitor, Persistable, ProxyConfig,
-    ProxyEngine, RewriteManager, ThrottleManager, TrafficStore, UpstreamProxyConfig,
+    AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, ExtensionManager,
+    InterceptStore, MemoryManager, MetricsCollector, MockManager, PerformanceMonitor, Persistable,
+    ProxyConfig, ProxyEngine, RewriteManager, SessionManager, ThrottleManager, TrafficStore,
+    UpstreamProxyConfig,
 };
 #[cfg(feature = "plugins")]
 use madhyamas_core::{PluginExtension, PluginManager};
@@ -525,6 +526,13 @@ async fn run_proxy_server(args: Args) -> Result<()> {
                 .map(|s| s.allowed_ips.clone())
                 .unwrap_or_default()
         },
+        // Auto Save: preserve the saved config (if any) so runtime API
+        // changes persist across restarts. Defaults to disabled when no
+        // saved config exists.
+        auto_save: saved
+            .as_ref()
+            .map(|s| s.auto_save.clone())
+            .unwrap_or_default(),
     };
 
     if saved.is_some() {
@@ -650,6 +658,16 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     // immediately in the proxy engine without a restart.
     let shared_config = Arc::new(parking_lot::RwLock::new(config.clone()));
 
+    // Create the Auto Save manager. The manager holds its own shared config
+    // so the API layer can update it live (PATCH /api/autosave). The manager
+    // is only started (background task) when auto_save.enabled is true.
+    let session_manager = Arc::new(SessionManager::new(traffic_store.clone()));
+    let autosave_manager = AutoSaveManager::new(
+        config.auto_save.clone(),
+        traffic_store.clone(),
+        session_manager.clone(),
+    );
+
     let proxy_engine = ProxyEngine::new(shared_config.clone(), cert_manager, traffic_store.clone())
         .await?
         .with_mock_manager(mock_manager.clone())
@@ -660,7 +678,8 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         .with_extension_manager(extension_manager)
         .with_metrics_collector(metrics_collector)
         .with_memory_manager(memory_manager)
-        .with_performance_monitor(performance_monitor);
+        .with_performance_monitor(performance_monitor)
+        .with_auto_save_manager(autosave_manager.clone());
     #[cfg(feature = "grpc")]
     let proxy_engine = proxy_engine.with_grpc_manager(grpc_manager.clone());
     #[cfg(feature = "scripting")]
@@ -678,6 +697,8 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     let api_state = madhyamas_api::AppState::new(traffic_store.clone())
         .with_cert_manager(cert_manager_for_api)
         .with_proxy_config(shared_config)
+        .with_session_manager(session_manager)
+        .with_autosave_manager(autosave_manager)
         .with_mock_manager(mock_manager)
         .with_rewrite_manager(rewrite_manager)
         .with_breakpoint_manager(breakpoint_manager)

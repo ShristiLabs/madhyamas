@@ -192,6 +192,21 @@ tab, `PATCH /api/config`, or config file. Stats via
 `GET /api/capture/stats`. See
 [docs/RECORDING_LIMITS.md](docs/RECORDING_LIMITS.md).
 
+**Auto Save**: Periodic session backup and rotation for disaster recovery.
+Traffic is stored in SQLite in real time, so Auto Save is a backup
+mechanism — not the primary store. When enabled, a background task
+(`tokio::time::interval`) periodically exports the current session as HAR
+or Session format to a backup directory. Old backups are pruned
+automatically (keep last N). Optional session rotation starts a new session
+after N requests or M minutes. Config fields: `auto_save.enabled`,
+`auto_save.interval_seconds` (default 300), `auto_save.export_format`
+(`"har"` or `"session"`), `auto_save.output_dir` (default
+`~/.madhyamas/backups`), `auto_save.max_backups` (default 10),
+`auto_save.rotate_after_requests`, `auto_save.rotate_after_minutes`.
+Configured via Config → Auto Save tab, `GET/PATCH /api/autosave`,
+`POST /api/autosave/snapshot` (manual snapshot), or the `madhyamas autosave`
+CLI subcommand. See [docs/AUTO_SAVE.md](docs/AUTO_SAVE.md).
+
 **Timeline View (Waterfall)**: The web UI traffic panel has a toggle to switch
 between the list (table) view and a waterfall timeline view. The timeline shows
 each request as a horizontal bar positioned by start time and sized by duration,
@@ -232,6 +247,7 @@ capped at 10,000 and concurrency at 100. See
 | Certificate | `GET /cert/ca` |
 | WebSocket | `GET /ws` (real-time traffic updates) |
 | Config | `GET /config`, `PATCH /config` |
+| Auto Save | `GET /autosave`, `PATCH /autosave`, `POST /autosave/snapshot` |
 | Capture | `GET /capture`, `POST /capture/toggle`, `GET /capture/stats` |
 | Breakpoints | `GET/POST /breakpoints`, `GET/DELETE /breakpoints/{id}`, `GET /breakpoints/paused`, `POST /breakpoints/paused/{id}/resume` |
 | Mocks | `GET/POST /mocks`, `GET/PUT/DELETE /mocks/{id}`, `POST /mocks/{id}/toggle`, collections, recording, import/export |

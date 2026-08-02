@@ -78,6 +78,13 @@ fn create_routes_inner(
         // Config endpoints
         .route("/config", get(handlers::get_config))
         .route("/config", patch(handlers::patch_config))
+        // Auto Save endpoints
+        .route("/autosave", get(handlers::get_autosave_config))
+        .route("/autosave", patch(handlers::update_autosave_config))
+        .route(
+            "/autosave/snapshot",
+            post(handlers::trigger_autosave_snapshot),
+        )
         // Capture / passthrough mode
         .route("/capture", get(handlers::get_capture_status))
         .route("/capture/toggle", post(handlers::toggle_capture))

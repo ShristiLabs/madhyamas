@@ -5,6 +5,7 @@
 //! HTTP request/response processing logic (rewrites, mocks, breakpoints,
 //! traffic recording, upstream forwarding) lives in [`crate::proxy::pipeline`].
 
+use crate::auto_save::AutoSaveManager;
 use crate::config::ProxyConfig;
 use crate::extension::ExtensionManager;
 #[cfg(feature = "grpc")]
@@ -74,6 +75,9 @@ pub struct ProxyEngine {
     memory_manager: OnceLock<Arc<MemoryManager>>,
     /// Performance monitor (background health checks and alerting)
     performance_monitor: OnceLock<Arc<PerformanceMonitor>>,
+    /// Auto Save manager (periodic session backup and rotation).
+    /// Only started when `auto_save.enabled` is true in the config.
+    auto_save_manager: OnceLock<Arc<AutoSaveManager>>,
     /// Channel to broadcast traffic updates to WebSocket clients
     traffic_tx: broadcast::Sender<TrafficEntry>,
     /// Whether the proxy is running
@@ -169,6 +173,7 @@ impl ProxyEngine {
             metrics_collector: OnceLock::new(),
             memory_manager: OnceLock::new(),
             performance_monitor: OnceLock::new(),
+            auto_save_manager: OnceLock::new(),
             traffic_tx,
             running: RwLock::new(false),
         }))
@@ -307,6 +312,18 @@ impl ProxyEngine {
         self
     }
 
+    /// Set the Auto Save manager and start its background task if enabled.
+    ///
+    /// The manager runs a `tokio::time::interval` background task that
+    /// periodically exports the current session to a backup directory. The
+    /// task is stopped automatically when the manager is dropped (graceful
+    /// shutdown via a `oneshot` channel).
+    pub fn with_auto_save_manager(self: Arc<Self>, manager: Arc<AutoSaveManager>) -> Arc<Self> {
+        manager.clone().start();
+        let _ = self.auto_save_manager.set(manager);
+        self
+    }
+
     /// Get the metrics collector, if attached.
     pub fn metrics_collector(&self) -> Option<&Arc<MetricsCollector>> {
         self.metrics_collector.get()
@@ -320,6 +337,11 @@ impl ProxyEngine {
     /// Get the performance monitor, if attached.
     pub fn performance_monitor(&self) -> Option<&Arc<PerformanceMonitor>> {
         self.performance_monitor.get()
+    }
+
+    /// Get the Auto Save manager, if attached.
+    pub fn auto_save_manager(&self) -> Option<&Arc<AutoSaveManager>> {
+        self.auto_save_manager.get()
     }
 
     /// Start the proxy server

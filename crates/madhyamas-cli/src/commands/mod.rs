@@ -3,6 +3,7 @@
 use anyhow::Result;
 use clap::Subcommand;
 
+mod autosave;
 mod breakpoints;
 mod capture;
 mod config;
@@ -18,6 +19,7 @@ mod sessions;
 mod throttle;
 mod traffic;
 
+use self::autosave::AutoSaveCommands;
 use self::breakpoints::BreakpointCommands;
 use self::capture::CaptureCommands;
 use self::config::ConfigCommands;
@@ -180,6 +182,9 @@ pub enum Commands {
     /// Focus host commands (highlight specific hosts in traffic)
     #[command(subcommand)]
     Focus(FocusCommands),
+    /// Auto Save commands (periodic session backup and rotation)
+    #[command(subcommand)]
+    Autosave(AutoSaveCommands),
 }
 
 impl Commands {
@@ -199,6 +204,7 @@ impl Commands {
             Commands::Plugins(cmd) => cmd.execute(api_url).await,
             Commands::Export(cmd) => cmd.execute(api_url).await,
             Commands::Focus(cmd) => cmd.execute(api_url).await,
+            Commands::Autosave(cmd) => cmd.execute(api_url).await,
         }
     }
 }

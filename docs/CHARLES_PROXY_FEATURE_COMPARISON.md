@@ -55,7 +55,7 @@ It was produced by:
 - No downstream HTTP/2 (Charles has full HTTP/2 proxying).
 - No auto-configuration of OS/browser proxy settings.
 - No built-in utility tools: Block List, Block Cookies, No Caching, Mirror,
-  Auto Save, Client Process, Repeat/Repeat Advanced, Edit, Validate.
+  Client Process, Repeat/Repeat Advanced, Edit, Validate.
 - No load testing, no chart/timeline visualization, no AMF/Flash support.
 - No NTLM authentication pass-through, no external/upstream proxy chaining.
 - No iOS native app (Charles has an App Store iOS client).
@@ -163,7 +163,7 @@ It was produced by:
 | 63 | Block List (block domains) | ✅ | ❌ | Not implemented |
 | 64 | DNS Spoofing | ✅ | ❌ | Android VPN only, no core impl |
 | 65 | Mirror (save responses to disk) | ✅ | ❌ | Mentioned in `BRAINSTORM.md` only |
-| 66 | Auto Save (periodic session save) | ✅ | ❌ | Not implemented |
+| 66 | Auto Save (periodic session save) | ✅ | ✅ | `auto_save.rs::AutoSaveManager` — periodic HAR/Session export, pruning, rotation. See [docs/AUTO_SAVE.md](AUTO_SAVE.md) |
 | 67 | Client Process tracking | ✅ | ❌ | Not implemented |
 | 68 | Repeat (replay single request) | ✅ | ✅ | `replay.rs::ReplayManager` |
 | 69 | Repeat Advanced (concurrency) | ✅ | ✅ | `replay.rs::ReplayManager::replay_batch` |
@@ -280,7 +280,8 @@ and [docs/REPEAT_ADVANCED.md](REPEAT_ADVANCED.md).
 **Validate** — Charles sends responses to W3C HTML/CSS/Feed validators.
 Madhyamas has no equivalent.
 
-**Mirror / Auto Save / Client Process** — Charles utility tools not present
+**Mirror / Auto Save / Client Process** — Auto Save is implemented
+(`auto_save.rs::AutoSaveManager`); Mirror and Client Process are not present
 in Madhyamas.
 
 **Block List / Block Cookies / No Caching** — Charles header-manipulation
@@ -338,7 +339,7 @@ by impact and effort:
     matching, highlight/focus-only modes, right-click context menu, CLI,
     MCP tools, and SQLite persistence. See [docs/FOCUS.md](FOCUS.md).
 12. **Mirror tool** — Save responses to disk as a mirror of the site.
-13. **Auto Save** — Periodic session save to avoid memory growth.
+13. **Auto Save** — Periodic session save to avoid memory growth. **Implemented** — see [docs/AUTO_SAVE.md](AUTO_SAVE.md).
 14. **Recording size limits** — Prevent runaway memory usage.
 15. **HAR import** — Import traffic from HAR files (Charles 5.0 supports this). **Implemented** — see [docs/HAR_IMPORT.md](HAR_IMPORT.md).
 

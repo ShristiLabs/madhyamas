@@ -30,8 +30,15 @@ import {
   ShieldOff,
   Plus,
   X,
+  HardDriveDownload,
 } from "lucide-react";
 import { apiGet, apiPatch, ApiError } from "@/lib/api/client";
+import {
+  useAutoSaveConfig,
+  useUpdateAutoSaveConfig,
+  useTriggerAutoSaveSnapshot,
+  type AutoSaveConfig,
+} from "@/lib/api/autosave";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -736,6 +743,249 @@ function CaptureTab() {
   );
 }
 
+const DEFAULT_AUTOSAVE: AutoSaveConfig = {
+  enabled: false,
+  interval_seconds: 300,
+  export_format: "har",
+  output_dir: "",
+  max_backups: 10,
+  rotate_after_requests: null,
+  rotate_after_minutes: null,
+};
+
+function AutoSaveTab() {
+  const { toast } = useToast();
+  const { data, isLoading: loading } = useAutoSaveConfig();
+  const updateMutation = useUpdateAutoSaveConfig();
+  const snapshotMutation = useTriggerAutoSaveSnapshot();
+  const [cfg, setCfg] = useState<AutoSaveConfig>(DEFAULT_AUTOSAVE);
+
+  useEffect(() => {
+    if (data) {
+      setCfg({
+        enabled: data.enabled ?? false,
+        interval_seconds: data.interval_seconds ?? 300,
+        export_format: (data.export_format as "har" | "session") ?? "har",
+        output_dir: data.output_dir ?? "",
+        max_backups: data.max_backups ?? 10,
+        rotate_after_requests: data.rotate_after_requests ?? null,
+        rotate_after_minutes: data.rotate_after_minutes ?? null,
+      });
+    }
+  }, [data]);
+
+  const save = useCallback(async () => {
+    try {
+      await updateMutation.mutateAsync({
+        enabled: cfg.enabled,
+        interval_seconds: cfg.interval_seconds,
+        export_format: cfg.export_format,
+        output_dir: cfg.output_dir,
+        max_backups: cfg.max_backups,
+        rotate_after_requests: cfg.rotate_after_requests,
+        rotate_after_minutes: cfg.rotate_after_minutes,
+      });
+      toast({ description: "Auto Save settings saved." });
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? `Failed to save Auto Save settings (HTTP ${err.status}): ${err.body.slice(0, 200)}`
+          : err instanceof Error
+            ? `Failed to save Auto Save settings: ${err.message}`
+            : "Failed to save Auto Save settings.";
+      toast({ description: msg, variant: "destructive" });
+    }
+  }, [cfg, updateMutation, toast]);
+
+  const snapshot = useCallback(async () => {
+    try {
+      const result = await snapshotMutation.mutateAsync();
+      toast({
+        description: `Snapshot saved${result.output_dir ? ` to ${result.output_dir}` : ""}.`,
+      });
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? `Failed to save snapshot (HTTP ${err.status}): ${err.body.slice(0, 200)}`
+          : err instanceof Error
+            ? `Failed to save snapshot: ${err.message}`
+            : "Failed to save snapshot.";
+      toast({ description: msg, variant: "destructive" });
+    }
+  }, [snapshotMutation, toast]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-48 text-muted-foreground">
+        Loading…
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <Section title="Auto Save">
+        <p className="text-sm text-muted-foreground">
+          Periodically export the current session to a backup directory for
+          disaster recovery. Traffic is stored in SQLite in real time, so
+          Auto Save is a backup mechanism — not the primary store. Old
+          backups are pruned automatically (keep last N).
+        </p>
+        <Row
+          label="Enable Auto Save"
+          description="Run a background task that periodically exports the session."
+        >
+          <Switch
+            checked={cfg.enabled}
+            onCheckedChange={(v) => setCfg((p) => ({ ...p, enabled: v }))}
+          />
+        </Row>
+      </Section>
+
+      {cfg.enabled && (
+        <>
+          <Section title="Schedule & Format">
+            <Row
+              label="Interval"
+              description="Seconds between snapshots. Default: 300 (5 minutes)."
+            >
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  value={cfg.interval_seconds}
+                  onChange={(e) =>
+                    setCfg((p) => ({
+                      ...p,
+                      interval_seconds: parseInt(e.target.value, 10) || 300,
+                    }))
+                  }
+                  className="w-24 text-right"
+                />
+                <span className="text-sm text-muted-foreground">sec</span>
+              </div>
+            </Row>
+            <Row
+              label="Export Format"
+              description="HAR (interoperable) or Session (Madhyamas-native, restorable)."
+            >
+              <Select
+                value={cfg.export_format}
+                onValueChange={(v: "har" | "session") =>
+                  setCfg((p) => ({ ...p, export_format: v }))
+                }
+              >
+                <SelectTrigger className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="har">HAR</SelectItem>
+                  <SelectItem value="session">Session</SelectItem>
+                </SelectContent>
+              </Select>
+            </Row>
+          </Section>
+
+          <Section title="Backup Location">
+            <Row
+              label="Output Directory"
+              description="Directory where backup files are written. Created if it doesn't exist."
+            >
+              <Input
+                value={cfg.output_dir}
+                onChange={(e) =>
+                  setCfg((p) => ({ ...p, output_dir: e.target.value }))
+                }
+                placeholder="~/.madhyamas/backups"
+                className="w-56"
+              />
+            </Row>
+            <Row
+              label="Max Backups"
+              description="Keep only the last N backup files. Oldest are deleted first."
+            >
+              <Input
+                type="number"
+                min={1}
+                value={cfg.max_backups}
+                onChange={(e) =>
+                  setCfg((p) => ({
+                    ...p,
+                    max_backups: parseInt(e.target.value, 10) || 10,
+                  }))
+                }
+                className="w-24 text-right"
+              />
+            </Row>
+          </Section>
+
+          <Section title="Session Rotation">
+            <p className="text-xs text-muted-foreground">
+              Optionally start a new session (archiving the current one) after
+              a threshold is reached. Leave empty to disable.
+            </p>
+            <Row
+              label="Rotate After Requests"
+              description="Start a new session after this many requests."
+            >
+              <Input
+                type="number"
+                min={0}
+                value={cfg.rotate_after_requests ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setCfg((p) => ({
+                    ...p,
+                    rotate_after_requests:
+                      v === "" ? null : parseInt(v, 10) || null,
+                  }));
+                }}
+                placeholder="Disabled"
+                className="w-28 text-right"
+              />
+            </Row>
+            <Row
+              label="Rotate After Minutes"
+              description="Start a new session after this many minutes."
+            >
+              <Input
+                type="number"
+                min={0}
+                value={cfg.rotate_after_minutes ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setCfg((p) => ({
+                    ...p,
+                    rotate_after_minutes:
+                      v === "" ? null : parseInt(v, 10) || null,
+                  }));
+                }}
+                placeholder="Disabled"
+                className="w-28 text-right"
+              />
+            </Row>
+          </Section>
+        </>
+      )}
+
+      <div className="flex justify-between pt-2">
+        <Button
+          variant="outline"
+          onClick={snapshot}
+          disabled={snapshotMutation.isPending}
+        >
+          <HardDriveDownload className="h-4 w-4 mr-2" />
+          {snapshotMutation.isPending ? "Saving…" : "Save Now"}
+        </Button>
+        <Button onClick={save} disabled={updateMutation.isPending}>
+          <Save className="h-4 w-4 mr-2" />
+          {updateMutation.isPending ? "Saving…" : "Save Changes"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function AppearanceTab() {
   const { toast } = useToast();
   const [cfg, setCfg] = useState<AppearanceConfig>(() =>
@@ -1033,6 +1283,10 @@ export function ConfigDialog({ trigger }: ConfigDialogProps) {
               <Camera className="h-3.5 w-3.5" />
               Capture
             </TabsTrigger>
+            <TabsTrigger value="autosave" className="flex items-center gap-1.5">
+              <HardDriveDownload className="h-3.5 w-3.5" />
+              Auto Save
+            </TabsTrigger>
             <TabsTrigger
               value="appearance"
               className="flex items-center gap-1.5"
@@ -1053,6 +1307,9 @@ export function ConfigDialog({ trigger }: ConfigDialogProps) {
             </TabsContent>
             <TabsContent value="capture" className="mt-0">
               <CaptureTab />
+            </TabsContent>
+            <TabsContent value="autosave" className="mt-0">
+              <AutoSaveTab />
             </TabsContent>
             <TabsContent value="appearance" className="mt-0">
               <AppearanceTab />

@@ -167,6 +167,19 @@ pub struct ProxyConfig {
     /// end-user guide.
     #[serde(default)]
     pub allowed_ips: Vec<String>,
+
+    /// Auto Save configuration for periodic session backup and rotation.
+    ///
+    /// When enabled, the proxy periodically exports the current session to a
+    /// backup directory (as HAR or Madhyamas-native Session format) for
+    /// disaster recovery. Old backups are pruned automatically (keep last N).
+    /// Optional session rotation starts a new session after a configurable
+    /// number of requests or elapsed minutes.
+    ///
+    /// See [`AutoSaveConfig`] for field details and
+    /// [`docs/AUTO_SAVE.md`](../../docs/AUTO_SAVE.md) for the end-user guide.
+    #[serde(default)]
+    pub auto_save: AutoSaveConfig,
 }
 
 /// Upstream (external) proxy chaining configuration.
@@ -252,6 +265,96 @@ fn default_upstream_protocol() -> String {
 /// Default value provider for boolean config fields that default to `true`.
 fn default_true() -> bool {
     true
+}
+
+/// Default value provider for [`AutoSaveConfig::interval_seconds`].
+fn default_autosave_interval() -> u64 {
+    300
+}
+
+/// Default value provider for [`AutoSaveConfig::export_format`].
+fn default_autosave_format() -> String {
+    "har".to_string()
+}
+
+/// Default value provider for [`AutoSaveConfig::max_backups`].
+fn default_autosave_max_backups() -> usize {
+    10
+}
+
+/// Auto Save configuration for periodic session backup and rotation.
+///
+/// Traffic is stored in SQLite in real time (every request/response is
+/// persisted immediately), so Auto Save is not the primary persistence
+/// mechanism. Instead, it provides:
+///
+/// - **Periodic HAR/Session export** to a backup directory for disaster
+///   recovery (e.g. if the SQLite database is corrupted or accidentally
+///   deleted).
+/// - **Automatic session rotation** — start a new session after N requests
+///   or M minutes, archiving the old one.
+/// - **Backup pruning** — keep only the last `max_backups` files, deleting
+///   the oldest first.
+///
+/// See [`docs/AUTO_SAVE.md`](../../docs/AUTO_SAVE.md) for the end-user guide.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutoSaveConfig {
+    /// Master switch. When `false` (the default), no periodic export or
+    /// rotation is performed.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Interval between snapshots in seconds. Default: 300 (5 minutes).
+    #[serde(default = "default_autosave_interval")]
+    pub interval_seconds: u64,
+
+    /// Export format: `"har"` (HAR 1.2, interoperable) or `"session"`
+    /// (Madhyamas-native `SessionExport` JSON, restorable via import).
+    /// Default: `"har"`.
+    #[serde(default = "default_autosave_format")]
+    pub export_format: String,
+
+    /// Directory where backup files are written. The directory is created
+    /// if it does not exist. Default: `~/.madhyamas/backups`.
+    #[serde(default = "default_autosave_output_dir")]
+    pub output_dir: String,
+
+    /// Maximum number of backup files to keep. Older files are deleted
+    /// (pruned) after each snapshot when this limit is exceeded.
+    /// Default: 10.
+    #[serde(default = "default_autosave_max_backups")]
+    pub max_backups: usize,
+
+    /// When set, rotate (start a new session) after this many requests have
+    /// been recorded in the current session. `None` disables request-based
+    /// rotation.
+    #[serde(default)]
+    pub rotate_after_requests: Option<usize>,
+
+    /// When set, rotate (start a new session) after this many minutes have
+    /// elapsed since the current session started. `None` disables
+    /// time-based rotation.
+    #[serde(default)]
+    pub rotate_after_minutes: Option<u64>,
+}
+
+/// Default value provider for [`AutoSaveConfig::output_dir`].
+fn default_autosave_output_dir() -> String {
+    get_data_dir().join("backups").to_string_lossy().to_string()
+}
+
+impl Default for AutoSaveConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_seconds: default_autosave_interval(),
+            export_format: default_autosave_format(),
+            output_dir: default_autosave_output_dir(),
+            max_backups: default_autosave_max_backups(),
+            rotate_after_requests: None,
+            rotate_after_minutes: None,
+        }
+    }
 }
 
 impl UpstreamProxyConfig {
@@ -440,6 +543,7 @@ impl Default for ProxyConfig {
             socks_auth_password: None,
             upstream_proxy: UpstreamProxyConfig::default(),
             allowed_ips: Vec::new(),
+            auto_save: AutoSaveConfig::default(),
         }
     }
 }

@@ -24,9 +24,9 @@ use madhyamas_core::PluginManager;
 #[cfg(feature = "scripting")]
 use madhyamas_core::ScriptRuntime;
 use madhyamas_core::{
-    BlockListManager, BreakpointManager, CertificateManager, InterceptStore, MockManager,
-    ProxyConfig, ReplayManager, RewriteManager, SessionManager, ThrottleManager, TrafficStore,
-    WsManager,
+    AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, InterceptStore,
+    MockManager, ProxyConfig, ReplayManager, RewriteManager, SessionManager, ThrottleManager,
+    TrafficStore, WsManager,
 };
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -82,6 +82,9 @@ pub struct AppState {
     pub session_manager: Arc<SessionManager>,
     pub intercept_store: Option<Arc<InterceptStore>>,
     pub proxy_config: Option<Arc<RwLock<ProxyConfig>>>,
+    /// Auto Save manager (periodic session backup). Optional — only set
+    /// when the proxy engine is running with Auto Save enabled.
+    pub autosave_manager: Option<Arc<AutoSaveManager>>,
     /// Optional enterprise auth manager. When present and Phase 4 is enabled,
     /// JWT authentication is enforced on protected routes.
     #[cfg(feature = "enterprise")]
@@ -110,6 +113,7 @@ impl AppState {
             session_manager,
             intercept_store: None,
             proxy_config: None,
+            autosave_manager: None,
             #[cfg(feature = "enterprise")]
             auth_service: None,
         }
@@ -185,6 +189,13 @@ impl AppState {
 
     pub fn with_proxy_config(mut self, config: Arc<RwLock<ProxyConfig>>) -> Self {
         self.proxy_config = Some(config);
+        self
+    }
+
+    /// Attach the Auto Save manager so the API layer can query/update the
+    /// live Auto Save configuration and trigger manual snapshots.
+    pub fn with_autosave_manager(mut self, manager: Arc<AutoSaveManager>) -> Self {
+        self.autosave_manager = Some(manager);
         self
     }
 

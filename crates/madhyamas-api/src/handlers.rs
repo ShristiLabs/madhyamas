@@ -892,6 +892,226 @@ pub async fn patch_config(
     (StatusCode::OK, Json(resp)).into_response()
 }
 
+// ==================== Auto Save ====================
+
+/// Request body for updating Auto Save configuration via `PATCH /api/autosave`.
+#[derive(Debug, Deserialize)]
+pub struct PatchAutoSaveRequest {
+    pub enabled: Option<bool>,
+    pub interval_seconds: Option<u64>,
+    pub export_format: Option<String>,
+    pub output_dir: Option<String>,
+    pub max_backups: Option<usize>,
+    /// Set to `null` to disable request-based rotation.
+    pub rotate_after_requests: Option<serde_json::Value>,
+    /// Set to `null` to disable time-based rotation.
+    pub rotate_after_minutes: Option<serde_json::Value>,
+}
+
+/// Get the current Auto Save configuration.
+pub async fn get_autosave_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Prefer the live AutoSaveManager config (reflects runtime changes),
+    // then fall back to the proxy config, then to defaults.
+    let cfg = if let Some(mgr) = state.autosave_manager.as_ref() {
+        mgr.config().read().clone()
+    } else if let Some(pc) = state.proxy_config.as_ref() {
+        pc.read().auto_save.clone()
+    } else {
+        madhyamas_core::AutoSaveConfig::default()
+    };
+
+    Json(serde_json::json!({
+        "enabled": cfg.enabled,
+        "interval_seconds": cfg.interval_seconds,
+        "export_format": cfg.export_format,
+        "output_dir": cfg.output_dir,
+        "max_backups": cfg.max_backups,
+        "rotate_after_requests": cfg.rotate_after_requests,
+        "rotate_after_minutes": cfg.rotate_after_minutes,
+    }))
+}
+
+/// Update the Auto Save configuration at runtime.
+///
+/// Changes are applied to the live [`AutoSaveManager`] config (when
+/// attached) and persisted to the proxy config so they survive restarts.
+/// Enabling/disabling or changing the interval requires a restart for the
+/// background task to pick up the new schedule (the task reads the config
+/// at start time).
+pub async fn update_autosave_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PatchAutoSaveRequest>,
+) -> impl IntoResponse {
+    // Resolve the target config: live manager config or proxy config.
+    let (enabled, interval, format, output_dir, max_backups, rotate_req, rotate_min) = {
+        let current = if let Some(mgr) = state.autosave_manager.as_ref() {
+            mgr.config().read().clone()
+        } else if let Some(pc) = state.proxy_config.as_ref() {
+            pc.read().auto_save.clone()
+        } else {
+            madhyamas_core::AutoSaveConfig::default()
+        };
+        (
+            req.enabled.unwrap_or(current.enabled),
+            req.interval_seconds.unwrap_or(current.interval_seconds),
+            req.export_format
+                .unwrap_or_else(|| current.export_format.clone()),
+            req.output_dir.unwrap_or_else(|| current.output_dir.clone()),
+            req.max_backups.unwrap_or(current.max_backups),
+            req.rotate_after_requests,
+            req.rotate_after_minutes,
+        )
+    };
+
+    // Validate export format.
+    let format_normalized = format.trim().to_lowercase();
+    if !matches!(format_normalized.as_str(), "har" | "session") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "export_format must be one of: har, session",
+                "value": format
+            })),
+        )
+            .into_response();
+    }
+
+    // Validate interval.
+    if interval == 0 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "interval_seconds must be greater than 0" })),
+        )
+            .into_response();
+    }
+
+    // Parse optional rotation fields (accept integer or null).
+    let rotate_after_requests = match rotate_req {
+        Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Number(n)) => {
+            if let Some(v) = n.as_u64() {
+                Some(v as usize)
+            } else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "rotate_after_requests must be a non-negative integer or null"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+        Some(other) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "rotate_after_requests must be a non-negative integer or null",
+                    "value": other
+                })),
+            )
+                .into_response();
+        }
+        None => None,
+    };
+
+    let rotate_after_minutes = match rotate_min {
+        Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Number(n)) => {
+            if let Some(v) = n.as_u64() {
+                Some(v)
+            } else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "rotate_after_minutes must be a non-negative integer or null"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+        Some(other) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "rotate_after_minutes must be a non-negative integer or null",
+                    "value": other
+                })),
+            )
+                .into_response();
+        }
+        None => None,
+    };
+
+    let new_cfg = madhyamas_core::AutoSaveConfig {
+        enabled,
+        interval_seconds: interval,
+        export_format: format_normalized,
+        output_dir: output_dir.trim().to_string(),
+        max_backups,
+        rotate_after_requests,
+        rotate_after_minutes,
+    };
+
+    // Apply to the live AutoSaveManager config (if attached).
+    if let Some(mgr) = state.autosave_manager.as_ref() {
+        *mgr.config().write() = new_cfg.clone();
+    }
+
+    // Persist to the proxy config so changes survive restarts.
+    if let Some(pc) = state.proxy_config.as_ref() {
+        let snapshot = {
+            let mut config = pc.write();
+            config.auto_save = new_cfg.clone();
+            config.clone()
+        };
+        if let Err(e) = snapshot.save() {
+            tracing::warn!("Failed to persist auto-save config to disk: {}", e);
+        }
+    }
+
+    let resp = serde_json::json!({
+        "enabled": new_cfg.enabled,
+        "interval_seconds": new_cfg.interval_seconds,
+        "export_format": new_cfg.export_format,
+        "output_dir": new_cfg.output_dir,
+        "max_backups": new_cfg.max_backups,
+        "rotate_after_requests": new_cfg.rotate_after_requests,
+        "rotate_after_minutes": new_cfg.rotate_after_minutes,
+    });
+
+    (StatusCode::OK, Json(resp)).into_response()
+}
+
+/// Trigger an immediate Auto Save snapshot (manual "save now").
+pub async fn trigger_autosave_snapshot(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let Some(mgr) = state.autosave_manager.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: "Auto Save manager not available".to_string(),
+            }),
+        )
+            .into_response();
+    };
+
+    let cfg = mgr.config().read().clone();
+    match mgr.save_snapshot(&cfg).await {
+        Ok(()) => Json(serde_json::json!({
+            "success": true,
+            "message": "Snapshot saved",
+            "output_dir": cfg.output_dir,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
 /// WebSocket handler
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
