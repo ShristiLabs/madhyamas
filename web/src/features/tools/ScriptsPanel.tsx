@@ -1,8 +1,4 @@
-import { useState } from 'react';
-import Editor from 'react-simple-code-editor';
-import Prism from 'prismjs';
-import 'prismjs/components/prism-javascript';
-import 'prismjs/themes/prism-tomorrow.css';
+import { useState, lazy, Suspense } from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -38,6 +34,10 @@ import {
   ArrowUp, ArrowDown, Zap, Search,
 } from 'lucide-react';
 import { ScriptGuide } from './ScriptGuide';
+
+// Lazy-load the Ace editor only when a script is being edited.
+// This keeps the Ace bundle (~600 KB) out of the main chunk.
+const ScriptCodeEditor = lazy(() => import('./ScriptCodeEditor'));
 
 const HOOK_OPTIONS = [
   { value: 'on_request', label: 'on_request' },
@@ -693,25 +693,22 @@ function ScriptEditor({
         )}
       </div>
 
-      {/* Code editor */}
+      {/* Code editor — full-featured Ace editor (lazy-loaded) */}
       <div className="space-y-1">
         <Label className="text-[11px] text-muted-foreground">Source code</Label>
-        <div className="w-full h-56 rounded-lg border bg-muted overflow-auto">
-          <Editor
-            value={source}
-            onValueChange={(code) => onSourceChange(code)}
-            highlight={(code) =>
-              Prism.highlight(code, Prism.languages.javascript, 'javascript')
+        <div className="w-full h-80 rounded-lg border overflow-hidden bg-[#1d1f27]">
+          <Suspense
+            fallback={
+              <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
+                Loading editor…
+              </div>
             }
-            padding={10}
-            className="w-full min-h-full text-xs font-mono"
-            textareaClassName="outline-none"
-            style={{
-              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-              fontSize: 12,
-              minHeight: '100%',
-            }}
-          />
+          >
+            <ScriptCodeEditor
+              value={source}
+              onChange={onSourceChange}
+            />
+          </Suspense>
         </div>
       </div>
 

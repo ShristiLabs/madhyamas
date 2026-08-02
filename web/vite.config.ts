@@ -48,6 +48,7 @@ export default defineConfig({
           'icons': ['lucide-react'],
           'json-view': ['react-json-view-lite'],
           'qrcode': ['qrcode.react'],
+          'ace-editor': ['react-ace', 'ace-builds'],
         },
       },
     },
