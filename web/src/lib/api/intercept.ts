@@ -634,6 +634,24 @@ export function useCreateRewrite() {
   });
 }
 
+export function useUpdateRewrite() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      rewrite,
+    }: {
+      id: string;
+      rewrite: Omit<RewriteRule, 'id' | 'hit_count'>;
+    }): Promise<void> => {
+      return apiPut<void>(`/rewrites/${id}`, rewrite);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rewrites'] });
+    },
+  });
+}
+
 export function useDeleteRewrite() {
   const queryClient = useQueryClient();
   return useMutation({

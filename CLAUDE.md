@@ -179,7 +179,7 @@ Entries persist to SQLite and survive restarts. See
 | Capture | `GET /capture`, `POST /capture/toggle` |
 | Breakpoints | `GET/POST /breakpoints`, `GET/DELETE /breakpoints/{id}`, `GET /breakpoints/paused`, `POST /breakpoints/paused/{id}/resume` |
 | Mocks | `GET/POST /mocks`, `GET/PUT/DELETE /mocks/{id}`, `POST /mocks/{id}/toggle`, collections, recording, import/export |
-| Rewrites | `GET/POST /rewrites`, `GET /rewrites/templates`, `GET/DELETE /rewrites/{id}`, `POST /rewrites/{id}/toggle`, `POST /rewrites/batch-toggle` |
+| Rewrites | `GET/POST /rewrites`, `GET /rewrites/templates`, `GET/PUT/DELETE /rewrites/{id}`, `POST /rewrites/{id}/toggle`, `POST /rewrites/batch-toggle` |
 | Throttle | `GET/POST /throttle`, `POST /throttle/enabled`, `GET /throttle/presets` |
 | Replay | `GET/POST /replay/saved`, `POST /replay/execute/{id}`, `GET /replay/history` |
 | Block List | `GET/POST /blocklist`, `GET /blocklist/stats`, `GET/PUT/DELETE /blocklist/{id}`, `POST /blocklist/{id}/toggle` |

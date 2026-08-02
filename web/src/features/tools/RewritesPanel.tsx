@@ -29,6 +29,7 @@ import {
 import {
   useRewrites,
   useCreateRewrite,
+  useUpdateRewrite,
   useDeleteRewrite,
   useToggleRewrite,
   type RewriteRule,
@@ -116,11 +117,14 @@ const REWRITE_TEMPLATES: {
 export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
   const { data: rewrites, isLoading } = useRewrites();
   const createRewrite = useCreateRewrite();
+  const updateRewrite = useUpdateRewrite();
   const deleteRewrite = useDeleteRewrite();
   const toggleRewrite = useToggleRewrite();
   const { toast } = useToast();
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editingRewrite, setEditingRewrite] = useState<RewriteRule | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<number | null>(null);
   const [newRewrite, setNewRewrite] = useState({
@@ -130,6 +134,15 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
     actionType: 'set_header' as RewriteAction['type'],
     headerName: '',
     headerValue: '',
+  });
+  const [editRewrite, setEditRewrite] = useState({
+    name: '',
+    urlPattern: '',
+    direction: 'request' as 'request' | 'response' | 'both',
+    actionType: 'set_header' as RewriteAction['type'],
+    headerName: '',
+    headerValue: '',
+    enabled: true,
   });
 
   // Filter rewrites based on search term
@@ -237,6 +250,119 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
     toast({
       title: 'Rewrite Deleted',
       description: `Rewrite "${name}" has been deleted`,
+    });
+  };
+
+  // Derive single-action form state from an existing rule. Multi-action
+  // rules are represented by their first action so the user can still edit
+  // the name, URL pattern, direction, and the leading action.
+  const deriveEditState = (rewrite: RewriteRule) => {
+    const urlPattern =
+      rewrite.condition.type === 'url_pattern' ? rewrite.condition.pattern ?? '' : '';
+    const action = rewrite.rewrites[0];
+    let actionType: RewriteAction['type'] = 'set_header';
+    let headerName = '';
+    let headerValue = '';
+    if (action) {
+      switch (action.type) {
+        case 'set_header':
+          actionType = 'set_header';
+          headerName = action.name ?? '';
+          headerValue = action.value ?? '';
+          break;
+        case 'remove_header':
+          actionType = 'remove_header';
+          headerName = action.name ?? '';
+          break;
+        case 'url_rewrite':
+          actionType = 'url_rewrite';
+          headerName = action.pattern ?? '';
+          headerValue = action.replacement ?? '';
+          break;
+        case 'body_rewrite':
+          actionType = 'body_rewrite';
+          headerName = action.pattern ?? '';
+          headerValue = action.replacement ?? '';
+          break;
+      }
+    }
+    return {
+      name: rewrite.name,
+      urlPattern,
+      direction: rewrite.direction,
+      actionType,
+      headerName,
+      headerValue,
+      enabled: rewrite.enabled,
+    };
+  };
+
+  const handleEdit = (rewrite: RewriteRule) => {
+    // Allow an external listener (e.g. a dedicated editor screen) to take
+    // over; otherwise fall back to the built-in edit dialog.
+    if (onEditRewrite) {
+      onEditRewrite(rewrite);
+      return;
+    }
+    setEditingRewrite(rewrite);
+    setEditRewrite(deriveEditState(rewrite));
+    setShowEditDialog(true);
+  };
+
+  const handleEditSubmit = async () => {
+    if (!editingRewrite) return;
+    if (!editRewrite.name) {
+      toast({
+        title: 'Error',
+        description: 'Name is required',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const condition: MatchCondition = editRewrite.urlPattern
+      ? { type: 'url_pattern', pattern: editRewrite.urlPattern }
+      : { type: 'all' };
+
+    // Preserve any additional actions beyond the first one so multi-action
+    // rules (e.g. No Caching) aren't truncated when editing the leading
+    // action or metadata.
+    const preservedActions = editingRewrite.rewrites.slice(1);
+    let action: RewriteAction;
+    switch (editRewrite.actionType) {
+      case 'set_header':
+        action = { type: 'set_header', name: editRewrite.headerName, value: editRewrite.headerValue };
+        break;
+      case 'remove_header':
+        action = { type: 'remove_header', name: editRewrite.headerName };
+        break;
+      case 'url_rewrite':
+        action = { type: 'url_rewrite', pattern: editRewrite.headerName, replacement: editRewrite.headerValue };
+        break;
+      case 'body_rewrite':
+        action = { type: 'body_rewrite', pattern: editRewrite.headerName, replacement: editRewrite.headerValue };
+        break;
+      default:
+        action = { type: 'set_header', name: '', value: '' };
+    }
+    const actions = [action, ...preservedActions];
+
+    await updateRewrite.mutateAsync({
+      id: editingRewrite.id,
+      rewrite: {
+        name: editRewrite.name,
+        condition,
+        direction: editRewrite.direction,
+        rewrites: actions,
+        enabled: editRewrite.enabled,
+      },
+    });
+
+    setShowEditDialog(false);
+    setEditingRewrite(null);
+    toast({
+      title: 'Rewrite Updated',
+      description: `Rewrite "${editRewrite.name}" has been updated`,
     });
   };
 
@@ -549,7 +675,7 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => onEditRewrite?.(rewrite)}>
+                    <DropdownMenuItem onClick={() => handleEdit(rewrite)}>
                       Edit
                     </DropdownMenuItem>
                     <DropdownMenuItem
@@ -565,6 +691,126 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
           ))}
         </div>
       </ScrollArea>
+
+      {/* Edit Dialog */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Rewrite Rule</DialogTitle>
+            <DialogDescription>
+              Modify the rule's match criteria and actions
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <label className="text-sm font-medium">Name</label>
+              <Input
+                placeholder="My Rewrite"
+                value={editRewrite.name}
+                onChange={(e) => setEditRewrite({ ...editRewrite, name: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <label className="text-sm font-medium">URL Pattern (Regex, optional)</label>
+              <Input
+                placeholder=".*api/.*"
+                value={editRewrite.urlPattern}
+                onChange={(e) => setEditRewrite({ ...editRewrite, urlPattern: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <label className="text-sm font-medium">Direction</label>
+              <Select
+                value={editRewrite.direction}
+                onValueChange={(v: 'request' | 'response' | 'both') => setEditRewrite({ ...editRewrite, direction: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="request">Request</SelectItem>
+                  <SelectItem value="response">Response</SelectItem>
+                  <SelectItem value="both">Both</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <label className="text-sm font-medium">Action Type</label>
+              <Select
+                value={editRewrite.actionType}
+                onValueChange={(v: 'set_header' | 'remove_header' | 'url_rewrite' | 'body_rewrite') => setEditRewrite({ ...editRewrite, actionType: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="set_header">Set Header</SelectItem>
+                  <SelectItem value="remove_header">Remove Header</SelectItem>
+                  <SelectItem value="url_rewrite">URL Rewrite</SelectItem>
+                  <SelectItem value="body_rewrite">Body Rewrite</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {(editRewrite.actionType === 'set_header' || editRewrite.actionType === 'remove_header') && (
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Header Name</label>
+                <Input
+                  placeholder="Authorization"
+                  value={editRewrite.headerName}
+                  onChange={(e) => setEditRewrite({ ...editRewrite, headerName: e.target.value })}
+                />
+              </div>
+            )}
+            {(editRewrite.actionType === 'set_header' || editRewrite.actionType === 'url_rewrite' || editRewrite.actionType === 'body_rewrite') && (
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">
+                  {editRewrite.actionType === 'set_header' ? 'Header Value' : 'Replacement'}
+                </label>
+                <Input
+                  placeholder={editRewrite.actionType === 'set_header' ? 'Bearer token123' : 'replacement text'}
+                  value={editRewrite.headerValue}
+                  onChange={(e) => setEditRewrite({ ...editRewrite, headerValue: e.target.value })}
+                />
+              </div>
+            )}
+            {(editRewrite.actionType === 'url_rewrite' || editRewrite.actionType === 'body_rewrite') && (
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Pattern (Regex)</label>
+                <Input
+                  placeholder="http://localhost"
+                  value={editRewrite.headerName}
+                  onChange={(e) => setEditRewrite({ ...editRewrite, headerName: e.target.value })}
+                />
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={editRewrite.enabled}
+                onCheckedChange={(checked) => setEditRewrite({ ...editRewrite, enabled: checked })}
+                id="edit-enabled"
+              />
+              <label htmlFor="edit-enabled" className="text-sm font-medium">
+                Enabled
+              </label>
+            </div>
+            {editingRewrite && editingRewrite.rewrites.length > 1 && (
+              <p className="text-xs text-muted-foreground">
+                This rule has {editingRewrite.rewrites.length} actions. Editing the
+                form above updates the first action and preserves the remaining{' '}
+                {editingRewrite.rewrites.length - 1}.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleEditSubmit} disabled={updateRewrite.isPending}>
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

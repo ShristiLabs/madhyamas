@@ -821,6 +821,63 @@ pub async fn create_rewrite_rule(
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
+/// Update a rewrite rule
+#[derive(Debug, Deserialize, validator::Validate)]
+pub struct UpdateRewriteRequest {
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
+    #[validate(custom(function = "super::validation::validate_match_condition"))]
+    pub condition: MatchCondition,
+    pub direction: RewriteDirection,
+    pub rewrites: Vec<RewriteAction>,
+    pub enabled: Option<bool>,
+    pub priority: Option<u32>,
+}
+
+pub async fn update_rewrite_rule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateRewriteRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
+
+    // Preserve immutable fields (id, created_at, hit_count) from the
+    // existing rule so callers can't overwrite them via the update payload.
+    let existing = match state.rewrite_manager.get_rule(&id) {
+        Some(rule) => rule,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Rewrite rule not found".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let mut rule = RewriteRule::new(req.name, req.condition, req.direction, req.rewrites);
+    rule.id = existing.id;
+    rule.created_at = existing.created_at;
+    rule.hit_count = existing.hit_count;
+    rule.enabled = req.enabled.unwrap_or(existing.enabled);
+    rule.priority = req.priority.unwrap_or(existing.priority);
+
+    if state.rewrite_manager.update_rule(&id, rule) {
+        StatusCode::OK.into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Rewrite rule not found".to_string(),
+            }),
+        )
+            .into_response()
+    }
+}
+
 /// Get a specific rewrite rule
 pub async fn get_rewrite_rule(
     State(state): State<Arc<AppState>>,

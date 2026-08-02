@@ -234,6 +234,10 @@ fn create_routes_inner(
         .route("/rewrites/{id}", get(intercept_handlers::get_rewrite_rule))
         .route(
             "/rewrites/{id}",
+            put(intercept_handlers::update_rewrite_rule),
+        )
+        .route(
+            "/rewrites/{id}",
             delete(intercept_handlers::delete_rewrite_rule),
         )
         .route(

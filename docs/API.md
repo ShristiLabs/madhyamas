@@ -43,6 +43,7 @@ All endpoints are served from the Madhyamas API server (default: `http://127.0.0
 | PUT/DELETE | `/api/mocks/:id` | Update/delete mock rule |
 | POST | `/api/mocks/:id/toggle` | Enable/disable mock |
 | GET/POST/DELETE | `/api/rewrites` | Manage rewrite rules |
+| PUT/DELETE | `/api/rewrites/:id` | Update/delete rewrite rule |
 | POST | `/api/rewrites/:id/toggle` | Enable/disable rewrite |
 | GET/POST | `/api/throttle` | Manage throttling |
 | POST | `/api/throttle/enabled` | Enable/disable throttling |

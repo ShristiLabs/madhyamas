@@ -161,7 +161,12 @@ impl RewriteManager {
     pub fn update_rule(&self, id: &str, rule: RewriteRule) -> bool {
         let mut rules = self.rules.write();
         if let Some(pos) = rules.iter().position(|r| r.id == id) {
-            rules[pos] = rule;
+            rules[pos] = rule.clone();
+            if let Some(store) = &self.store {
+                if let Err(e) = store.save_rewrite_rule(&rule) {
+                    tracing::warn!("Failed to persist rewrite rule update: {}", e);
+                }
+            }
             true
         } else {
             false
