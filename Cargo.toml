@@ -111,6 +111,9 @@ madhyamas-mcp = { path = "crates/madhyamas-mcp", version = "0.1.6" }
 rust-embed = { version = "8", features = ["mime-guess"] }
 mime_guess = "2"
 
+# Testing
+tempfile = "3"
+
 [profile.release]
 lto = true
 strip = true

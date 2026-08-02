@@ -314,6 +314,11 @@ fn create_routes_inner(
             "/blocklist/{id}/toggle",
             post(intercept_handlers::toggle_block_list_entry),
         )
+        // Focus host endpoints
+        .route("/focus", get(handlers::get_focus_hosts))
+        .route("/focus", post(handlers::add_focus_host))
+        .route("/focus/{id}", delete(handlers::remove_focus_host))
+        .route("/focus", delete(handlers::clear_focus_hosts))
         // === Persistence endpoints ===
         .route("/persistence/export", get(handlers::export_all_rules))
         .route("/persistence/import", post(handlers::import_all_rules))

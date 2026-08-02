@@ -26,6 +26,8 @@ pub struct TrafficQuery {
     pub cookie: Option<String>,
     /// Filter by passthrough: "true" = only passthrough, "false" = only intercepted
     pub is_passthrough: Option<String>,
+    /// Filter by host pattern (substring match)
+    pub host: Option<String>,
 }
 
 /// Get all traffic entries
@@ -61,6 +63,7 @@ pub async fn get_traffic(
             "false" => Some(false),
             _ => None,
         }),
+        host: query.host,
     };
 
     match state.traffic_store.get_traffic(&filter) {
@@ -1327,6 +1330,89 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
             StatusCode::NOT_FOUND,
             Json(ErrorResponse {
                 error: "Persistence not enabled".to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+// ============================================================================
+// Focus hosts
+// ============================================================================
+
+/// Get all focus host patterns
+pub async fn get_focus_hosts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.traffic_store.list_focus_hosts() {
+        Ok(hosts) => Json(hosts).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// Request body for creating a focus host
+#[derive(Debug, Deserialize, validator::Validate)]
+pub struct CreateFocusHostRequest {
+    #[validate(length(min = 1, max = 255))]
+    pub pattern: String,
+}
+
+/// Add a focus host pattern
+pub async fn add_focus_host(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateFocusHostRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate(&req) {
+        return e.into_response();
+    }
+    match state.traffic_store.add_focus_host(&req.pattern) {
+        Ok(host) => (StatusCode::CREATED, Json(host)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// Remove a focus host by ID
+pub async fn remove_focus_host(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.traffic_store.remove_focus_host(&id) {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Focus host not found".to_string(),
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// Clear all focus hosts
+pub async fn clear_focus_hosts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.traffic_store.clear_focus_hosts() {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
             }),
         )
             .into_response(),

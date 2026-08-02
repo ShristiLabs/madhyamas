@@ -371,6 +371,94 @@ pub struct TrafficFilter {
     /// Filter by passthrough flag: Some(true) = only passthrough,
     /// Some(false) = only intercepted, None = both
     pub is_passthrough: Option<bool>,
+    /// Filter by host pattern (exact, suffix, or wildcard `*.example.com`)
+    pub host: Option<String>,
+}
+
+/// A persisted "focused" host pattern used to highlight matching traffic
+/// in the traffic list. Unlike a filter, focus does not hide non-matching
+/// traffic — it visually emphasizes matching rows.
+///
+/// Patterns support exact hostnames (`api.example.com`), wildcard subdomains
+/// (`*.example.com`), and globs (`*api*`). Matching is case-insensitive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FocusHost {
+    /// Unique identifier (UUID)
+    pub id: String,
+    /// Host pattern (e.g. `api.example.com`, `*.example.com`, `*api*`)
+    pub pattern: String,
+    /// When the focus host was created (RFC 3339)
+    pub created_at: DateTime<Utc>,
+}
+
+impl FocusHost {
+    /// Create a new focus host entry with a generated ID and current timestamp.
+    pub fn new(pattern: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            pattern: pattern.into(),
+            created_at: Utc::now(),
+        }
+    }
+}
+
+/// Check whether a host matches a focus pattern.
+///
+/// Matching is case-insensitive and supports:
+/// - Exact hostname: `example.com`
+/// - Suffix matching: `example.com` matches `api.example.com`
+/// - Wildcard subdomain: `*.example.com` matches `api.example.com`
+/// - Glob: `*api*` matches any host containing `api`
+pub fn host_matches_pattern(host: &str, pattern: &str) -> bool {
+    let target = host.trim().trim_end_matches('.').to_lowercase();
+    let pat = pattern.trim().trim_end_matches('.').to_lowercase();
+    if target.is_empty() || pat.is_empty() {
+        return false;
+    }
+    // Wildcard subdomain: *.example.com (matches subdomains, not the bare domain)
+    if let Some(suffix) = pat.strip_prefix("*.") {
+        return target.ends_with(&format!(".{suffix}"));
+    }
+    // Glob pattern containing '*' (but not just "*." prefix)
+    if pat.contains('*') {
+        return glob_match(&target, &pat);
+    }
+    // Exact or suffix match
+    target == pat || target.ends_with(&format!(".{pat}"))
+}
+
+/// Simple glob matcher supporting `*` wildcards (zero or more characters).
+fn glob_match(text: &str, pattern: &str) -> bool {
+    let text_bytes = text.as_bytes();
+    let pat_bytes = pattern.as_bytes();
+    glob_match_impl(text_bytes, pat_bytes)
+}
+
+fn glob_match_impl(text: &[u8], pattern: &[u8]) -> bool {
+    let mut ti = 0;
+    let mut pi = 0;
+    let mut star_pi: Option<usize> = None;
+    let mut star_ti = 0;
+    while ti < text.len() {
+        if pi < pattern.len() && (pattern[pi] == b'?' || pattern[pi] == text[ti]) {
+            ti += 1;
+            pi += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'*' {
+            star_pi = Some(pi);
+            star_ti = ti;
+            pi += 1;
+        } else if let Some(spi) = star_pi {
+            pi = spi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+    while pi < pattern.len() && pattern[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pattern.len()
 }
 
 #[cfg(test)]
@@ -926,6 +1014,7 @@ mod tests {
                 header: Some("Authorization".to_string()),
                 cookie: Some("session".to_string()),
                 is_passthrough: None,
+                host: Some("example.com".to_string()),
             };
 
             assert_eq!(filter.url_pattern, Some("api".to_string()));

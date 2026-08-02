@@ -49,6 +49,8 @@ madhyamas plugins list
 madhyamas export har --output traffic.har
 madhyamas traffic import-har /path/to/traffic.har --name "Imported" --switch
 madhyamas replay run-advanced <id> --iterations 100 --concurrency 10 --delay-ms 50
+madhyamas focus list
+madhyamas focus add "*.example.com"
 madhyamas --help  # See all commands
 ```
 
@@ -166,6 +168,17 @@ and glob patterns (`*ads*`). Managed via `GET/POST/PUT/DELETE /api/blocklist`.
 Entries persist to SQLite and survive restarts. See
 [docs/BLOCK_LIST.md](docs/BLOCK_LIST.md).
 
+**Focus**: Highlight traffic from specific hosts in the traffic view. Unlike
+a filter (which hides non-matching traffic), focus visually emphasizes
+matching rows (yellow left border, star icon, bold domain) while dimming the
+rest. A "Show only focused" toggle switches to focus-only mode (hides
+non-matching traffic). Patterns support exact hostnames, wildcard subdomains
+(`*.example.com`), and globs (`*api*`). Right-click a traffic row for a
+quick "Focus this host" action. Managed via `GET/POST/DELETE /api/focus`,
+the `madhyamas focus` CLI subcommand, and `madhyamas_focus_*` MCP tools.
+Focus hosts persist to SQLite (`focus_hosts` table) and survive restarts.
+See [docs/FOCUS.md](docs/FOCUS.md).
+
 **Recording Size Limits**: Traffic recording is bounded by configurable
 limits to prevent unbounded memory/disk usage. `max_requests` (default
 10,000) caps the number of stored entries; `max_total_size_mb` (default
@@ -216,6 +229,7 @@ capped at 10,000 and concurrency at 100. See
 | Throttle | `GET/POST /throttle`, `POST /throttle/enabled`, `GET /throttle/presets` |
 | Replay | `GET/POST /replay/saved`, `POST /replay/execute/{id}`, `POST /replay/execute/{id}/batch`, `GET /replay/history` |
 | Block List | `GET/POST /blocklist`, `GET /blocklist/stats`, `GET/PUT/DELETE /blocklist/{id}`, `POST /blocklist/{id}/toggle` |
+| Focus | `GET/POST /focus`, `DELETE /focus/{id}`, `DELETE /focus` (clear all) |
 | gRPC | `GET /grpc/connections`, `GET /grpc/streams`, `GET /grpc/frames`, `GET /grpc/stats` |
 | Scripts | `GET/POST /scripts`, `GET/PUT/DELETE /scripts/{id}`, `POST /scripts/{id}/toggle` |
 | Plugins | `GET /plugins`, `POST /plugins/{id}/enable`, `POST /plugins/{id}/disable`, `POST /plugins/reload` |

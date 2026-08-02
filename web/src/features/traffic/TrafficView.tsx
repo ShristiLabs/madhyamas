@@ -9,6 +9,7 @@ import {
 import { TrafficList } from "./TrafficList"
 import { TrafficDetail } from "./TrafficDetail"
 import { TrafficToolbar } from "./TrafficToolbar"
+import { FocusPanel } from "./FocusPanel"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -27,12 +28,15 @@ import {
   WifiOff,
   Loader2,
   X,
+  Star,
 } from "lucide-react"
 import type { TrafficEntry } from "@/types/traffic"
 import type { ActiveFilter } from "@/types/filters"
 import { applyFilters } from "@/types/filters"
 import { cn } from "@/lib/utils"
 import { apiPostVoid, apiGet } from "@/lib/api/client"
+import { useFocusHosts, useAddFocusHost } from "@/lib/api/intercept"
+import { hostMatchesAnyPattern } from "@/lib/focus"
 
 const STORAGE_KEY_LIST_WIDTH = "madhyamas-next-list-width"
 const DEFAULT_LIST_WIDTH = 40
@@ -46,6 +50,8 @@ export function TrafficView() {
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([])
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
+  const [showFocusPanel, setShowFocusPanel] = useState(false)
+  const [showOnlyFocused, setShowOnlyFocused] = useState(false)
 
   const [listWidth, setListWidth] = useState(() => {
     if (typeof window !== "undefined") {
@@ -66,6 +72,8 @@ export function TrafficView() {
   const { data: count } = useTrafficCount()
   const clearTraffic = useClearTraffic()
   const importHar = useImportHar()
+  const { data: focusHosts } = useFocusHosts()
+  const addFocusHost = useAddFocusHost()
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -77,8 +85,12 @@ export function TrafficView() {
 
   const filteredTraffic = useMemo(() => {
     if (!traffic) return []
-    return applyFilters(traffic, activeFilters)
-  }, [traffic, activeFilters])
+    let result = applyFilters(traffic, activeFilters)
+    if (showOnlyFocused && focusHosts && focusHosts.length > 0) {
+      result = result.filter((t) => hostMatchesAnyPattern(t.request.host, focusHosts))
+    }
+    return result
+  }, [traffic, activeFilters, showOnlyFocused, focusHosts])
 
   const listEntry = useMemo(() => {
     if (!traffic || !selectedId) return null
@@ -240,6 +252,14 @@ export function TrafficView() {
     setMobileDetailOpen(true)
   }, [])
 
+  const handleFocusHost = useCallback(
+    (host: string) => {
+      if (!host) return
+      addFocusHost.mutate(host)
+    },
+    [addFocusHost],
+  )
+
   return (
     <div className="flex h-full flex-col">
       <TrafficToolbar
@@ -286,6 +306,21 @@ export function TrafficView() {
                   </Button>
                 </div>
               )}
+              <Button
+                variant={showFocusPanel ? "default" : "ghost"}
+                size="sm"
+                className="h-5 px-1.5 text-2xs"
+                onClick={() => setShowFocusPanel((prev) => !prev)}
+                title="Toggle focus panel"
+              >
+                <Star className={cn("h-3 w-3", showFocusPanel && "fill-current")} />
+                Focus
+                {focusHosts && focusHosts.length > 0 && (
+                  <span className="ml-0.5 rounded-full bg-muted px-1 text-2xs">
+                    {focusHosts.length}
+                  </span>
+                )}
+              </Button>
             </div>
 
             <div className="flex items-center gap-1">
@@ -373,6 +408,8 @@ export function TrafficView() {
                     selectedIds={selectedIds}
                     onToggleSelect={handleToggleSelect}
                     onSelectAll={handleSelectAll}
+                    focusHosts={focusHosts}
+                    onFocusHost={handleFocusHost}
                   />
                 )}
               </div>
@@ -407,6 +444,19 @@ export function TrafficView() {
                 </div>
               )}
             </div>
+
+            {/* Focus Panel (optional sidebar) */}
+            {showFocusPanel && (
+              <>
+                <div className="hidden w-px shrink-0 bg-border md:block" />
+                <div className="hidden w-56 shrink-0 flex-col border-l border-border md:flex">
+                  <FocusPanel
+                    showOnlyFocused={showOnlyFocused}
+                    onShowOnlyFocusedChange={setShowOnlyFocused}
+                  />
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

@@ -92,7 +92,7 @@ It was produced by:
 | 17 | Ignore-list for recording | ✅ | ✅ | `ignored_domains` config with wildcard/suffix matching; wired to `TrafficStore` |
 | 18 | Structure view (tree by host) | ✅ | ✅ | Web UI tree view |
 | 19 | Sequence view (chronological) | ✅ | ✅ | Web UI list view |
-| 20 | Focus (highlight hosts) | ✅ | 🟡 | Filter patterns exist; no dedicated "Focus" UI |
+| 20 | Focus (highlight hosts) | ✅ | ✅ | FocusPanel, right-click "Focus this host", pattern matching, persistence |
 | 21 | Chart/timeline visualization | ✅ | ❌ | No visualization code in `web/` |
 | 22 | Request/response header viewers | ✅ | ✅ | Web UI detail tabs |
 | 23 | Body viewers (JSON/XML/form/binary) | ✅ | ✅ | Web UI renderers |
@@ -241,8 +241,10 @@ Response segments for visualizing parallel downloads. Madhyamas has no
 equivalent visualization.
 
 **Focus** — Charles lets you mark hosts as "focused" to separate them from
-noise. Madhyamas has `SessionPreset.filter_host_patterns` but no dedicated
-Focus UI affordance.
+noise. Madhyamas now has a dedicated Focus feature with a FocusPanel UI,
+right-click "Focus this host" context menu, pattern matching (exact,
+wildcard `*.example.com`, glob `*api*`), highlight/focus-only modes, and
+SQLite persistence. See [docs/FOCUS.md](FOCUS.md).
 
 **Content encodings** — Charles 5.1 added zstd. Madhyamas supports gzip,
 deflate, brotli, and zstd decompression on demand via the
@@ -330,7 +332,9 @@ by impact and effort:
    iterations, and delay. See [docs/REPEAT_ADVANCED.md](REPEAT_ADVANCED.md).
 9. **Edit-then-repeat** — Implemented. See [docs/EDIT_THEN_REPEAT.md](EDIT_THEN_REPEAT.md).
 10. **Chart/timeline visualization** — Add a waterfall chart to the web UI.
-11. **Focus feature** — Add a dedicated Focus UI for host filtering.
+11. **Focus feature** — Implemented. Dedicated Focus UI with pattern
+    matching, highlight/focus-only modes, right-click context menu, CLI,
+    MCP tools, and SQLite persistence. See [docs/FOCUS.md](FOCUS.md).
 12. **Mirror tool** — Save responses to disk as a mirror of the site.
 13. **Auto Save** — Periodic session save to avoid memory growth.
 14. **Recording size limits** — Prevent runaway memory usage.

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPostVoid, apiPut, apiDeleteVoid } from './client';
+import type { FocusHost } from '@/types/traffic';
 
 // ==================== Types ====================
 
@@ -910,6 +911,53 @@ export function useToggleBlockListEntry() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['blocklist'] });
       queryClient.invalidateQueries({ queryKey: ['blocklist-stats'] });
+    },
+  });
+}
+
+// ==================== Focus Hosts API ====================
+
+export function useFocusHosts() {
+  return useQuery({
+    queryKey: ['focus-hosts'],
+    queryFn: async (): Promise<FocusHost[]> => {
+      return apiGet<FocusHost[]>('/focus');
+    },
+  });
+}
+
+export function useAddFocusHost() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (pattern: string): Promise<FocusHost> => {
+      return apiPost<FocusHost>('/focus', { pattern });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['focus-hosts'] });
+    },
+  });
+}
+
+export function useRemoveFocusHost() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      return apiDeleteVoid(`/focus/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['focus-hosts'] });
+    },
+  });
+}
+
+export function useClearFocusHosts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      return apiDeleteVoid('/focus');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['focus-hosts'] });
     },
   });
 }

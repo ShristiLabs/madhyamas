@@ -7,6 +7,7 @@ mod breakpoints;
 mod capture;
 mod config;
 mod export;
+mod focus;
 mod grpc;
 mod mocks;
 mod plugins;
@@ -21,6 +22,7 @@ use self::breakpoints::BreakpointCommands;
 use self::capture::CaptureCommands;
 use self::config::ConfigCommands;
 use self::export::ExportCommands;
+use self::focus::FocusCommands;
 use self::grpc::GrpcCommands;
 use self::mocks::MockCommands;
 use self::plugins::PluginCommands;
@@ -175,6 +177,9 @@ pub enum Commands {
     /// Export commands (HAR, cURL)
     #[command(subcommand)]
     Export(ExportCommands),
+    /// Focus host commands (highlight specific hosts in traffic)
+    #[command(subcommand)]
+    Focus(FocusCommands),
 }
 
 impl Commands {
@@ -193,6 +198,7 @@ impl Commands {
             Commands::Scripts(cmd) => cmd.execute(api_url).await,
             Commands::Plugins(cmd) => cmd.execute(api_url).await,
             Commands::Export(cmd) => cmd.execute(api_url).await,
+            Commands::Focus(cmd) => cmd.execute(api_url).await,
         }
     }
 }

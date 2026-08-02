@@ -61,3 +61,9 @@ export interface Session {
   created_at: string
   updated_at: string
 }
+
+export interface FocusHost {
+  id: string
+  pattern: string
+  created_at: string
+}

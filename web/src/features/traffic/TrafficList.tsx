@@ -1,9 +1,10 @@
 import { useState, useMemo, useCallback, memo, useEffect, useRef } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { cn } from "@/lib/utils"
-import { ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react"
+import { hostMatchesAnyPattern } from "@/lib/focus"
+import { ArrowUp, ArrowDown, ArrowUpDown, Star } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
-import type { TrafficEntry } from "@/types/traffic"
+import type { TrafficEntry, FocusHost } from "@/types/traffic"
 
 type SortField = "timestamp" | "method" | "status" | "path" | "duration" | "size"
 type SortDirection = "asc" | "desc"
@@ -16,6 +17,8 @@ interface TrafficListProps {
   selectedIds?: Set<string>
   onToggleSelect?: (id: string) => void
   onSelectAll?: () => void
+  focusHosts?: FocusHost[]
+  onFocusHost?: (host: string) => void
 }
 
 const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = {
@@ -99,6 +102,8 @@ export function TrafficList({
   selectedIds,
   onToggleSelect,
   onSelectAll,
+  focusHosts,
+  onFocusHost,
 }: TrafficListProps) {
   const [sortField, setSortField] = useState<SortField>("timestamp")
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
@@ -237,6 +242,9 @@ export function TrafficList({
                   colWidths={colWidths}
                   isChecked={selectedIds?.has(entry.id)}
                   onToggleCheck={onToggleSelect ? () => onToggleSelect(entry.id) : undefined}
+                  isFocused={focusHosts ? hostMatchesAnyPattern(entry.request.host, focusHosts) : false}
+                  hasFocusHosts={!!focusHosts && focusHosts.length > 0}
+                  onFocusHost={onFocusHost ? () => onFocusHost(entry.request.host) : undefined}
                 />
               </div>
             )
@@ -254,6 +262,9 @@ interface TrafficListItemProps {
   colWidths: Record<ResizableCol, number>
   isChecked?: boolean
   onToggleCheck?: () => void
+  isFocused: boolean
+  hasFocusHosts: boolean
+  onFocusHost?: () => void
 }
 
 const TrafficListItem = memo(function TrafficListItem({
@@ -263,12 +274,24 @@ const TrafficListItem = memo(function TrafficListItem({
   colWidths,
   isChecked,
   onToggleCheck,
+  isFocused,
+  hasFocusHosts,
+  onFocusHost,
 }: TrafficListItemProps) {
   const methodClass = `method-${entry.request.method.toLowerCase()}`
   const statusClass = entry.response
     ? `status-${Math.floor(entry.response.status_code / 100)}xx`
     : ""
   const isPassthrough = entry.is_passthrough === true
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (!onFocusHost) return
+      e.preventDefault()
+      onFocusHost()
+    },
+    [onFocusHost],
+  )
 
   const time = new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
   const size = entry.response ? formatSize(calculateSize(entry)) : "—"
@@ -282,9 +305,15 @@ const TrafficListItem = memo(function TrafficListItem({
         "flex cursor-pointer items-center px-2 text-2xs transition-colors hover:bg-muted/40",
         isSelected && "bg-primary/10 hover:bg-primary/15",
         isPassthrough && "opacity-70",
+        isFocused && "bg-amber-500/5 hover:bg-amber-500/10",
+        hasFocusHosts && !isFocused && "opacity-50",
       )}
-      style={{ height: ROW_HEIGHT }}
+      style={{
+        height: ROW_HEIGHT,
+        ...(isFocused ? { borderLeft: "2px solid var(--amber-500, #f59e0b)" } : undefined),
+      }}
       onClick={onClick}
+      onContextMenu={handleContextMenu}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
@@ -313,10 +342,16 @@ const TrafficListItem = memo(function TrafficListItem({
         {protocol}
       </span>
       <span
-        className="shrink-0 truncate px-1 text-2xs text-muted-foreground"
+        className={cn(
+          "shrink-0 truncate px-1 text-2xs text-muted-foreground",
+          isFocused && "font-bold text-foreground",
+        )}
         style={{ width: colWidths.domain }}
         title={isPassthrough ? `${entry.request.host} (SSL passthrough)` : entry.request.host}
       >
+        {isFocused && (
+          <Star className="mr-0.5 inline-block h-2.5 w-2.5 fill-amber-500 text-amber-500" />
+        )}
         {isPassthrough && (
           <span className="mr-1 inline-block rounded bg-amber-500/20 px-1 py-px text-2xs font-semibold text-amber-600 dark:text-amber-400" title="SSL Passthrough">
             PT

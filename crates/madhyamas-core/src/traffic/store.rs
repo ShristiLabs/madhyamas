@@ -1,7 +1,7 @@
 //! Traffic storage using SQLite
 
 use super::{
-    CaptureStats, ImportResult, RequestData, ResponseData, Session, TrafficEntry,
+    CaptureStats, FocusHost, ImportResult, RequestData, ResponseData, Session, TrafficEntry,
     TrafficEntrySnapshot, TrafficEvent, TrafficFilter,
 };
 use crate::Error;
@@ -219,6 +219,13 @@ impl TrafficStore {
             CREATE INDEX IF NOT EXISTS idx_ws_conn_state ON ws_connections(state);
             CREATE INDEX IF NOT EXISTS idx_ws_msg_conn ON ws_messages(connection_id);
             CREATE INDEX IF NOT EXISTS idx_ws_msg_timestamp ON ws_messages(timestamp);
+
+            -- Focus hosts table (persisted host patterns for highlighting)
+            CREATE TABLE IF NOT EXISTS focus_hosts (
+                id TEXT PRIMARY KEY,
+                pattern TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL
+            );
             "#,
         )
         .map_err(Error::Database)?;
@@ -833,6 +840,11 @@ impl TrafficStore {
                 bind_params.len() + 1
             ));
             bind_params.push(Box::new(passthrough as i32));
+        }
+
+        if let Some(ref host) = filter.host {
+            sql.push_str(&format!(" AND r.host LIKE ?{}", bind_params.len() + 1));
+            bind_params.push(Box::new(format!("%{}%", host)));
         }
 
         sql.push_str(" ORDER BY r.timestamp DESC");
@@ -1494,11 +1506,92 @@ impl TrafficStore {
 
         Ok(entries)
     }
-}
 
-// ---------------------------------------------------------------------------
-// HAR import helper functions
-// ---------------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Focus hosts
+    // -----------------------------------------------------------------------
+
+    /// Add a focus host pattern. If the pattern already exists (case-insensitive),
+    /// the existing entry is returned without creating a duplicate.
+    pub fn add_focus_host(&self, pattern: &str) -> crate::Result<FocusHost> {
+        let normalized = pattern.trim().to_lowercase();
+        if normalized.is_empty() {
+            return Err(Error::Config(
+                "focus host pattern cannot be empty".to_string(),
+            ));
+        }
+        let conn = self.conn.lock();
+
+        // Check for an existing entry with the same pattern.
+        let existing: Option<FocusHost> = conn
+            .query_row(
+                "SELECT id, pattern, created_at FROM focus_hosts WHERE pattern = ?1",
+                params![&normalized],
+                |row| {
+                    let id: String = row.get(0)?;
+                    let pat: String = row.get(1)?;
+                    let created_at: i64 = row.get(2)?;
+                    Ok(FocusHost {
+                        id,
+                        pattern: pat,
+                        created_at: DateTime::from_timestamp(created_at, 0).unwrap_or(Utc::now()),
+                    })
+                },
+            )
+            .ok();
+        if let Some(entry) = existing {
+            return Ok(entry);
+        }
+
+        let host = FocusHost::new(&normalized);
+        conn.execute(
+            "INSERT INTO focus_hosts (id, pattern, created_at) VALUES (?1, ?2, ?3)",
+            params![&host.id, &host.pattern, host.created_at.timestamp()],
+        )
+        .map_err(Error::Database)?;
+        Ok(host)
+    }
+
+    /// Remove a focus host by ID. Returns `true` if a row was deleted.
+    pub fn remove_focus_host(&self, id: &str) -> crate::Result<bool> {
+        let conn = self.conn.lock();
+        let affected = conn
+            .execute("DELETE FROM focus_hosts WHERE id = ?1", params![id])
+            .map_err(Error::Database)?;
+        Ok(affected > 0)
+    }
+
+    /// List all focus hosts ordered by creation time (oldest first).
+    pub fn list_focus_hosts(&self) -> crate::Result<Vec<FocusHost>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT id, pattern, created_at FROM focus_hosts ORDER BY created_at ASC")
+            .map_err(Error::Database)?;
+        let hosts = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let pattern: String = row.get(1)?;
+                let created_at: i64 = row.get(2)?;
+                Ok(FocusHost {
+                    id,
+                    pattern,
+                    created_at: DateTime::from_timestamp(created_at, 0).unwrap_or(Utc::now()),
+                })
+            })
+            .map_err(Error::Database)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Error::Database)?;
+        Ok(hosts)
+    }
+
+    /// Remove all focus hosts.
+    pub fn clear_focus_hosts(&self) -> crate::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM focus_hosts", [])
+            .map_err(Error::Database)?;
+        Ok(())
+    }
+}
 
 /// Parse a full URL string into `(host, path)` components.
 ///
@@ -1862,6 +1955,7 @@ mod har_import_tests {
 #[cfg(test)]
 mod recording_limits_tests {
     use super::*;
+    use crate::traffic::host_matches_pattern;
     use std::collections::HashMap;
 
     fn make_store() -> Arc<TrafficStore> {
@@ -2138,5 +2232,110 @@ mod recording_limits_tests {
             20,
             "no pruning when max_entries is 0"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Focus host tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_add_and_list_focus_host() {
+        let store = make_store();
+        let host = store
+            .add_focus_host("api.example.com")
+            .expect("add focus host");
+        assert_eq!(host.pattern, "api.example.com");
+        assert!(!host.id.is_empty());
+
+        let hosts = store.list_focus_hosts().expect("list focus hosts");
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].pattern, "api.example.com");
+    }
+
+    #[test]
+    fn test_add_focus_host_dedup() {
+        let store = make_store();
+        store.add_focus_host("API.Example.com").expect("add 1");
+        let second = store.add_focus_host("api.example.com").expect("add 2");
+        let hosts = store.list_focus_hosts().expect("list");
+        assert_eq!(hosts.len(), 1, "duplicate pattern should be deduped");
+        assert_eq!(second.pattern, hosts[0].pattern);
+    }
+
+    #[test]
+    fn test_remove_focus_host() {
+        let store = make_store();
+        let host = store.add_focus_host("example.com").expect("add");
+        let removed = store.remove_focus_host(&host.id).expect("remove");
+        assert!(removed);
+        let hosts = store.list_focus_hosts().expect("list");
+        assert!(hosts.is_empty());
+
+        let removed_again = store.remove_focus_host(&host.id).expect("remove again");
+        assert!(!removed_again, "removing non-existent id returns false");
+    }
+
+    #[test]
+    fn test_clear_focus_hosts() {
+        let store = make_store();
+        store.add_focus_host("a.com").expect("add");
+        store.add_focus_host("b.com").expect("add");
+        store.add_focus_host("c.com").expect("add");
+        assert_eq!(store.list_focus_hosts().expect("list").len(), 3);
+        store.clear_focus_hosts().expect("clear");
+        assert!(store.list_focus_hosts().expect("list").is_empty());
+    }
+
+    #[test]
+    fn test_focus_host_persistence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("focus_test.db");
+
+        let store = TrafficStore::new(&db_path).expect("create store");
+        store.add_focus_host("persist.example.com").expect("add");
+        store.add_focus_host("*.wildcard.com").expect("add");
+        assert_eq!(store.list_focus_hosts().expect("list").len(), 2);
+
+        drop(store);
+
+        let store2 = TrafficStore::new(&db_path).expect("reopen store");
+        let hosts = store2.list_focus_hosts().expect("list");
+        assert_eq!(hosts.len(), 2, "focus hosts should persist across restarts");
+        let patterns: Vec<String> = hosts.iter().map(|h| h.pattern.clone()).collect();
+        assert!(patterns.contains(&"persist.example.com".to_string()));
+        assert!(patterns.contains(&"*.wildcard.com".to_string()));
+    }
+
+    #[test]
+    fn test_host_matches_pattern_exact() {
+        assert!(host_matches_pattern("api.example.com", "api.example.com"));
+        assert!(!host_matches_pattern("other.com", "api.example.com"));
+    }
+
+    #[test]
+    fn test_host_matches_pattern_suffix() {
+        assert!(host_matches_pattern("api.example.com", "example.com"));
+        assert!(host_matches_pattern("sub.api.example.com", "example.com"));
+        assert!(!host_matches_pattern("notexample.com", "example.com"));
+    }
+
+    #[test]
+    fn test_host_matches_pattern_wildcard_subdomain() {
+        assert!(host_matches_pattern("api.example.com", "*.example.com"));
+        assert!(host_matches_pattern("sub.api.example.com", "*.example.com"));
+        assert!(!host_matches_pattern("example.com", "*.example.com"));
+    }
+
+    #[test]
+    fn test_host_matches_pattern_glob() {
+        assert!(host_matches_pattern("api.example.com", "*api*"));
+        assert!(host_matches_pattern("api.example.com", "api.*"));
+        assert!(!host_matches_pattern("example.com", "*api*"));
+    }
+
+    #[test]
+    fn test_host_matches_pattern_case_insensitive() {
+        assert!(host_matches_pattern("API.Example.COM", "api.example.com"));
+        assert!(host_matches_pattern("api.example.com", "API.EXAMPLE.COM"));
     }
 }
