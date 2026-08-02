@@ -10,5 +10,6 @@ pub use events::{
 };
 pub use store::TrafficStore;
 pub use types::{
-    HttpMethod, ImportResult, RequestData, ResponseData, Session, TrafficEntry, TrafficFilter,
+    CaptureStats, HttpMethod, ImportResult, RequestData, ResponseData, Session, TrafficEntry,
+    TrafficFilter,
 };

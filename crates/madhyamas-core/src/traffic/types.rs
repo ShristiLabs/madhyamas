@@ -318,6 +318,34 @@ pub struct ImportResult {
     pub errors: Vec<String>,
 }
 
+/// Recording quota statistics returned by [`TrafficStore::get_capture_stats`].
+///
+/// Reports the current usage of the traffic store against the configured
+/// limits (`max_entries`, `max_total_size_bytes`, `max_body_size`). The web
+/// UI uses this to render a quota indicator in the header.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureStats {
+    /// Number of traffic entries currently stored (current session).
+    pub entry_count: usize,
+    /// Maximum number of entries allowed (`max_entries`).
+    pub max_entries: usize,
+    /// Total size of stored request/response bodies in bytes.
+    pub total_size_bytes: usize,
+    /// Maximum total recording size in bytes (`max_total_size_bytes`).
+    /// `0` means no limit.
+    pub max_total_size_bytes: usize,
+    /// Maximum body size per entry in bytes.
+    pub max_body_size: usize,
+    /// Whether traffic capture is currently enabled.
+    pub capture_enabled: bool,
+    /// Whether request bodies are being captured.
+    pub capture_request_bodies: bool,
+    /// Whether response bodies are being captured.
+    pub capture_response_bodies: bool,
+    /// Domains currently on the ignore list.
+    pub ignored_domains: Vec<String>,
+}
+
 /// Filter for traffic queries
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TrafficFilter {

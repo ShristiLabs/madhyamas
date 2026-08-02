@@ -1,16 +1,16 @@
 //! Traffic storage using SQLite
 
 use super::{
-    ImportResult, RequestData, ResponseData, Session, TrafficEntry, TrafficEntrySnapshot,
-    TrafficEvent, TrafficFilter,
+    CaptureStats, ImportResult, RequestData, ResponseData, Session, TrafficEntry,
+    TrafficEntrySnapshot, TrafficEvent, TrafficFilter,
 };
 use crate::Error;
 use chrono::{DateTime, Utc};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
@@ -25,7 +25,28 @@ pub struct TrafficStore {
     /// Maximum body size to store in bytes. Bodies larger than this are
     /// truncated before being written to the database. Default: 20 MB.
     max_body_size: std::sync::atomic::AtomicUsize,
+    /// Maximum number of traffic entries to keep. When the count exceeds
+    /// this limit, the oldest entries are pruned (FIFO). Default: 10,000.
+    max_entries: AtomicUsize,
+    /// Maximum total recording size in bytes (sum of all stored bodies).
+    /// When `0`, no total-size limit is enforced. Default: 0 (unlimited).
+    max_total_size_bytes: AtomicUsize,
+    /// Whether to capture request bodies. When `false`, request bodies are
+    /// not stored (headers and metadata are still recorded). Default: `true`.
+    capture_request_bodies: AtomicBool,
+    /// Whether to capture response bodies. When `false`, response bodies are
+    /// not stored (headers and metadata are still recorded). Default: `true`.
+    capture_response_bodies: AtomicBool,
+    /// Domains whose traffic should not be recorded. Supports suffix and
+    /// wildcard matching (e.g. `*.example.com` matches `api.example.com`).
+    ignored_domains: RwLock<Vec<String>>,
+    /// Monotonic insert counter used to throttle the (expensive) total-size
+    /// check. The size check runs every `SIZE_CHECK_INTERVAL` inserts.
+    insert_counter: AtomicUsize,
 }
+
+/// How often (in inserts) to run the total-size pruning check.
+const SIZE_CHECK_INTERVAL: usize = 100;
 
 impl TrafficStore {
     /// Create a new traffic store
@@ -39,6 +60,12 @@ impl TrafficStore {
             capture_enabled: AtomicBool::new(true),
             event_sender,
             max_body_size: std::sync::atomic::AtomicUsize::new(20 * 1024 * 1024),
+            max_entries: AtomicUsize::new(10_000),
+            max_total_size_bytes: AtomicUsize::new(0),
+            capture_request_bodies: AtomicBool::new(true),
+            capture_response_bodies: AtomicBool::new(true),
+            ignored_domains: RwLock::new(Vec::new()),
+            insert_counter: AtomicUsize::new(0),
         });
 
         store.create_tables()?;
@@ -58,6 +85,12 @@ impl TrafficStore {
             capture_enabled: AtomicBool::new(true),
             event_sender,
             max_body_size: std::sync::atomic::AtomicUsize::new(20 * 1024 * 1024),
+            max_entries: AtomicUsize::new(10_000),
+            max_total_size_bytes: AtomicUsize::new(0),
+            capture_request_bodies: AtomicBool::new(true),
+            capture_response_bodies: AtomicBool::new(true),
+            ignored_domains: RwLock::new(Vec::new()),
+            insert_counter: AtomicUsize::new(0),
         });
 
         store.create_tables()?;
@@ -311,6 +344,295 @@ impl TrafficStore {
         self.max_body_size.load(Ordering::Relaxed)
     }
 
+    /// Set the maximum number of traffic entries to keep. When the count
+    /// exceeds this limit, the oldest entries are pruned (FIFO).
+    pub fn set_max_entries(&self, max: usize) {
+        self.max_entries.store(max, Ordering::Relaxed);
+    }
+
+    /// Get the current maximum entry count.
+    pub fn max_entries(&self) -> usize {
+        self.max_entries.load(Ordering::Relaxed)
+    }
+
+    /// Set the maximum total recording size in bytes. When `0`, no
+    /// total-size limit is enforced.
+    pub fn set_max_total_size_bytes(&self, max: usize) {
+        self.max_total_size_bytes.store(max, Ordering::Relaxed);
+    }
+
+    /// Get the current maximum total recording size in bytes (`0` = unlimited).
+    pub fn max_total_size_bytes(&self) -> usize {
+        self.max_total_size_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Set whether request bodies should be captured.
+    pub fn set_capture_request_bodies(&self, enabled: bool) {
+        self.capture_request_bodies
+            .store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether request bodies are currently being captured.
+    pub fn capture_request_bodies(&self) -> bool {
+        self.capture_request_bodies.load(Ordering::Relaxed)
+    }
+
+    /// Set whether response bodies should be captured.
+    pub fn set_capture_response_bodies(&self, enabled: bool) {
+        self.capture_response_bodies
+            .store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether response bodies are currently being captured.
+    pub fn capture_response_bodies(&self) -> bool {
+        self.capture_response_bodies.load(Ordering::Relaxed)
+    }
+
+    /// Set the list of ignored domains. Traffic from matching hosts is not
+    /// recorded. Supports suffix and wildcard matching (e.g. `*.example.com`).
+    pub fn set_ignored_domains(&self, domains: Vec<String>) {
+        let cleaned: Vec<String> = domains
+            .iter()
+            .map(|d| d.trim().to_lowercase())
+            .filter(|d| !d.is_empty())
+            .collect();
+        *self.ignored_domains.write() = cleaned;
+    }
+
+    /// Get the current list of ignored domains.
+    pub fn ignored_domains(&self) -> Vec<String> {
+        self.ignored_domains.read().clone()
+    }
+
+    /// Check whether a host matches any of the ignored domain patterns.
+    /// Matching is case-insensitive and supports:
+    /// - Exact hostname: `example.com`
+    /// - Suffix matching: `example.com` matches `api.example.com`
+    /// - Wildcard subdomain: `*.example.com` matches `api.example.com`
+    fn is_host_ignored(&self, host: &str) -> bool {
+        let domains = self.ignored_domains.read();
+        if domains.is_empty() {
+            return false;
+        }
+        let target = host.trim().trim_end_matches('.').to_lowercase();
+        if target.is_empty() {
+            return false;
+        }
+        for pattern in domains.iter() {
+            let pattern = pattern.trim().trim_end_matches('.');
+            if pattern.is_empty() {
+                continue;
+            }
+            // Wildcard subdomain: *.example.com
+            if let Some(suffix) = pattern.strip_prefix("*.") {
+                if target == suffix || target.ends_with(&format!(".{suffix}")) {
+                    return true;
+                }
+                continue;
+            }
+            // Exact or suffix match
+            if target == pattern || target.ends_with(&format!(".{pattern}")) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get the number of traffic entries in the current session.
+    pub fn get_entry_count(&self) -> crate::Result<usize> {
+        let conn = self.conn.lock();
+        let session_id = self.current_session_id.lock().clone();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM requests WHERE session_id = ?1",
+                params![&session_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        Ok(count as usize)
+    }
+
+    /// Get the total size of all stored bodies (request + response) in the
+    /// current session, in bytes.
+    fn get_total_size(&self) -> crate::Result<usize> {
+        let conn = self.conn.lock();
+        let session_id = self.current_session_id.lock().clone();
+        let req_size: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(body)), 0) FROM requests WHERE session_id = ?1",
+                params![&session_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        let resp_size: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(body)), 0) FROM responses WHERE request_id IN \
+                 (SELECT id FROM requests WHERE session_id = ?1)",
+                params![&session_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        Ok((req_size + resp_size) as usize)
+    }
+
+    /// Prune the oldest `count` entries from the current session. Deletes
+    /// associated responses first to avoid orphaned rows, then emits a
+    /// `Deleted` event so the web UI updates via WebSocket.
+    fn prune_oldest(&self, count: usize) -> crate::Result<()> {
+        if count == 0 {
+            return Ok(());
+        }
+        let conn = self.conn.lock();
+        let session_id = self.current_session_id.lock().clone();
+
+        // Collect the IDs of the oldest entries to be pruned (for the event).
+        let pruned_ids: Vec<String> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id FROM requests WHERE session_id = ?1 \
+                     ORDER BY timestamp ASC LIMIT ?2",
+                )
+                .map_err(Error::Database)?;
+            let rows = stmt
+                .query_map(params![&session_id, count as i64], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(Error::Database)?;
+            let mut ids = Vec::new();
+            for row in rows {
+                ids.push(row.map_err(Error::Database)?);
+            }
+            ids
+        };
+
+        if pruned_ids.is_empty() {
+            return Ok(());
+        }
+
+        // Delete responses for the pruned requests.
+        let placeholders: Vec<String> = (1..=pruned_ids.len()).map(|i| format!("?{i}")).collect();
+        let placeholders_str = placeholders.join(",");
+        let delete_responses_sql =
+            format!("DELETE FROM responses WHERE request_id IN ({placeholders_str})");
+        let params_refs: Vec<&dyn rusqlite::ToSql> = pruned_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+        conn.execute(&delete_responses_sql, params_refs.as_slice())
+            .map_err(Error::Database)?;
+
+        // Delete the requests.
+        let delete_requests_sql = format!("DELETE FROM requests WHERE id IN ({placeholders_str})");
+        conn.execute(&delete_requests_sql, params_refs.as_slice())
+            .map_err(Error::Database)?;
+
+        // Emit a deleted event so the web UI removes the pruned entries.
+        drop(conn);
+        self.emit_event(TrafficEvent::Deleted(pruned_ids));
+
+        Ok(())
+    }
+
+    /// Enforce the entry-count limit: if the current session has more
+    /// entries than `max_entries`, prune the oldest surplus.
+    fn enforce_entry_limit(&self) -> crate::Result<()> {
+        let max = self.max_entries.load(Ordering::Relaxed);
+        if max == 0 {
+            return Ok(());
+        }
+        let count = self.get_entry_count()?;
+        if count > max {
+            self.prune_oldest(count - max)?;
+        }
+        Ok(())
+    }
+
+    /// Enforce the total-size limit: if the sum of all stored bodies
+    /// exceeds `max_total_size_bytes`, prune oldest entries until under
+    /// the limit. Only runs when `max_total_size_bytes` is non-zero.
+    fn enforce_size_limit(&self) -> crate::Result<()> {
+        let max = self.max_total_size_bytes.load(Ordering::Relaxed);
+        if max == 0 {
+            return Ok(());
+        }
+        let mut total = self.get_total_size()?;
+        if total <= max {
+            return Ok(());
+        }
+        // Prune oldest entries in batches until under the limit.
+        let conn = self.conn.lock();
+        let session_id = self.current_session_id.lock().clone();
+        // Gather oldest entries with their body sizes so we can prune
+        // just enough to get under the limit.
+        let entries: Vec<(String, i64)> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT r.id, \
+                     COALESCE(LENGTH(r.body), 0) + COALESCE(\
+                       (SELECT LENGTH(rs.body) FROM responses rs WHERE rs.request_id = r.id), 0\
+                     ) AS entry_size \
+                     FROM requests r WHERE r.session_id = ?1 \
+                     ORDER BY r.timestamp ASC",
+                )
+                .map_err(Error::Database)?;
+            let rows = stmt
+                .query_map(params![&session_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .map_err(Error::Database)?;
+            let mut v = Vec::new();
+            for row in rows {
+                v.push(row.map_err(Error::Database)?);
+            }
+            v
+        };
+        drop(conn);
+
+        let mut to_prune: Vec<String> = Vec::new();
+        for (id, size) in entries {
+            if total <= max {
+                break;
+            }
+            to_prune.push(id);
+            total = total.saturating_sub(size as usize);
+        }
+        if !to_prune.is_empty() {
+            let conn = self.conn.lock();
+            let placeholders: Vec<String> = (1..=to_prune.len()).map(|i| format!("?{i}")).collect();
+            let placeholders_str = placeholders.join(",");
+            let delete_responses_sql =
+                format!("DELETE FROM responses WHERE request_id IN ({placeholders_str})");
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                to_prune.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            conn.execute(&delete_responses_sql, params_refs.as_slice())
+                .map_err(Error::Database)?;
+            let delete_requests_sql =
+                format!("DELETE FROM requests WHERE id IN ({placeholders_str})");
+            conn.execute(&delete_requests_sql, params_refs.as_slice())
+                .map_err(Error::Database)?;
+            drop(conn);
+            self.emit_event(TrafficEvent::Deleted(to_prune));
+        }
+        Ok(())
+    }
+
+    /// Get recording quota statistics for the current session.
+    pub fn get_capture_stats(&self) -> crate::Result<CaptureStats> {
+        let entry_count = self.get_entry_count()?;
+        let total_size_bytes = self.get_total_size()?;
+        Ok(CaptureStats {
+            entry_count,
+            max_entries: self.max_entries.load(Ordering::Relaxed),
+            total_size_bytes,
+            max_total_size_bytes: self.max_total_size_bytes.load(Ordering::Relaxed),
+            max_body_size: self.max_body_size.load(Ordering::Relaxed),
+            capture_enabled: self.capture_enabled.load(Ordering::Relaxed),
+            capture_request_bodies: self.capture_request_bodies.load(Ordering::Relaxed),
+            capture_response_bodies: self.capture_response_bodies.load(Ordering::Relaxed),
+            ignored_domains: self.ignored_domains.read().clone(),
+        })
+    }
+
     /// Truncate a body to the configured maximum size (in-place via clone).
     fn clamp_body(&self, body: &Option<Vec<u8>>) -> Option<Vec<u8>> {
         let max = self.max_body_size.load(Ordering::Relaxed);
@@ -330,9 +652,18 @@ impl TrafficStore {
         if !self.capture_enabled.load(Ordering::Relaxed) {
             return Ok(());
         }
+        // Skip storage if the host matches an ignored domain pattern.
+        if self.is_host_ignored(&entry.request.host) {
+            return Ok(());
+        }
         let conn = self.conn.lock();
         let headers = serde_json::to_string(&entry.request.headers).unwrap_or_default();
-        let body = self.clamp_body(&entry.request.body);
+        // Only store the request body if capture_request_bodies is enabled.
+        let body = if self.capture_request_bodies.load(Ordering::Relaxed) {
+            self.clamp_body(&entry.request.body)
+        } else {
+            None
+        };
         let content_type = entry.request.content_type.as_ref();
 
         conn.execute(
@@ -365,7 +696,17 @@ impl TrafficStore {
 
         // Emit traffic added event
         let snapshot = TrafficEntrySnapshot::from(entry);
+        drop(conn);
         self.emit_event(TrafficEvent::Added(snapshot));
+
+        // Enforce entry-count limit (cheap check on every insert).
+        self.enforce_entry_limit()?;
+
+        // Enforce total-size limit periodically (expensive check).
+        let prev = self.insert_counter.fetch_add(1, Ordering::Relaxed);
+        if prev.is_multiple_of(SIZE_CHECK_INTERVAL) {
+            self.enforce_size_limit()?;
+        }
 
         Ok(())
     }
@@ -381,7 +722,12 @@ impl TrafficStore {
         }
         let conn = self.conn.lock();
         let headers = serde_json::to_string(&response.headers).unwrap_or_default();
-        let body = self.clamp_body(&response.body);
+        // Only store the response body if capture_response_bodies is enabled.
+        let body = if self.capture_response_bodies.load(Ordering::Relaxed) {
+            self.clamp_body(&response.body)
+        } else {
+            None
+        };
         let content_type = response.content_type.as_ref();
 
         conn.execute(
@@ -1510,5 +1856,287 @@ mod har_import_tests {
         assert_eq!(normalize_http_version("http/2.0"), "HTTP/2");
         assert_eq!(normalize_http_version("h2"), "HTTP/2");
         assert_eq!(normalize_http_version("HTTP/3"), "HTTP/3");
+    }
+}
+
+#[cfg(test)]
+mod recording_limits_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn make_store() -> Arc<TrafficStore> {
+        TrafficStore::in_memory().expect("failed to create in-memory store")
+    }
+
+    fn make_entry(session_id: &str, host: &str, path: &str, body: Option<Vec<u8>>) -> TrafficEntry {
+        let request = RequestData {
+            method: crate::traffic::HttpMethod::Get,
+            url: format!("https://{host}{path}"),
+            host: host.to_string(),
+            path: path.to_string(),
+            headers: HashMap::new(),
+            body,
+            content_type: None,
+            http_version: Some("HTTP/1.1".to_string()),
+        };
+        let mut entry = TrafficEntry::new(session_id, request);
+        // Ensure the entry uses the provided session_id
+        entry.session_id = session_id.to_string();
+        entry
+    }
+
+    fn make_response(body: Option<Vec<u8>>) -> ResponseData {
+        ResponseData {
+            status_code: 200,
+            status_message: Some("OK".to_string()),
+            headers: HashMap::new(),
+            body,
+            content_type: Some("application/json".to_string()),
+            duration_ms: 10,
+            http_version: Some("HTTP/1.1".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_max_entries_prunes_oldest() {
+        let store = make_store();
+        let session_id = store.current_session_id();
+        store.set_max_entries(5);
+
+        for i in 0..10 {
+            let entry = make_entry(&session_id, "example.com", &format!("/p{i}"), None);
+            store.store_request(&entry).expect("store request");
+            // Small sleep to ensure distinct timestamps
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        let count = store.get_entry_count().expect("entry count");
+        assert_eq!(count, 5, "should have pruned to 5 entries");
+
+        // The 5 most recent should remain (paths /p5 through /p9)
+        let filter = TrafficFilter::default();
+        let entries = store.get_traffic(&filter).expect("get traffic");
+        let paths: Vec<&str> = entries.iter().map(|e| e.request.path.as_str()).collect();
+        for i in 5..10 {
+            let p = format!("/p{i}");
+            assert!(paths.contains(&p.as_str()), "path {p} should remain");
+        }
+    }
+
+    #[test]
+    fn test_pruned_responses_are_deleted() {
+        let store = make_store();
+        let session_id = store.current_session_id();
+        store.set_max_entries(3);
+
+        // Insert 5 entries, each with a response.
+        for i in 0..5 {
+            let mut entry = make_entry(&session_id, "example.com", &format!("/r{i}"), None);
+            store.store_request(&entry).expect("store request");
+            entry.response = Some(make_response(Some(format!("resp{i}").into_bytes())));
+            store
+                .store_response(&entry.id, entry.response.as_ref().unwrap())
+                .expect("store response");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        // Only 3 entries should remain
+        assert_eq!(store.get_entry_count().unwrap(), 3);
+
+        // Verify no orphaned responses: count responses that belong to
+        // remaining requests
+        let conn = store.conn.lock();
+        let orphaned: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM responses WHERE request_id NOT IN \
+                 (SELECT id FROM requests)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        drop(conn);
+        assert_eq!(orphaned, 0, "no orphaned responses should remain");
+    }
+
+    #[test]
+    fn test_capture_request_bodies_disabled() {
+        let store = make_store();
+        let session_id = store.current_session_id();
+        store.set_capture_request_bodies(false);
+
+        let entry = make_entry(
+            &session_id,
+            "example.com",
+            "/api",
+            Some(b"request body".to_vec()),
+        );
+        store.store_request(&entry).expect("store request");
+
+        let stored = store
+            .get_by_id(&entry.id)
+            .expect("get entry")
+            .expect("entry exists");
+        assert!(
+            stored.request.body.is_none(),
+            "request body should not be stored when capture_request_bodies is false"
+        );
+    }
+
+    #[test]
+    fn test_capture_response_bodies_disabled() {
+        let store = make_store();
+        let session_id = store.current_session_id();
+        store.set_capture_response_bodies(false);
+
+        let entry = make_entry(
+            &session_id,
+            "example.com",
+            "/api",
+            Some(b"request body".to_vec()),
+        );
+        store.store_request(&entry).expect("store request");
+        let resp = make_response(Some(b"response body".to_vec()));
+        store
+            .store_response(&entry.id, &resp)
+            .expect("store response");
+
+        let stored = store
+            .get_by_id(&entry.id)
+            .expect("get entry")
+            .expect("entry exists");
+        let stored_resp = stored.response.expect("response exists");
+        assert!(
+            stored_resp.body.is_none(),
+            "response body should not be stored when capture_response_bodies is false"
+        );
+    }
+
+    #[test]
+    fn test_ignored_domains_skips_storage() {
+        let store = make_store();
+        let session_id = store.current_session_id();
+        store.set_ignored_domains(vec!["*.example.com".to_string()]);
+
+        // Request to example.com should be skipped
+        let entry1 = make_entry(&session_id, "api.example.com", "/skip", None);
+        store.store_request(&entry1).expect("store request");
+
+        // Request to other.com should be stored
+        let entry2 = make_entry(&session_id, "other.com", "/keep", None);
+        store.store_request(&entry2).expect("store request");
+
+        assert_eq!(
+            store.get_entry_count().unwrap(),
+            1,
+            "only non-ignored entry should be stored"
+        );
+    }
+
+    #[test]
+    fn test_ignored_domains_exact_match() {
+        let store = make_store();
+        let session_id = store.current_session_id();
+        store.set_ignored_domains(vec!["blocked.com".to_string()]);
+
+        let entry = make_entry(&session_id, "blocked.com", "/path", None);
+        store.store_request(&entry).expect("store request");
+
+        assert_eq!(
+            store.get_entry_count().unwrap(),
+            0,
+            "exact match should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_ignored_domains_suffix_match() {
+        let store = make_store();
+        let session_id = store.current_session_id();
+        store.set_ignored_domains(vec!["analytics.com".to_string()]);
+
+        let entry = make_entry(&session_id, "api.analytics.com", "/track", None);
+        store.store_request(&entry).expect("store request");
+
+        assert_eq!(
+            store.get_entry_count().unwrap(),
+            0,
+            "suffix match should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_get_capture_stats() {
+        let store = make_store();
+        let session_id = store.current_session_id();
+        store.set_max_entries(100);
+        store.set_max_total_size_bytes(1024 * 1024);
+
+        // Insert 3 entries with bodies
+        for i in 0..3 {
+            let entry = make_entry(
+                &session_id,
+                "example.com",
+                &format!("/s{i}"),
+                Some(format!("body{i}").into_bytes()),
+            );
+            store.store_request(&entry).expect("store request");
+        }
+
+        let stats = store.get_capture_stats().expect("capture stats");
+        assert_eq!(stats.entry_count, 3);
+        assert_eq!(stats.max_entries, 100);
+        assert!(stats.total_size_bytes > 0);
+        assert_eq!(stats.max_total_size_bytes, 1024 * 1024);
+        assert!(stats.capture_enabled);
+        assert!(stats.capture_request_bodies);
+        assert!(stats.capture_response_bodies);
+        assert!(stats.ignored_domains.is_empty());
+    }
+
+    #[test]
+    fn test_total_size_limit_pruning() {
+        let store = make_store();
+        let session_id = store.current_session_id();
+        // Set a very small total size limit (enough for ~2 entries with bodies)
+        store.set_max_total_size_bytes(30);
+        // Disable entry-count limit so only size pruning applies
+        store.set_max_entries(0);
+
+        // Insert entries with bodies larger than the limit can hold
+        for i in 0..10 {
+            let entry = make_entry(
+                &session_id,
+                "example.com",
+                &format!("/sz{i}"),
+                Some(vec![b'x'; 20]),
+            );
+            store.store_request(&entry).expect("store request");
+            // Force size check on every insert by resetting the counter
+            store.insert_counter.store(0, Ordering::Relaxed);
+        }
+
+        let total = store.get_total_size().expect("total size");
+        assert!(
+            total <= 30,
+            "total size {total} should be under the 30-byte limit"
+        );
+    }
+
+    #[test]
+    fn test_max_entries_zero_means_unlimited() {
+        let store = make_store();
+        let session_id = store.current_session_id();
+        store.set_max_entries(0);
+
+        for i in 0..20 {
+            let entry = make_entry(&session_id, "example.com", &format!("/u{i}"), None);
+            store.store_request(&entry).expect("store request");
+        }
+
+        assert_eq!(
+            store.get_entry_count().unwrap(),
+            20,
+            "no pruning when max_entries is 0"
+        );
     }
 }

@@ -74,6 +74,7 @@ interface CaptureConfig {
   capture_response_bodies: boolean;
   max_body_size_kb: number;
   ignored_domains: string;
+  max_total_size_mb: number | null;
 }
 
 interface AppearanceConfig {
@@ -83,7 +84,6 @@ interface AppearanceConfig {
 }
 
 const LS_UPSTREAM = "madhyamas-upstream-config";
-const LS_CAPTURE = "madhyamas-capture-config";
 const LS_APPEARANCE = "madhyamas-appearance-config";
 
 // ─── Default values ────────────────────────────────────────────────────────────
@@ -104,6 +104,7 @@ const DEFAULT_CAPTURE: CaptureConfig = {
   capture_response_bodies: true,
   max_body_size_kb: 20480,
   ignored_domains: "",
+  max_total_size_mb: null,
 };
 
 const DEFAULT_APPEARANCE: AppearanceConfig = {
@@ -562,20 +563,67 @@ function UpstreamProxyTab() {
 
 function CaptureTab() {
   const { toast } = useToast();
-  const [cfg, setCfg] = useState<CaptureConfig>(() =>
-    loadLS(LS_CAPTURE, DEFAULT_CAPTURE),
-  );
+  const [cfg, setCfg] = useState<CaptureConfig>(DEFAULT_CAPTURE);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const save = useCallback(() => {
-    localStorage.setItem(LS_CAPTURE, JSON.stringify(cfg));
-    toast({ description: "Capture settings saved." });
+  useEffect(() => {
+    apiGet<RuntimeConfig & { max_body_size?: number; capture_request_bodies?: boolean; capture_response_bodies?: boolean; ignored_domains?: string[]; max_total_size_mb?: number | null }>("/config")
+      .then((data) => {
+        setCfg({
+          capture_request_bodies: data.capture_request_bodies ?? true,
+          capture_response_bodies: data.capture_response_bodies ?? true,
+          max_body_size_kb: data.max_body_size
+            ? Math.round(data.max_body_size / 1024)
+            : 20480,
+          ignored_domains: (data.ignored_domains ?? []).join("\n"),
+          max_total_size_mb: data.max_total_size_mb ?? null,
+        });
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = useCallback(async () => {
+    setSaving(true);
+    try {
+      const ignoredLines = cfg.ignored_domains
+        .split("\n")
+        .map((d) => d.trim())
+        .filter((d) => d.length > 0);
+      await apiPatch("/config", {
+        capture_request_bodies: cfg.capture_request_bodies,
+        capture_response_bodies: cfg.capture_response_bodies,
+        max_body_size: cfg.max_body_size_kb * 1024,
+        ignored_domains: ignoredLines,
+        max_total_size_mb: cfg.max_total_size_mb,
+      });
+      toast({ description: "Capture settings saved." });
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? `Failed to save capture settings (HTTP ${err.status}): ${err.body.slice(0, 200)}`
+          : err instanceof Error
+            ? `Failed to save capture settings: ${err.message}`
+            : "Failed to save capture settings.";
+      toast({ description: msg, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
   }, [cfg, toast]);
 
   const reset = useCallback(() => {
     setCfg(DEFAULT_CAPTURE);
-    localStorage.removeItem(LS_CAPTURE);
-    toast({ description: "Capture settings reset." });
+    toast({ description: "Capture settings reset (click Save to apply)." });
   }, [toast]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-48 text-muted-foreground">
+        Loading…
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -628,6 +676,31 @@ function CaptureTab() {
         </div>
       </Section>
 
+      <Section title="Recording Limits">
+        <Row
+          label="Max Total Recording Size"
+          description="Total size of all stored bodies. When exceeded, oldest entries are pruned. Set to empty for unlimited."
+        >
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={0}
+              value={cfg.max_total_size_mb ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                setCfg((p) => ({
+                  ...p,
+                  max_total_size_mb: v === "" ? null : parseInt(v, 10) || null,
+                }));
+              }}
+              placeholder="Unlimited"
+              className="w-28"
+            />
+            <span className="text-sm text-muted-foreground">MB</span>
+          </div>
+        </Row>
+      </Section>
+
       <Section title="Domain Filtering">
         <div className="space-y-2">
           <Label className="text-sm font-medium">Ignored Domains</Label>
@@ -654,9 +727,9 @@ function CaptureTab() {
           <RotateCcw className="h-4 w-4 mr-2" />
           Reset
         </Button>
-        <Button onClick={save}>
+        <Button onClick={save} disabled={saving}>
           <Save className="h-4 w-4 mr-2" />
-          Save Changes
+          {saving ? "Saving…" : "Save Changes"}
         </Button>
       </div>
     </div>

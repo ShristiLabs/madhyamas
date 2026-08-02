@@ -81,6 +81,7 @@ fn create_routes_inner(
         // Capture / passthrough mode
         .route("/capture", get(handlers::get_capture_status))
         .route("/capture/toggle", post(handlers::toggle_capture))
+        .route("/capture/stats", get(handlers::get_capture_stats))
         // Health check
         .route("/health", get(|| async { "OK" }))
         // === WebSocket Traffic ===

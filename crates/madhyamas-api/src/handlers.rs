@@ -413,6 +413,10 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse
         "intercept_https": config.intercept_https,
         "max_requests": config.max_requests,
         "max_body_size": config.max_body_size,
+        "max_total_size_mb": config.max_total_size_mb,
+        "capture_request_bodies": config.capture_request_bodies,
+        "capture_response_bodies": config.capture_response_bodies,
+        "ignored_domains": config.ignored_domains,
         "passthrough_domains": config.passthrough_domains,
         "enable_h2_downstream": config.enable_h2_downstream,
         "enable_socks": config.enable_socks,
@@ -452,6 +456,20 @@ pub async fn toggle_capture(State(state): State<Arc<AppState>>) -> impl IntoResp
     }))
 }
 
+/// Get recording quota statistics (entry count, total size, limits, usage).
+pub async fn get_capture_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.traffic_store.get_capture_stats() {
+        Ok(stats) => Json(stats).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
 /// Request body for updating runtime configuration
 #[derive(Debug, Deserialize, validator::Validate)]
 pub struct PatchConfigRequest {
@@ -462,6 +480,24 @@ pub struct PatchConfigRequest {
     pub public_ip: Option<serde_json::Value>,
     #[validate(range(min = 0, max = 1_073_741_824))]
     pub max_body_size: Option<usize>,
+
+    /// Maximum total recording size in megabytes. Set to `null` to disable
+    /// the total-size limit. Applied to the traffic store immediately.
+    pub max_total_size_mb: Option<serde_json::Value>,
+
+    /// Whether to capture request bodies. Applied to the traffic store
+    /// immediately.
+    pub capture_request_bodies: Option<bool>,
+
+    /// Whether to capture response bodies. Applied to the traffic store
+    /// immediately.
+    pub capture_response_bodies: Option<bool>,
+
+    /// Domains whose traffic should not be recorded (capture ignore list).
+    /// Supports suffix and wildcard matching (e.g. `*.example.com`).
+    /// Applied to the traffic store immediately.
+    pub ignored_domains: Option<Vec<String>>,
+
     /// Domains to exclude from TLS interception (SSL passthrough)
     pub passthrough_domains: Option<Vec<String>>,
     /// Enable HTTP/2 downstream (client-facing) support via ALPN h2 negotiation.
@@ -557,6 +593,8 @@ pub async fn patch_config(
     }
     if let Some(v) = req.max_requests {
         config.max_requests = v;
+        // Apply to the traffic store immediately (entry-count limit)
+        state.traffic_store.set_max_entries(v);
     }
     if let Some(v) = req.verbose {
         config.verbose = v;
@@ -568,6 +606,60 @@ pub async fn patch_config(
         config.max_body_size = v;
         // Apply to the traffic store immediately
         state.traffic_store.set_max_body_size(v);
+    }
+    if let Some(v) = req.max_total_size_mb {
+        match v {
+            serde_json::Value::Null => {
+                config.max_total_size_mb = None;
+                state.traffic_store.set_max_total_size_bytes(0);
+            }
+            serde_json::Value::Number(n) => {
+                if let Some(mb) = n.as_u64() {
+                    config.max_total_size_mb = Some(mb as usize);
+                    state
+                        .traffic_store
+                        .set_max_total_size_bytes(mb as usize * 1024 * 1024);
+                } else {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": "max_total_size_mb must be a non-negative integer or null",
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+            other => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "max_total_size_mb must be a non-negative integer or null",
+                        "value": other,
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+    if let Some(v) = req.capture_request_bodies {
+        config.capture_request_bodies = v;
+        state.traffic_store.set_capture_request_bodies(v);
+    }
+    if let Some(v) = req.capture_response_bodies {
+        config.capture_response_bodies = v;
+        state.traffic_store.set_capture_response_bodies(v);
+    }
+    if let Some(domains) = req.ignored_domains {
+        // Normalize: trim, lowercase, deduplicate, drop empties
+        let mut cleaned: Vec<String> = domains
+            .iter()
+            .map(|d| d.trim().to_lowercase())
+            .filter(|d| !d.is_empty())
+            .collect();
+        cleaned.sort();
+        cleaned.dedup();
+        config.ignored_domains = cleaned.clone();
+        state.traffic_store.set_ignored_domains(cleaned);
     }
     if let Some(domains) = req.passthrough_domains {
         // Normalize: trim, lowercase, deduplicate, drop empties
@@ -761,6 +853,10 @@ pub async fn patch_config(
         "intercept_https": config.intercept_https,
         "max_requests": config.max_requests,
         "max_body_size": config.max_body_size,
+        "max_total_size_mb": config.max_total_size_mb,
+        "capture_request_bodies": config.capture_request_bodies,
+        "capture_response_bodies": config.capture_response_bodies,
+        "ignored_domains": config.ignored_domains,
         "verbose": config.verbose,
         "passthrough_domains": config.passthrough_domains,
         "enable_h2_downstream": config.enable_h2_downstream,

@@ -88,8 +88,8 @@ It was produced by:
 | # | Feature | Charles | Madhyamas | Notes |
 |---|---|---|---|---|
 | 15 | Recording on/off toggle | ✅ | ✅ | `traffic/store.rs` `capture_enabled` flag |
-| 16 | Recording size limits | ✅ | ❌ | No max-size guard |
-| 17 | Ignore-list for recording | ✅ | 🟡 | `SessionPreset.filter_host_patterns` (`session.rs:42-72`) |
+| 16 | Recording size limits | ✅ | ✅ | `max_requests`, `max_total_size_mb`, `max_body_size` with FIFO pruning; `GET /capture/stats` |
+| 17 | Ignore-list for recording | ✅ | ✅ | `ignored_domains` config with wildcard/suffix matching; wired to `TrafficStore` |
 | 18 | Structure view (tree by host) | ✅ | ✅ | Web UI tree view |
 | 19 | Sequence view (chronological) | ✅ | ✅ | Web UI list view |
 | 20 | Focus (highlight hosts) | ✅ | 🟡 | Filter patterns exist; no dedicated "Focus" UI |

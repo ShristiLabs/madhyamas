@@ -462,6 +462,22 @@ async fn run_proxy_server(args: Args) -> Result<()> {
             .as_ref()
             .map(|s| s.max_body_size)
             .unwrap_or(defaults.max_body_size),
+        max_total_size_mb: saved
+            .as_ref()
+            .and_then(|s| s.max_total_size_mb)
+            .or(defaults.max_total_size_mb),
+        capture_request_bodies: saved
+            .as_ref()
+            .map(|s| s.capture_request_bodies)
+            .unwrap_or(defaults.capture_request_bodies),
+        capture_response_bodies: saved
+            .as_ref()
+            .map(|s| s.capture_response_bodies)
+            .unwrap_or(defaults.capture_response_bodies),
+        ignored_domains: saved
+            .as_ref()
+            .map(|s| s.ignored_domains.clone())
+            .unwrap_or(defaults.ignored_domains),
         passthrough_domains: saved
             .as_ref()
             .map(|s| s.passthrough_domains.clone())
@@ -549,6 +565,13 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     // Initialize traffic store
     let traffic_store = TrafficStore::new(config.db_path.clone())?;
     traffic_store.set_max_body_size(config.max_body_size);
+    traffic_store.set_max_entries(config.max_requests);
+    if let Some(mb) = config.max_total_size_mb {
+        traffic_store.set_max_total_size_bytes(mb * 1024 * 1024);
+    }
+    traffic_store.set_capture_request_bodies(config.capture_request_bodies);
+    traffic_store.set_capture_response_bodies(config.capture_response_bodies);
+    traffic_store.set_ignored_domains(config.ignored_domains.clone());
 
     // Initialize intercept rule persistence store (SQLite). Rules are
     // loaded on startup and saved whenever they change via the API.

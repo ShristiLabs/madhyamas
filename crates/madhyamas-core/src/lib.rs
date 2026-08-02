@@ -30,9 +30,10 @@ pub use config::{ProxyConfig, UpstreamProxyConfig};
 
 // Re-exports from traffic
 pub use traffic::{
-    create_traffic_event_channel, HttpMethod, ImportResult, RequestData, ResponseData, Session,
-    TrafficEntry, TrafficEntrySnapshot, TrafficEvent, TrafficFilter, TrafficStore,
-    TrafficSubscriptionFilter, WsClientMessage, WsServerMessage, TRAFFIC_EVENT_CHANNEL_CAPACITY,
+    create_traffic_event_channel, CaptureStats, HttpMethod, ImportResult, RequestData,
+    ResponseData, Session, TrafficEntry, TrafficEntrySnapshot, TrafficEvent, TrafficFilter,
+    TrafficStore, TrafficSubscriptionFilter, WsClientMessage, WsServerMessage,
+    TRAFFIC_EVENT_CHANNEL_CAPACITY,
 };
 
 // Re-exports from tls

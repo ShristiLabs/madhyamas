@@ -52,6 +52,29 @@ pub struct ProxyConfig {
     /// Bodies larger than this are truncated when stored.
     pub max_body_size: usize,
 
+    /// Maximum total recording size in megabytes. When the sum of all stored
+    /// request/response bodies exceeds this limit, the oldest entries are
+    /// pruned (FIFO). When `None`, no total-size limit is enforced.
+    /// Default: `None` (unlimited).
+    #[serde(default)]
+    pub max_total_size_mb: Option<usize>,
+
+    /// Whether to capture request bodies. When `false`, request bodies are
+    /// not stored (headers and metadata are still recorded). Default: `true`.
+    #[serde(default = "default_true")]
+    pub capture_request_bodies: bool,
+
+    /// Whether to capture response bodies. When `false`, response bodies are
+    /// not stored (headers and metadata are still recorded). Default: `true`.
+    #[serde(default = "default_true")]
+    pub capture_response_bodies: bool,
+
+    /// Domains whose traffic should not be recorded (capture ignore list).
+    /// Supports suffix and wildcard matching (e.g. `*.example.com` matches
+    /// `api.example.com`). Default: empty (record all traffic).
+    #[serde(default)]
+    pub ignored_domains: Vec<String>,
+
     /// Domains to exclude from TLS interception (SSL passthrough).
     /// Connections to these hosts are tunneled directly without decryption.
     /// The traffic is still listed but flagged as passthrough.
@@ -224,6 +247,11 @@ impl Default for UpstreamProxyConfig {
 /// Default value provider for [`UpstreamProxyConfig::protocol`].
 fn default_upstream_protocol() -> String {
     "http".to_string()
+}
+
+/// Default value provider for boolean config fields that default to `true`.
+fn default_true() -> bool {
+    true
 }
 
 impl UpstreamProxyConfig {
@@ -400,6 +428,10 @@ impl Default for ProxyConfig {
             max_requests: 10000,
             intercept_https: true,
             max_body_size: 20 * 1024 * 1024, // 20 MB
+            max_total_size_mb: None,
+            capture_request_bodies: true,
+            capture_response_bodies: true,
+            ignored_domains: Vec::new(),
             passthrough_domains: Vec::new(),
             enable_h2_downstream: false,
             enable_socks: false,

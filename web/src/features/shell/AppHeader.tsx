@@ -26,9 +26,11 @@ import {
   Github,
   BookOpen,
   ExternalLink,
+  Database,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { apiGet, apiPost } from "@/lib/api/client"
+import { useCaptureStats } from "@/hooks/useCaptureStats"
 
 // Lazy-load heavy dialogs that are only opened on demand.
 const CertificateHelper = lazy(() =>
@@ -49,6 +51,7 @@ export function AppHeader({ isDark, onToggleTheme }: AppHeaderProps) {
   const [proxyAddress, setProxyAddress] = useState("localhost:8888")
   const [captureEnabled, setCaptureEnabled] = useState(true)
   const [captureLoading, setCaptureLoading] = useState(false)
+  const { data: captureStats } = useCaptureStats({ enabled: captureEnabled })
 
   useEffect(() => {
     apiGet<{ capture_enabled?: boolean }>("/capture")
@@ -134,6 +137,37 @@ export function AppHeader({ isDark, onToggleTheme }: AppHeaderProps) {
           </span>
         </button>
 
+        {/* Recording quota indicator */}
+        {captureStats && captureStats.max_entries > 0 && (
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className={cn(
+                    "hidden items-center gap-1 rounded border px-2 py-0.5 font-mono text-2xs select-none md:inline-flex",
+                    captureStats.entry_count / captureStats.max_entries > 0.8
+                      ? "border-warning/30 bg-warning/10 text-warning"
+                      : "border-border bg-muted/40 text-muted-foreground",
+                  )}
+                >
+                  <Database className="h-3 w-3" />
+                  {captureStats.entry_count}/{captureStats.max_entries}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {captureStats.entry_count} of {captureStats.max_entries} entries
+                {captureStats.max_total_size_bytes > 0 && (
+                  <>
+                    {" · "}
+                    {formatBytes(captureStats.total_size_bytes)} /{" "}
+                    {formatBytes(captureStats.max_total_size_bytes)}
+                  </>
+                )}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+
         <Suspense fallback={null}>
           <CertificateHelper
             trigger={
@@ -186,4 +220,13 @@ export function AppHeader({ isDark, onToggleTheme }: AppHeaderProps) {
       </div>
     </header>
   )
+}
+
+/** Format a byte count as a human-readable string (e.g. "1.2 MB"). */
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B"
+  const units = ["B", "KB", "MB", "GB"]
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  const val = bytes / Math.pow(1024, i)
+  return `${val.toFixed(val < 10 ? 1 : 0)} ${units[i]}`
 }

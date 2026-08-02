@@ -166,6 +166,19 @@ and glob patterns (`*ads*`). Managed via `GET/POST/PUT/DELETE /api/blocklist`.
 Entries persist to SQLite and survive restarts. See
 [docs/BLOCK_LIST.md](docs/BLOCK_LIST.md).
 
+**Recording Size Limits**: Traffic recording is bounded by configurable
+limits to prevent unbounded memory/disk usage. `max_requests` (default
+10,000) caps the number of stored entries; `max_total_size_mb` (default
+unlimited) caps the total body size; `max_body_size` (default 20 MB)
+truncates individual bodies. When limits are exceeded, oldest entries are
+pruned automatically (FIFO). Granular body capture toggles
+(`capture_request_bodies`, `capture_response_bodies`) and an ignore list
+(`ignored_domains`) reduce storage further. The web UI header shows a
+quota indicator (entry count vs limit). Configured via Config → Capture
+tab, `PATCH /api/config`, or config file. Stats via
+`GET /api/capture/stats`. See
+[docs/RECORDING_LIMITS.md](docs/RECORDING_LIMITS.md).
+
 **Edit-then-Repeat**: Saved requests can be modified before replaying via
 the web UI's "Edit & Replay" button (opens a `RequestEditor` dialog that
 diffs changes against the original and sends only modified fields as
@@ -196,7 +209,7 @@ capped at 10,000 and concurrency at 100. See
 | Certificate | `GET /cert/ca` |
 | WebSocket | `GET /ws` (real-time traffic updates) |
 | Config | `GET /config`, `PATCH /config` |
-| Capture | `GET /capture`, `POST /capture/toggle` |
+| Capture | `GET /capture`, `POST /capture/toggle`, `GET /capture/stats` |
 | Breakpoints | `GET/POST /breakpoints`, `GET/DELETE /breakpoints/{id}`, `GET /breakpoints/paused`, `POST /breakpoints/paused/{id}/resume` |
 | Mocks | `GET/POST /mocks`, `GET/PUT/DELETE /mocks/{id}`, `POST /mocks/{id}/toggle`, collections, recording, import/export |
 | Rewrites | `GET/POST /rewrites`, `GET /rewrites/templates`, `GET/PUT/DELETE /rewrites/{id}`, `POST /rewrites/{id}/toggle`, `POST /rewrites/batch-toggle` |
