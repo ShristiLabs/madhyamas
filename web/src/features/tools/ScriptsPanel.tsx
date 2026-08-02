@@ -24,7 +24,7 @@ import {
   useMatchPreview,
   useScriptConfig,
   useUpdateScriptConfig,
-} from '@/lib/api/phase3';
+} from '@/lib/api/tools';
 import type {
   Script,
   ScriptMatch,
@@ -32,7 +32,7 @@ import type {
   ScriptTestResult,
   MatchPreviewItem,
   ScriptHistoryEntry,
-} from '@/lib/api/phase3';
+} from '@/lib/api/tools';
 import {
   Code, Trash2, Plus, Copy, FileCode, Play, CheckCircle, XCircle,
   History, Terminal, BookOpen, Filter, ChevronDown, ChevronUp,

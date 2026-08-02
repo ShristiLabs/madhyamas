@@ -15,9 +15,9 @@ use super::intercept_handlers;
 #[cfg(feature = "enterprise")]
 use super::middleware;
 #[cfg(any(feature = "grpc", feature = "scripting", feature = "plugins"))]
-use super::phase3_handlers;
+use super::tools_handlers;
 #[cfg(feature = "enterprise")]
-use super::phase4_handlers;
+use super::enterprise_handlers;
 use super::AppState;
 
 /// Create API routes
@@ -32,17 +32,17 @@ pub fn create_routes() -> Router<Arc<AppState>> {
     }
 }
 
-/// Create API routes with optional Phase 4 (enterprise) endpoints enabled.
+/// Create API routes with optional enterprise endpoints enabled.
 ///
 /// When `enabled` is `true` **and** `auth_service` is provided, JWT
-/// authentication is enforced on the Phase 4 routes via
-/// [`middleware::auth_middleware`]. Public Phase 4 routes (login, detailed
+/// authentication is enforced on the enterprise routes via
+/// [`middleware::auth_middleware`]. Public enterprise routes (login, detailed
 /// health) bypass the check. When `enabled` is `true` but no auth service is
-/// supplied, Phase 4 routes are mounted without authentication (useful for
-/// development). When `enabled` is `false`, Phase 4 routes are not mounted at
-/// all and `auth_service` is ignored.
+/// supplied, enterprise routes are mounted without authentication (useful for
+/// development). When `enabled` is `false`, enterprise routes are not mounted
+/// at all and `auth_service` is ignored.
 #[cfg(feature = "enterprise")]
-pub fn create_routes_with_phase4(
+pub fn create_routes_with_enterprise(
     enabled: bool,
     auth_service: Option<Arc<AuthManager>>,
 ) -> Router<Arc<AppState>> {
@@ -50,7 +50,7 @@ pub fn create_routes_with_phase4(
 }
 
 fn create_routes_inner(
-    #[cfg(feature = "enterprise")] phase4_enabled: bool,
+    #[cfg(feature = "enterprise")] enterprise_enabled: bool,
     #[cfg(feature = "enterprise")] auth_service: Option<Arc<AuthManager>>,
 ) -> Router<Arc<AppState>> {
     let router = Router::new()
@@ -59,7 +59,7 @@ fn create_routes_inner(
         .route("/traffic/{id}", get(handlers::get_traffic_entry))
         .route(
             "/traffic/{id}/script-traces",
-            get(phase3_handlers::get_traffic_script_traces),
+            get(tools_handlers::get_traffic_script_traces),
         )
         .route("/traffic/clear", post(handlers::clear_traffic))
         .route("/traffic/count", get(handlers::get_traffic_count))
@@ -340,128 +340,129 @@ fn create_routes_inner(
         .route("/persistence/save", post(handlers::save_all_rules))
         .route("/persistence/load", post(handlers::load_all_rules));
 
-    // === Phase 3: gRPC Support ===
+    // === gRPC Support ===
     #[cfg(feature = "grpc")]
     let router = router
         .route(
             "/grpc/connections",
-            get(phase3_handlers::get_grpc_connections),
+            get(tools_handlers::get_grpc_connections),
         )
-        .route("/grpc/streams", get(phase3_handlers::get_grpc_streams))
-        .route("/grpc/frames", get(phase3_handlers::get_grpc_frames))
-        .route("/grpc/stats", get(phase3_handlers::get_grpc_stats))
-        .route("/grpc/clear", post(phase3_handlers::clear_grpc_frames));
+        .route("/grpc/streams", get(tools_handlers::get_grpc_streams))
+        .route("/grpc/frames", get(tools_handlers::get_grpc_frames))
+        .route("/grpc/stats", get(tools_handlers::get_grpc_stats))
+        .route("/grpc/clear", post(tools_handlers::clear_grpc_frames));
 
-    // === Phase 3: Scripting System ===
+    // === Scripting System ===
     #[cfg(feature = "scripting")]
     let router = router
-        .route("/scripts", get(phase3_handlers::get_scripts))
-        .route("/scripts", post(phase3_handlers::create_script))
+        .route("/scripts", get(tools_handlers::get_scripts))
+        .route("/scripts", post(tools_handlers::create_script))
         .route(
             "/scripts/templates",
-            get(phase3_handlers::get_script_templates),
+            get(tools_handlers::get_script_templates),
         )
-        .route("/scripts/config", get(phase3_handlers::get_script_config))
+        .route("/scripts/config", get(tools_handlers::get_script_config))
         .route(
             "/scripts/config",
-            put(phase3_handlers::update_script_config),
+            put(tools_handlers::update_script_config),
         )
         .route(
             "/scripts/history",
-            get(phase3_handlers::get_scripts_history),
+            get(tools_handlers::get_scripts_history),
         )
-        .route("/scripts/test", post(phase3_handlers::test_script))
-        .route("/scripts/validate", post(phase3_handlers::validate_script))
+        .route("/scripts/test", post(tools_handlers::test_script))
+        .route("/scripts/validate", post(tools_handlers::validate_script))
         .route(
             "/scripts/match-preview",
-            post(phase3_handlers::match_preview_scripts),
+            post(tools_handlers::match_preview_scripts),
         )
-        .route("/scripts/{id}", get(phase3_handlers::get_script))
-        .route("/scripts/{id}", put(phase3_handlers::update_script))
-        .route("/scripts/{id}", delete(phase3_handlers::delete_script))
-        .route("/scripts/{id}/toggle", post(phase3_handlers::toggle_script))
+        .route("/scripts/{id}", get(tools_handlers::get_script))
+        .route("/scripts/{id}", put(tools_handlers::update_script))
+        .route("/scripts/{id}", delete(tools_handlers::delete_script))
+        .route("/scripts/{id}/toggle", post(tools_handlers::toggle_script))
         .route(
             "/scripts/{id}/reorder",
-            post(phase3_handlers::reorder_script),
+            post(tools_handlers::reorder_script),
         )
         .route(
             "/scripts/{id}/history",
-            get(phase3_handlers::get_script_history),
+            get(tools_handlers::get_script_history),
         )
         .route(
             "/scripts/{id}/history",
-            delete(phase3_handlers::clear_script_history),
+            delete(tools_handlers::clear_script_history),
         );
 
-    // === Phase 3: Plugin System ===
+    // === Plugin System ===
     #[cfg(feature = "plugins")]
     let router = router
-        .route("/plugins", get(phase3_handlers::get_plugins))
-        .route("/plugins/{id}", get(phase3_handlers::get_plugin))
-        .route("/plugins/{id}/enable", post(phase3_handlers::enable_plugin))
+        .route("/plugins", get(tools_handlers::get_plugins))
+        .route("/plugins/{id}", get(tools_handlers::get_plugin))
+        .route("/plugins/{id}/enable", post(tools_handlers::enable_plugin))
         .route(
             "/plugins/{id}/disable",
-            post(phase3_handlers::disable_plugin),
+            post(tools_handlers::disable_plugin),
         )
         .route(
             "/plugins/{id}/stats",
-            get(phase3_handlers::get_plugin_stats),
+            get(tools_handlers::get_plugin_stats),
         )
-        .route("/plugins/reload", post(phase3_handlers::reload_plugins));
+        .route("/plugins/reload", post(tools_handlers::reload_plugins));
 
-    // === Phase 4: Enterprise features (conditionally enabled) ===
+    // === Enterprise features (conditionally enabled) ===
     #[cfg(feature = "enterprise")]
     {
-        if phase4_enabled {
-            let phase4_router = router
+        if enterprise_enabled {
+            let enterprise_router = router
                 // Performance & Monitoring
-                .route("/metrics", get(phase4_handlers::get_metrics))
-                .route("/health/detailed", get(phase4_handlers::get_health_check))
-                .route("/performance", get(phase4_handlers::get_performance_stats))
+                .route("/metrics", get(enterprise_handlers::get_metrics))
+                .route("/health/detailed", get(enterprise_handlers::get_health_check))
+                .route("/performance", get(enterprise_handlers::get_performance_stats))
                 // Authentication
-                .route("/auth/login", post(phase4_handlers::login))
-                .route("/auth/logout", post(phase4_handlers::logout))
-                .route("/auth/me", get(phase4_handlers::get_current_user))
-                .route("/auth/validate", post(phase4_handlers::validate_token))
-                .route("/auth/api-keys", get(phase4_handlers::get_api_keys))
-                .route("/auth/api-keys", post(phase4_handlers::create_api_key))
+                .route("/auth/login", post(enterprise_handlers::login))
+                .route("/auth/logout", post(enterprise_handlers::logout))
+                .route("/auth/me", get(enterprise_handlers::get_current_user))
+                .route("/auth/validate", post(enterprise_handlers::validate_token))
+                .route("/auth/api-keys", get(enterprise_handlers::get_api_keys))
+                .route("/auth/api-keys", post(enterprise_handlers::create_api_key))
                 .route(
                     "/auth/api-keys/{id}",
-                    delete(phase4_handlers::revoke_api_key),
+                    delete(enterprise_handlers::revoke_api_key),
                 )
                 // User Management
-                .route("/users", get(phase4_handlers::get_users))
-                .route("/users", post(phase4_handlers::create_user))
-                .route("/users/{id}", get(phase4_handlers::get_user))
-                .route("/users/{id}", put(phase4_handlers::update_user))
-                .route("/users/{id}", delete(phase4_handlers::delete_user))
+                .route("/users", get(enterprise_handlers::get_users))
+                .route("/users", post(enterprise_handlers::create_user))
+                .route("/users/{id}", get(enterprise_handlers::get_user))
+                .route("/users/{id}", put(enterprise_handlers::update_user))
+                .route("/users/{id}", delete(enterprise_handlers::delete_user))
                 // RBAC
-                .route("/rbac/roles", get(phase4_handlers::get_roles))
-                .route("/rbac/permissions", get(phase4_handlers::get_permissions))
-                .route("/rbac/check", post(phase4_handlers::check_permission))
+                .route("/rbac/roles", get(enterprise_handlers::get_roles))
+                .route("/rbac/permissions", get(enterprise_handlers::get_permissions))
+                .route("/rbac/check", post(enterprise_handlers::check_permission))
                 // Audit Logs
-                .route("/audit", get(phase4_handlers::get_audit_events))
-                .route("/audit/stats", get(phase4_handlers::get_audit_stats))
-                .route("/audit/export", get(phase4_handlers::export_audit_events))
-                .route("/audit/clear", delete(phase4_handlers::clear_audit_events))
+                .route("/audit", get(enterprise_handlers::get_audit_events))
+                .route("/audit/stats", get(enterprise_handlers::get_audit_stats))
+                .route("/audit/export", get(enterprise_handlers::export_audit_events))
+                .route("/audit/clear", delete(enterprise_handlers::clear_audit_events))
                 // Onboarding
-                .route("/onboarding", get(phase4_handlers::get_onboarding_status))
+                .route("/onboarding", get(enterprise_handlers::get_onboarding_status))
                 .route(
                     "/onboarding/complete",
-                    post(phase4_handlers::complete_onboarding_step),
+                    post(enterprise_handlers::complete_onboarding_step),
                 )
-                .route("/onboarding/skip", post(phase4_handlers::skip_onboarding))
+                .route("/onboarding/skip", post(enterprise_handlers::skip_onboarding))
                 // Configuration
-                .route("/config/export", get(phase4_handlers::export_config))
-                .route("/config/import", post(phase4_handlers::import_config));
+                .route("/config/export", get(enterprise_handlers::export_config))
+                .route("/config/import", post(enterprise_handlers::import_config));
 
-            // Enforce JWT authentication on Phase 4 routes when an auth service is
-            // provided. Public routes (login, detailed health) and static assets
-            // bypass the check inside the middleware (see `is_public_path`).
+            // Enforce JWT authentication on enterprise routes when an auth
+            // service is provided. Public routes (login, detailed health) and
+            // static assets bypass the check inside the middleware (see
+            // `is_public_path`).
             if let Some(auth) = auth_service {
-                return phase4_router.layer(from_fn_with_state(auth, middleware::auth_middleware));
+                return enterprise_router.layer(from_fn_with_state(auth, middleware::auth_middleware));
             } else {
-                return phase4_router;
+                return enterprise_router;
             }
         }
     }

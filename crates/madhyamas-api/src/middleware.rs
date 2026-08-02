@@ -12,8 +12,9 @@
 //!   [`Permission`] via [`RbacManager`]. Apply with
 //!   `axum::middleware::from_fn_with_state`.
 //!
-//! Auth is only enforced when Phase 4 is enabled **and** an [`AuthManager`] is
-//! provided. See [`crate::routes::create_routes_with_phase4`].
+//! Auth is only enforced when enterprise features are enabled **and** an
+//! [`AuthManager`] is provided. See
+//! [`crate::routes::create_routes_with_enterprise`].
 //!
 //! # Applying the middleware
 //!

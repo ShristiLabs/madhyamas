@@ -9,8 +9,8 @@ import {
   useGrpcFrames,
   useGrpcStats,
   useClearGrpcFrames
-} from '@/lib/api/phase3';
-import type { GrpcConnection, GrpcStream, GrpcFrame, GrpcStats, GrpcFilter } from '@/lib/api/phase3';
+} from '@/lib/api/tools';
+import type { GrpcConnection, GrpcStream, GrpcFrame, GrpcStats, GrpcFilter } from '@/lib/api/tools';
 import { Trash2, Search, Activity, Network, Layers, BarChart3 } from 'lucide-react';
 
 export function GrpcPanel() {

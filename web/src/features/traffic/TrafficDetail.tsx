@@ -31,8 +31,8 @@ import {
 import type { TrafficEntry } from "@/types/traffic";
 import { apiGet } from "@/lib/api/client";
 import { useToast } from "@/components/ui/use-toast";
-import { useTrafficScriptTraces } from "@/lib/api/phase3";
-import type { ScriptTrace } from "@/lib/api/phase3";
+import { useTrafficScriptTraces } from "@/lib/api/tools";
+import type { ScriptTrace } from "@/lib/api/tools";
 
 interface TrafficDetailProps {
   entry: TrafficEntry;

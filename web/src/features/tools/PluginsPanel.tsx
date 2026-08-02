@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
-import { usePlugins, usePluginStats, useEnablePlugin, useDisablePlugin, useReloadPlugins } from '@/lib/api/phase3';
-import type { Plugin } from '@/lib/api/phase3';
+import { usePlugins, usePluginStats, useEnablePlugin, useDisablePlugin, useReloadPlugins } from '@/lib/api/tools';
+import type { Plugin } from '@/lib/api/tools';
 import { Power, RefreshCw, Package, Info } from 'lucide-react';
 
 export function PluginsPanel() {

@@ -1,4 +1,4 @@
-//! Phase 3 handlers: gRPC, Scripting, Plugins
+//! Tools handlers: gRPC, Scripting, Plugins
 
 use crate::AppState;
 use axum::{

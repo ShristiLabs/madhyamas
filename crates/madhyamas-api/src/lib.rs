@@ -7,9 +7,9 @@ pub mod intercept_handlers;
 #[cfg(feature = "enterprise")]
 pub mod middleware;
 #[cfg(any(feature = "grpc", feature = "scripting", feature = "plugins"))]
-pub mod phase3_handlers;
+pub mod tools_handlers;
 #[cfg(feature = "enterprise")]
-pub mod phase4_handlers;
+pub mod enterprise_handlers;
 pub mod routes;
 pub mod validation;
 pub mod ws;
@@ -88,8 +88,9 @@ pub struct AppState {
     /// Mirror writer (saves response bodies to disk). Optional — only set
     /// when the proxy engine is running with mirroring enabled.
     pub mirror_writer: Option<Arc<MirrorWriter>>,
-    /// Optional enterprise auth manager. When present and Phase 4 is enabled,
-    /// JWT authentication is enforced on protected routes.
+    /// Optional enterprise auth manager. When present and enterprise
+    /// features are enabled, JWT authentication is enforced on protected
+    /// routes.
     #[cfg(feature = "enterprise")]
     pub auth_service: Option<Arc<AuthManager>>,
 }
@@ -210,8 +211,8 @@ impl AppState {
         self
     }
 
-    /// Attach an enterprise auth manager. When set, Phase 4 routes enforce
-    /// JWT authentication (see [`middleware::auth_middleware`]).
+    /// Attach an enterprise auth manager. When set, enterprise routes
+    /// enforce JWT authentication (see [`middleware::auth_middleware`]).
     #[cfg(feature = "enterprise")]
     pub fn with_auth_service(mut self, auth_service: Arc<AuthManager>) -> Self {
         self.auth_service = Some(auth_service);

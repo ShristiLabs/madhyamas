@@ -1,4 +1,5 @@
-//! Phase 4 API handlers - Enterprise features, performance monitoring, and onboarding
+//! Enterprise API handlers - authentication, user management, RBAC, audit
+//! logs, performance monitoring, and onboarding.
 
 use axum::{
     extract::{Path, Query, State},

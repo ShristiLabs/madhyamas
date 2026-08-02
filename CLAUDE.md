@@ -89,8 +89,8 @@ madhyamas --help  # See all commands
 - `routes.rs` - Route definitions
 - `handlers.rs` - Core request handlers (traffic, sessions, export, cert, ws, config, capture)
 - `intercept_handlers.rs` - Interception handlers (breakpoints, mocks, rewrites, throttle, replay)
-- `phase3_handlers.rs` - Phase 3 handlers (gRPC, scripts, plugins)
-- `phase4_handlers.rs` - Phase 4 enterprise handlers (auth, users, RBAC, audit, onboarding)
+- `tools_handlers.rs` - Tools handlers (gRPC, scripts, plugins)
+- `enterprise_handlers.rs` - Enterprise handlers (auth, users, RBAC, audit, onboarding)
 - `ws.rs` - WebSocket connection handler
 - `middleware.rs` - Auth middleware
 - `error.rs` - API error types
