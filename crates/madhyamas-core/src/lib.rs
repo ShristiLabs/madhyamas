@@ -86,7 +86,10 @@ pub use grpc::{GrpcConnection, GrpcDirection, GrpcFilter, GrpcFrame, GrpcManager
 
 // Re-exports from scripting
 #[cfg(feature = "scripting")]
-pub use scripting::{Script, ScriptConfig, ScriptRuntime, ScriptTemplates};
+pub use scripting::{
+    Script, ScriptConfig, ScriptErrorPolicy, ScriptMatch, ScriptRuntime, ScriptTemplates,
+    UpdateScriptFields,
+};
 
 // Re-exports from session
 pub use session::{SessionExport, SessionManager, SessionMetadata, SessionPreset, SessionSummary};

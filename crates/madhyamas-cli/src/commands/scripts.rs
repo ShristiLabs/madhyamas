@@ -20,15 +20,65 @@ pub struct ScriptCreateArgs {
     #[arg(short = 'i', long, conflicts_with = "file")]
     pub inline: Option<String>,
 
-    /// Hook/event the script attaches to (e.g. request, response)
+    /// Hooks to attach the script to (repeatable: --hook on_request --hook on_response)
+    #[arg(short = 'H', long = "hook")]
+    pub hooks: Vec<String>,
+
+    /// Optional description
     #[arg(short, long)]
-    pub hook: String,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct ScriptIdArgs {
     /// Script ID
     pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ScriptToggleArgs {
+    /// Script ID
+    pub id: String,
+
+    /// Enable (true) or disable (false) the script
+    #[arg(short, long)]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ScriptTestArgs {
+    /// Path to a file containing the script source to test
+    #[arg(long, conflicts_with = "inline")]
+    pub file: Option<String>,
+
+    /// Inline script source to test
+    #[arg(short = 'i', long, conflicts_with = "file")]
+    pub inline: Option<String>,
+
+    /// Hook to test against (e.g. on_request, on_response)
+    #[arg(short = 'H', long)]
+    pub hook: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ScriptValidateArgs {
+    /// Path to a file containing the script source to validate
+    #[arg(long, conflicts_with = "inline")]
+    pub file: Option<String>,
+
+    /// Inline script source to validate
+    #[arg(short = 'i', long, conflicts_with = "file")]
+    pub inline: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ScriptHistoryArgs {
+    /// Script ID
+    pub id: String,
+
+    /// Maximum number of history entries to show
+    #[arg(short, long, default_value = "20")]
+    pub limit: usize,
 }
 
 #[derive(Debug, Subcommand)]
@@ -41,10 +91,16 @@ pub enum ScriptCommands {
     Get(ScriptIdArgs),
     /// Delete a script
     Delete(ScriptIdArgs),
-    /// Toggle a script on/off
-    Toggle(ScriptIdArgs),
+    /// Enable or disable a script
+    Toggle(ScriptToggleArgs),
     /// List available script templates
     Templates,
+    /// Test (dry-run) a script against a sample context
+    Test(ScriptTestArgs),
+    /// Validate a script's syntax without executing it
+    Validate(ScriptValidateArgs),
+    /// Show execution history for a script
+    History(ScriptHistoryArgs),
 }
 
 impl ScriptCommands {
@@ -57,21 +113,23 @@ impl ScriptCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             ScriptCommands::Create(args) => {
-                let source = if let Some(ref path) = args.file {
-                    std::fs::read_to_string(path).map_err(|e| {
-                        anyhow::anyhow!("Failed to read script file '{}': {}", path, e)
-                    })?
-                } else if let Some(ref src) = args.inline {
-                    src.clone()
+                let source = read_source(&args.file, &args.inline)?;
+
+                // Build hooks array — default to on_request if none specified.
+                let hooks: Vec<&str> = if args.hooks.is_empty() {
+                    vec!["on_request"]
                 } else {
-                    anyhow::bail!("Either --file or --inline must be provided");
+                    args.hooks.iter().map(|s| s.as_str()).collect()
                 };
 
-                let body = json!({
+                let mut body = json!({
                     "name": args.name,
                     "source": source,
-                    "hook": args.hook,
+                    "hooks": hooks,
                 });
+                if let Some(ref desc) = args.description {
+                    body["description"] = json!(desc);
+                }
                 let result = client.post("scripts", body).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
@@ -80,21 +138,72 @@ impl ScriptCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             ScriptCommands::Delete(args) => {
-                let result = client.delete(&format!("scripts/{}", args.id)).await?;
-                println!("{}", serde_json::to_string_pretty(&result)?);
+                client.delete_void(&format!("scripts/{}", args.id)).await?;
+                println!("Script {} deleted.", args.id);
             }
             ScriptCommands::Toggle(args) => {
-                let result = client
-                    .post(&format!("scripts/{}/toggle", args.id), json!({}))
+                let body = json!({ "enabled": args.enabled });
+                client
+                    .post_void(&format!("scripts/{}/toggle", args.id), body)
                     .await?;
-                println!("{}", serde_json::to_string_pretty(&result)?);
+                println!(
+                    "Script {} {}.",
+                    args.id,
+                    if args.enabled { "enabled" } else { "disabled" }
+                );
             }
             ScriptCommands::Templates => {
                 let result = client.get("scripts/templates").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
+            ScriptCommands::Test(args) => {
+                let source = read_source(&args.file, &args.inline)?;
+                let body = json!({
+                    "source": source,
+                    "hook": args.hook,
+                });
+                let result = client.post("scripts/test", body).await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            ScriptCommands::Validate(args) => {
+                let source = read_source(&args.file, &args.inline)?;
+                let body = json!({ "source": source });
+                let result = client.post("scripts/validate", body).await?;
+                let valid = result
+                    .get("valid")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if valid {
+                    println!("Script source is valid.");
+                } else {
+                    let error = result
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown error");
+                    println!("Script source is INVALID: {error}");
+                    std::process::exit(1);
+                }
+            }
+            ScriptCommands::History(args) => {
+                let result = client
+                    .get(&format!("scripts/{}/history?limit={}", args.id, args.limit))
+                    .await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
         }
 
         Ok(())
+    }
+}
+
+/// Read script source from a file or inline string.
+fn read_source(file: &Option<String>, inline: &Option<String>) -> Result<String> {
+    if let Some(ref path) = file {
+        std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read script file '{}': {}", path, e))
+    } else if let Some(ref src) = inline {
+        Ok(src.clone())
+    } else {
+        anyhow::bail!("Either --file or --inline must be provided");
     }
 }

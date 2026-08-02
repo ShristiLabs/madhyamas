@@ -209,3 +209,101 @@ pub async fn get_script_templates(client: &Client, api_url: &str) -> Result<Valu
 
     Ok(templates)
 }
+
+/// Test (dry-run) a script against a sample context
+pub async fn test_script(
+    client: &Client,
+    api_url: &str,
+    source: &str,
+    hook: &str,
+) -> Result<Value, McpError> {
+    let url = format!("{}/api/scripts/test", api_url);
+
+    let body = json!({
+        "source": source,
+        "hook": hook,
+    });
+
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| McpError::Http(e.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(McpError::Http(format!("HTTP {}: {}", status, body)));
+    }
+
+    let result: Value = response
+        .json()
+        .await
+        .map_err(|e| McpError::Parse(e.to_string()))?;
+
+    Ok(result)
+}
+
+/// Validate a script's source code (syntax check)
+pub async fn validate_script(
+    client: &Client,
+    api_url: &str,
+    source: &str,
+) -> Result<Value, McpError> {
+    let url = format!("{}/api/scripts/validate", api_url);
+
+    let body = json!({ "source": source });
+
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| McpError::Http(e.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(McpError::Http(format!("HTTP {}: {}", status, body)));
+    }
+
+    let result: Value = response
+        .json()
+        .await
+        .map_err(|e| McpError::Parse(e.to_string()))?;
+
+    Ok(result)
+}
+
+/// Get execution history for a specific script
+pub async fn get_script_history(
+    client: &Client,
+    api_url: &str,
+    script_id: &str,
+    limit: Option<usize>,
+) -> Result<Value, McpError> {
+    let url = match limit {
+        Some(l) => format!("{}/api/scripts/{}/history?limit={}", api_url, script_id, l),
+        None => format!("{}/api/scripts/{}/history", api_url, script_id),
+    };
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| McpError::Http(e.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(McpError::Http(format!("HTTP {}: {}", status, body)));
+    }
+
+    let history: Value = response
+        .json()
+        .await
+        .map_err(|e| McpError::Parse(e.to_string()))?;
+
+    Ok(history)
+}

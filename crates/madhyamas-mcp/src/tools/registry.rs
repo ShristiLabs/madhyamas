@@ -1181,6 +1181,57 @@ impl ToolRegistry {
                     "properties": {}
                 }),
             },
+            Tool {
+                name: "madhyamas_test_script".to_string(),
+                description: "Test (dry-run) a script against a sample request/response context without affecting live traffic or recording history.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "source": {
+                            "type": "string",
+                            "description": "The script source code to test"
+                        },
+                        "hook": {
+                            "type": "string",
+                            "description": "Hook to test against (e.g. on_request, on_response)",
+                            "enum": ["on_request", "on_response", "on_websocket_message", "on_grpc_message", "on_traffic_store", "on_session_start", "on_session_end"]
+                        }
+                    },
+                    "required": ["source", "hook"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_validate_script".to_string(),
+                description: "Validate a script's syntax without executing it. Returns whether the source is valid and any parse errors.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "source": {
+                            "type": "string",
+                            "description": "The script source code to validate"
+                        }
+                    },
+                    "required": ["source"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_script_history".to_string(),
+                description: "Get execution history for a specific script, showing recent runs with success/failure status, duration, console output, and errors.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the script to get history for"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of history entries to return (default: 50)"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
 
             // Plugin tools
             Tool {

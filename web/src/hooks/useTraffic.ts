@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { TrafficEntry, TrafficFilter } from "@/types/traffic";
 import { useTrafficWebSocket } from "./useTrafficWebSocket";
@@ -64,6 +64,7 @@ function snapshotToTrafficEntry(snapshot: TrafficEntrySnapshot): TrafficEntry {
     request_size: snapshot.request_size,
     response_size: snapshot.response_size ?? undefined,
     is_passthrough: snapshot.is_passthrough ?? false,
+    script_intercepted: snapshot.script_intercepted ?? false,
   };
 }
 
@@ -99,6 +100,8 @@ export function useTraffic(
 
   const { filter, pollingInterval = 1000 } = options;
 
+  const queryClient = useQueryClient();
+
   // WebSocket mode state (persisted to localStorage)
   const [useWsMode, setUseWsMode] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -120,6 +123,23 @@ export function useTraffic(
   } = useTrafficWebSocket({
     enabled: useWsMode,
   });
+
+  // Invalidate script execution history when new traffic arrives over
+  // WebSocket so the Scripts panel History tab reflects fresh executions
+  // without waiting for the polling interval. Debounced to avoid
+  // excessive refetches when traffic is flowing rapidly; TanStack Query
+  // only refetches actively-observed queries (History tab open).
+  const historyInvalidateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!wsTraffic || wsTraffic.length === 0) return;
+    if (historyInvalidateTimer.current) clearTimeout(historyInvalidateTimer.current);
+    historyInvalidateTimer.current = setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ["script-history"] });
+    }, 500);
+    return () => {
+      if (historyInvalidateTimer.current) clearTimeout(historyInvalidateTimer.current);
+    };
+  }, [wsTraffic, queryClient]);
 
   // REST polling hook (fallback)
   const {

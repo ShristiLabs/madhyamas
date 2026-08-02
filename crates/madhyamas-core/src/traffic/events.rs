@@ -46,6 +46,9 @@ pub struct TrafficEntrySnapshot {
     /// HTTP protocol version negotiated with the client (e.g. "HTTP/1.1", "HTTP/2").
     /// `None` for entries created before this field was tracked.
     pub http_version: Option<String>,
+    /// Whether at least one script ran on this request.
+    #[serde(default)]
+    pub script_intercepted: bool,
 }
 
 impl From<&TrafficEntry> for TrafficEntrySnapshot {
@@ -79,6 +82,7 @@ impl From<&TrafficEntry> for TrafficEntrySnapshot {
                 .unwrap_or(false),
             is_passthrough: entry.is_passthrough,
             http_version: entry.request.http_version.clone(),
+            script_intercepted: entry.script_intercepted,
         }
     }
 }

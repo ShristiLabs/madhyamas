@@ -12,7 +12,7 @@ default = ["grpc", "scripting", "plugins", "enterprise"]
 ## gRPC traffic interception and decoding module
 grpc = []
 ## JavaScript scripting runtime for custom traffic manipulation
-scripting = []
+scripting = ["dep:boa_engine", "dep:sha2"]
 ## Plugin system for extending Madhyamas with custom code
 plugins = []
 ## Enterprise features: auth, RBAC, audit logs, onboarding
@@ -59,6 +59,8 @@ brotli.workspace = true
 zstd.workspace = true
 local-ip-address = "0.6"
 sysinfo.workspace = true
+boa_engine = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -633,7 +633,38 @@ async fn run_proxy_server(args: Args) -> Result<()> {
     #[cfg(feature = "grpc")]
     let grpc_manager = Arc::new(GrpcManager::default());
     #[cfg(feature = "scripting")]
-    let script_runtime = Arc::new(ScriptRuntime::default());
+    let script_runtime = {
+        let runtime = ScriptRuntime::default();
+        // Attach SQLite persistence so scripts and execution history
+        // survive restarts. We open a second connection to the same
+        // database file used by TrafficStore (WAL mode is already
+        // enabled there, so concurrent access is safe). Loaded scripts
+        // are registered with the runtime before it is shared with the
+        // proxy pipeline and API layer.
+        match rusqlite::Connection::open(&config.db_path) {
+            Ok(conn) => {
+                // Match TrafficStore pragmas for safe concurrent access.
+                let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+                let _ = conn.execute_batch("PRAGMA synchronous=NORMAL;");
+                let conn = Arc::new(parking_lot::Mutex::new(conn));
+                if let Err(e) = runtime.with_persistence(conn) {
+                    tracing::warn!("Failed to attach script persistence: {}", e);
+                } else {
+                    let count = runtime.get_scripts().len();
+                    info!("Loaded {} persisted script(s) from database", count);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to open script persistence database at {}: {}",
+                    config.db_path,
+                    e
+                );
+            }
+        }
+        Arc::new(runtime)
+    };
     #[cfg(feature = "plugins")]
     let plugin_manager = Arc::new(PluginManager::default());
 

@@ -233,6 +233,11 @@ pub struct TrafficEntry {
     /// without decryption. Only connection-level metadata is recorded.
     #[serde(default)]
     pub is_passthrough: bool,
+    /// Whether at least one script ran on this request (on_request or
+    /// on_response hook).  Set by the proxy pipeline after script hooks
+    /// execute.  The traffic list uses this to show a script badge.
+    #[serde(default)]
+    pub script_intercepted: bool,
 }
 
 fn serialize_datetime<S>(dt: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
@@ -257,6 +262,7 @@ impl TrafficEntry {
             request_size,
             response_size: None,
             is_passthrough: false,
+            script_intercepted: false,
         }
     }
 

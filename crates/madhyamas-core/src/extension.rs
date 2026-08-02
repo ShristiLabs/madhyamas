@@ -274,24 +274,55 @@ mod script_adapter {
             let results = self
                 .runtime
                 .execute_hook(ScriptHook::OnRequest.as_str(), &mut script_ctx.clone());
+            let config = self.runtime.config();
             let mut modified = false;
             let mut logs = Vec::new();
             let mut errors = Vec::new();
+            let mut handled = false;
+            let mut stop_chain = false;
             for r in results {
                 if r.modified {
                     modified = true;
+                    // Apply modified request fields back to the extension context.
+                    if let Some(req) = r.modified_request {
+                        apply_request_modifications(ctx, &req);
+                    }
+                }
+                if !r.continue_ {
+                    // Script short-circuited — write the custom response and
+                    // stop the chain.
+                    if let Some(resp) = r.response {
+                        ctx.response = Some(ExtensionResponse {
+                            status_code: resp.status_code,
+                            status_message: None,
+                            headers: resp.headers,
+                            body: Some(resp.body.into_bytes()),
+                            content_type: None,
+                            duration_ms: 0,
+                        });
+                        handled = true;
+                    }
                 }
                 if let Some(e) = r.error {
                     errors.push(e);
+                    // Apply the error policy: if StopChain, stop running
+                    // subsequent scripts but still let the request continue
+                    // through the proxy pipeline.
+                    if config.on_error == crate::scripting::ScriptErrorPolicy::StopChain {
+                        stop_chain = true;
+                    }
                 }
                 logs.extend(r.console);
+                if stop_chain {
+                    break;
+                }
             }
             ExtensionResult {
                 modified,
                 logs,
                 error: errors.into_iter().next(),
-                continue_chain: true,
-                handled: false,
+                continue_chain: !handled && !stop_chain,
+                handled,
             }
         }
 
@@ -300,23 +331,35 @@ mod script_adapter {
             let results = self
                 .runtime
                 .execute_hook(ScriptHook::OnResponse.as_str(), &mut script_ctx.clone());
+            let config = self.runtime.config();
             let mut modified = false;
             let mut logs = Vec::new();
             let mut errors = Vec::new();
+            let mut stop_chain = false;
             for r in results {
                 if r.modified {
                     modified = true;
+                    // Apply modified response fields back to the extension context.
+                    if let Some(resp) = r.modified_response {
+                        apply_response_modifications(ctx, &resp);
+                    }
                 }
                 if let Some(e) = r.error {
                     errors.push(e);
+                    if config.on_error == crate::scripting::ScriptErrorPolicy::StopChain {
+                        stop_chain = true;
+                    }
                 }
                 logs.extend(r.console);
+                if stop_chain {
+                    break;
+                }
             }
             ExtensionResult {
                 modified,
                 logs,
                 error: errors.into_iter().next(),
-                continue_chain: true,
+                continue_chain: !stop_chain,
                 handled: false,
             }
         }
@@ -361,6 +404,43 @@ mod script_adapter {
             data: ctx.data.clone(),
             hook: hook.to_string(),
             timestamp: ctx.timestamp,
+        }
+    }
+
+    /// Apply modified request fields from a script back to the
+    /// [`ExtensionContext`].
+    fn apply_request_modifications(
+        ctx: &mut ExtensionContext,
+        req: &crate::scripting::RequestContext,
+    ) {
+        if let Some(ext_req) = ctx.request.as_mut() {
+            ext_req.method = req.method.clone();
+            ext_req.url = req.url.clone();
+            ext_req.host = req.host.clone();
+            ext_req.path = req.path.clone();
+            ext_req.headers = req.headers.clone();
+            if let Some(ref body) = req.body {
+                ext_req.body = Some(body.as_bytes().to_vec());
+            }
+            ext_req.content_type = req.content_type.clone();
+        }
+    }
+
+    /// Apply modified response fields from a script back to the
+    /// [`ExtensionContext`].
+    fn apply_response_modifications(
+        ctx: &mut ExtensionContext,
+        resp: &crate::scripting::ResponseContext,
+    ) {
+        if let Some(ext_resp) = ctx.response.as_mut() {
+            ext_resp.status_code = resp.status_code;
+            ext_resp.status_message = resp.status_message.clone();
+            ext_resp.headers = resp.headers.clone();
+            if let Some(ref body) = resp.body {
+                ext_resp.body = Some(body.as_bytes().to_vec());
+            }
+            ext_resp.content_type = resp.content_type.clone();
+            ext_resp.duration_ms = resp.duration_ms;
         }
     }
 }

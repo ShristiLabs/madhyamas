@@ -65,7 +65,7 @@ curl -x http://localhost:8888 http://httpbin.org/get
 curl -x http://localhost:8888 -k https://example.com
 
 # Capture screenshots
-cd /Users/harikiranbavineni/madhyamas
+cd madhyamas
 npm install --no-save playwright
 node scripts/capture-screenshots.mjs
 cp web/public/docs/screenshots/*.png docs-site/public/screenshots/

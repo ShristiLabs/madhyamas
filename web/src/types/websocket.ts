@@ -21,6 +21,8 @@ export interface TrafficEntrySnapshot {
   is_passthrough: boolean;
   /** HTTP protocol version negotiated with the proxy (e.g. "HTTP/1.1", "HTTP/2"). */
   http_version?: string | null;
+  /** Whether at least one script ran on this request. */
+  script_intercepted?: boolean;
 }
 
 // Traffic events from server

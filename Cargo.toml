@@ -101,6 +101,11 @@ zstd = "0.13"
 # System information (memory/CPU usage for performance monitoring)
 sysinfo = "0.30"
 
+# JavaScript engine for the scripting runtime (boa — pure Rust, sandboxed)
+boa_engine = "0.20"
+# SHA-256 for the script `crypto.hash` API
+sha2 = "0.10"
+
 # Internal crates
 madhyamas-core = { path = "crates/madhyamas-core", version = "0.1.6" }
 madhyamas-api = { path = "crates/madhyamas-api", version = "0.1.6", default-features = false }

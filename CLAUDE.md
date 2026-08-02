@@ -75,6 +75,13 @@ madhyamas --help  # See all commands
 - `traffic/store.rs` - SQLite-based traffic storage
 - `intercept/` - Breakpoints, mocks, rewrites, throttling, block list
   - `rewrite.rs` - Rewrite rules + `RewriteTemplates` (No Caching, Block Cookies, Add CORS, HTTP→HTTPS, Add Auth, Remove Security Headers). See [docs/REWRITE_TEMPLATES.md](docs/REWRITE_TEMPLATES.md)
+- `scripting/` - JavaScript scripting system (boa_engine runtime)
+  - `engine.rs` - `JsEngine`: boa_engine integration, global registration (console, base64, crypto, url), result parsing, modified object read-back
+  - `runtime.rs` - `ScriptRuntime`: script manager, execution, history, persistence, `ScriptTemplates` (Log Requests, Add CORS, Block Domains, Modify Headers, Mock API, Inject Latency, Rewrite URL, Inject Auth Token, Modify JSON Response, Override Status Code, Cache Buster, Strip Response Headers, Conditional Mock)
+  - `hooks.rs` - `ScriptHook` enum, `ScriptContext`, `RequestContext`, `ResponseContext`, `ScriptResult`
+  - `persistence.rs` - `ScriptPersistence`: SQLite storage for scripts and execution history
+  - `api.rs` - `ScriptApi` documentation, `URLComponents` helper
+  - See [docs/SCRIPTING.md](docs/SCRIPTING.md), [docs/SCRIPTING_API.md](docs/SCRIPTING_API.md), [docs/SCRIPTING_SECURITY.md](docs/SCRIPTING_SECURITY.md)
 
 ### API Crate (`madhyamas-api`)
 - `lib.rs` - API server setup
@@ -253,6 +260,26 @@ or the MCP `madhyamas_replay_advanced` tool. Returns aggregate statistics
 capped at 10,000 and concurrency at 100. See
 [docs/REPEAT_ADVANCED.md](docs/REPEAT_ADVANCED.md).
 
+**Scripting System**: JavaScript (ES6+) scripting via embedded `boa_engine`
+runtime.  Scripts subscribe to hooks (`on_request`, `on_response`, etc.) and
+can modify requests/responses, block requests, mock responses, add headers,
+and log traffic.  Sandboxed by construction — no filesystem, network, or
+process access.  Scripts persisted to SQLite and survive restarts.  Features:
+test dialog (dry-run), syntax validation, execution history with console
+output, 13 built-in templates (Log Requests, Add CORS, Block Domains, Modify
+Headers, Mock API, Inject Latency, Rewrite URL, Inject Auth Token, Modify JSON
+Response, Override Status Code, Cache Buster, Strip Response Headers,
+Conditional Mock).  Built-in JS APIs: `console.log`, `JSON.parse/stringify`,
+`base64.encode/decode`, `crypto.hash` (SHA-256), `url.parse/build`.
+Configured via the Scripts panel in the tools sidebar, `GET/POST/PUT/DELETE
+/api/scripts`, `POST /api/scripts/test`, `POST /api/scripts/validate`,
+`GET /api/scripts/{id}/history`, the `madhyamas scripts` CLI subcommand, or
+MCP tools (`madhyamas_list_scripts`, `madhyamas_create_script`,
+`madhyamas_test_script`, `madhyamas_validate_script`,
+`madhyamas_get_script_history`).  See
+[docs/SCRIPTING.md](docs/SCRIPTING.md), [docs/SCRIPTING_API.md](docs/SCRIPTING_API.md),
+[docs/SCRIPTING_SECURITY.md](docs/SCRIPTING_SECURITY.md).
+
 **Data Directory**: `~/.madhyamas/` (certs, logs, traffic.db)
 
 **API Endpoints** (all under `/api` prefix):
@@ -276,7 +303,7 @@ capped at 10,000 and concurrency at 100. See
 | Focus | `GET/POST /focus`, `DELETE /focus/{id}`, `DELETE /focus` (clear all) |
 | Mirror | `GET /mirror`, `POST /mirror/toggle`, `PATCH /mirror/config` |
 | gRPC | `GET /grpc/connections`, `GET /grpc/streams`, `GET /grpc/frames`, `GET /grpc/stats` |
-| Scripts | `GET/POST /scripts`, `GET/PUT/DELETE /scripts/{id}`, `POST /scripts/{id}/toggle` |
+| Scripts | `GET/POST /scripts`, `GET/PUT/DELETE /scripts/{id}`, `POST /scripts/{id}/toggle`, `GET /scripts/templates`, `GET/PUT /scripts/config`, `GET /scripts/history`, `POST /scripts/test`, `POST /scripts/validate`, `GET/DELETE /scripts/{id}/history` |
 | Plugins | `GET /plugins`, `POST /plugins/{id}/enable`, `POST /plugins/{id}/disable`, `POST /plugins/reload` |
 | Health | `GET /health` |
 

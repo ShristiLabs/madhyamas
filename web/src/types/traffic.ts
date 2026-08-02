@@ -35,6 +35,9 @@ export interface TrafficEntry {
   response_size?: number
   /** Whether this connection was SSL-passed-through (not intercepted). */
   is_passthrough?: boolean
+  /** Whether at least one script ran on this request (on_request or
+   *  on_response hook).  Set by the proxy pipeline. */
+  script_intercepted?: boolean
 }
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'CONNECT' | 'TRACE'

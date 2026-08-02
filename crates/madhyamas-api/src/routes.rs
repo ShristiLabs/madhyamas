@@ -57,6 +57,10 @@ fn create_routes_inner(
         // Traffic endpoints
         .route("/traffic", get(handlers::get_traffic))
         .route("/traffic/{id}", get(handlers::get_traffic_entry))
+        .route(
+            "/traffic/{id}/script-traces",
+            get(phase3_handlers::get_traffic_script_traces),
+        )
         .route("/traffic/clear", post(handlers::clear_traffic))
         .route("/traffic/count", get(handlers::get_traffic_count))
         .route("/traffic/import/har", post(handlers::import_traffic_har))
@@ -358,10 +362,36 @@ fn create_routes_inner(
             get(phase3_handlers::get_script_templates),
         )
         .route("/scripts/config", get(phase3_handlers::get_script_config))
+        .route(
+            "/scripts/config",
+            put(phase3_handlers::update_script_config),
+        )
+        .route(
+            "/scripts/history",
+            get(phase3_handlers::get_scripts_history),
+        )
+        .route("/scripts/test", post(phase3_handlers::test_script))
+        .route("/scripts/validate", post(phase3_handlers::validate_script))
+        .route(
+            "/scripts/match-preview",
+            post(phase3_handlers::match_preview_scripts),
+        )
         .route("/scripts/{id}", get(phase3_handlers::get_script))
         .route("/scripts/{id}", put(phase3_handlers::update_script))
         .route("/scripts/{id}", delete(phase3_handlers::delete_script))
-        .route("/scripts/{id}/toggle", post(phase3_handlers::toggle_script));
+        .route("/scripts/{id}/toggle", post(phase3_handlers::toggle_script))
+        .route(
+            "/scripts/{id}/reorder",
+            post(phase3_handlers::reorder_script),
+        )
+        .route(
+            "/scripts/{id}/history",
+            get(phase3_handlers::get_script_history),
+        )
+        .route(
+            "/scripts/{id}/history",
+            delete(phase3_handlers::clear_script_history),
+        );
 
     // === Phase 3: Plugin System ===
     #[cfg(feature = "plugins")]

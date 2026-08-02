@@ -783,6 +783,36 @@ impl ToolExecutor {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
             }
+            "madhyamas_test_script" => {
+                let args: TestScriptArgs = self.parse_args(&arguments)?;
+                let result =
+                    scripts::test_script(&self.client, &self.api_url, &args.source, &args.hook)
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_validate_script" => {
+                let args: ValidateScriptArgs = self.parse_args(&arguments)?;
+                let result =
+                    scripts::validate_script(&self.client, &self.api_url, &args.source).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_script_history" => {
+                let args: ScriptHistoryArgs = self.parse_args(&arguments)?;
+                let result = scripts::get_script_history(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.limit,
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
 
             // Plugin tools
             "madhyamas_list_plugins" => {
@@ -1261,4 +1291,22 @@ struct CreateScriptArgs {
 struct UpdateScriptArgs {
     id: String,
     script: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TestScriptArgs {
+    source: String,
+    hook: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ValidateScriptArgs {
+    source: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ScriptHistoryArgs {
+    id: String,
+    #[serde(default)]
+    limit: Option<usize>,
 }

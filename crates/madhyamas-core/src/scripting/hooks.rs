@@ -44,6 +44,22 @@ impl std::fmt::Display for ScriptHook {
     }
 }
 
+impl std::str::FromStr for ScriptHook {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "on_request" => Ok(Self::OnRequest),
+            "on_response" => Ok(Self::OnResponse),
+            "on_websocket_message" => Ok(Self::OnWebSocketMessage),
+            "on_grpc_message" => Ok(Self::OnGrpcMessage),
+            "on_traffic_store" => Ok(Self::OnTrafficStore),
+            "on_session_start" => Ok(Self::OnSessionStart),
+            "on_session_end" => Ok(Self::OnSessionEnd),
+            other => Err(format!("Unknown hook: {other}")),
+        }
+    }
+}
+
 /// Script execution context
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScriptContext {
@@ -199,6 +215,12 @@ pub struct ScriptResult {
     pub console: Vec<String>,
     /// Execution duration in milliseconds
     pub duration_ms: u64,
+    /// Modified request (present when `modified` is true and the script
+    /// changed the request object on an `on_request` hook)
+    pub modified_request: Option<RequestContext>,
+    /// Modified response (present when `modified` is true and the script
+    /// changed the response object on an `on_response` hook)
+    pub modified_response: Option<ResponseContext>,
 }
 
 impl Default for ScriptResult {
@@ -210,6 +232,8 @@ impl Default for ScriptResult {
             error: None,
             console: Vec::new(),
             duration_ms: 0,
+            modified_request: None,
+            modified_response: None,
         }
     }
 }

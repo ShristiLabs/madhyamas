@@ -138,6 +138,33 @@ impl<'a> Pipeline<'a> {
         }
     }
 
+    /// Check whether any enabled script would fire for the given request
+    /// on the specified hook.  Used to set the `script_intercepted` flag
+    /// on traffic entries.
+    #[cfg(feature = "scripting")]
+    fn scripts_would_run(&self, hook: &str, request_data: &RequestData) -> bool {
+        if let Some(script_runtime) = self.script_runtime {
+            let scripts = script_runtime.get_scripts_for_hook(hook);
+            let method_str = request_data.method.to_string();
+            for script in &scripts {
+                if let Some(ref filter) = script.match_filter {
+                    if !filter.is_empty()
+                        && !filter.matches(
+                            &method_str,
+                            request_data.host.as_str(),
+                            request_data.path.as_str(),
+                            request_data.url.as_str(),
+                        )
+                    {
+                        continue;
+                    }
+                }
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if a request should be excluded from traffic capture.
     /// Excludes Madhyamas's own API requests to prevent feedback loops.
     pub fn should_exclude_from_capture(&self, request: &RequestData) -> bool {
@@ -200,12 +227,18 @@ impl<'a> Pipeline<'a> {
         response: &ResponseData,
         client_stream: &mut W,
         log_tag: &str,
+        request_id: Option<&str>,
+        script_intercepted: bool,
     ) -> crate::Result<RequestOutcome>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
         let session_id = self.traffic_store.current_session_id();
-        let entry = TrafficEntry::new(&session_id, request_data.clone());
+        let mut entry = TrafficEntry::new(&session_id, request_data.clone());
+        if let Some(id) = request_id {
+            entry.id = id.to_string();
+        }
+        entry.script_intercepted = script_intercepted;
         self.traffic_store.store_request(&entry)?;
         self.traffic_store.store_response(&entry.id, response)?;
         let _ = self.traffic_tx.send(entry);
@@ -290,10 +323,29 @@ impl<'a> Pipeline<'a> {
                     metrics.record_mock_hit();
                 }
                 return self
-                    .short_circuit_response(request_data, &response, client_stream, "blocked")
+                    .short_circuit_response(
+                        request_data,
+                        &response,
+                        client_stream,
+                        "blocked",
+                        None,
+                        false,
+                    )
                     .await;
             }
         }
+
+        // Generate a stable request ID and session ID early so script
+        // executions can be linked to the traffic entry that will be
+        // created later.  Also check whether any scripts would fire on
+        // this request so we can set the `script_intercepted` flag.
+        let session_id = self.traffic_store.current_session_id();
+        let request_id = uuid::Uuid::new_v4().to_string();
+        #[cfg(feature = "scripting")]
+        let script_intercepted = self.scripts_would_run("on_request", request_data)
+            || self.scripts_would_run("on_response", request_data);
+        #[cfg(not(feature = "scripting"))]
+        let script_intercepted = false;
 
         // Apply rewrite rules to request
         if let Some(rewrite_manager) = self.rewrite_manager {
@@ -302,7 +354,59 @@ impl<'a> Pipeline<'a> {
 
         // Run script and plugin request hooks
         #[cfg(any(feature = "scripting", feature = "plugins"))]
-        self.run_request_hooks(request_data);
+        {
+            let hook_ctx = self.run_request_hooks(request_data, &request_id, &session_id);
+            if let Some(ctx) = hook_ctx {
+                // Apply request modifications (headers, body, etc.) back to
+                // the live request data so downstream pipeline stages
+                // (mocks, forwarding, etc.) see the modified values.
+                if let Some(ref ext_req) = ctx.request {
+                    request_data.method = ext_req.method.as_str().into();
+                    request_data.url = ext_req.url.clone();
+                    request_data.host = ext_req.host.clone();
+                    request_data.path = ext_req.path.clone();
+                    request_data.headers = ext_req.headers.clone();
+                    if let Some(ref body) = ext_req.body {
+                        request_data.body = Some(body.clone());
+                    }
+                    request_data.content_type = ext_req.content_type.clone();
+                }
+
+                // If a script short-circuited (returned { continue: false,
+                // response: {...} }), send the custom response to the client
+                // instead of forwarding upstream.
+                if let Some(ref ext_resp) = ctx.response {
+                    debug!(
+                        "Script short-circuit response: {} {} -> {}",
+                        request_data.method, request_data.url, ext_resp.status_code
+                    );
+                    let response = ResponseData {
+                        status_code: ext_resp.status_code,
+                        status_message: ext_resp.status_message.clone(),
+                        headers: ext_resp.headers.clone(),
+                        body: ext_resp.body.clone(),
+                        content_type: ext_resp.content_type.clone().or_else(|| {
+                            ext_resp.headers.get("Content-Type").cloned()
+                        }),
+                        duration_ms: 0,
+                        http_version: request_data.http_version.clone(),
+                    };
+                    if let Some(metrics) = self.metrics_collector {
+                        metrics.record_mock_hit();
+                    }
+                    return self
+                        .short_circuit_response(
+                            request_data,
+                            &response,
+                            client_stream,
+                            "script",
+                            Some(&request_id),
+                            true,
+                        )
+                        .await;
+                }
+            }
+        }
 
         // Detect and record gRPC traffic
         #[cfg(feature = "grpc")]
@@ -328,7 +432,14 @@ impl<'a> Pipeline<'a> {
                 response.http_version = request_data.http_version.clone();
 
                 return self
-                    .short_circuit_response(request_data, &response, client_stream, "mocked")
+                    .short_circuit_response(
+                        request_data,
+                        &response,
+                        client_stream,
+                        "mocked",
+                        Some(&request_id),
+                        script_intercepted,
+                    )
                     .await;
             }
         }
@@ -342,9 +453,7 @@ impl<'a> Pipeline<'a> {
                     metrics.record_breakpoint_hit();
                 }
 
-                let session_id = self.traffic_store.current_session_id();
-                let entry = TrafficEntry::new(&session_id, request_data.clone());
-                let entry_id = entry.id.clone();
+                let entry_id = request_id.clone();
 
                 let decision = breakpoint_manager
                     .pause_and_wait(
@@ -389,6 +498,8 @@ impl<'a> Pipeline<'a> {
                                 &response,
                                 client_stream,
                                 "breakpoint response",
+                                Some(&request_id),
+                                script_intercepted,
                             )
                             .await;
                     }
@@ -400,8 +511,9 @@ impl<'a> Pipeline<'a> {
         let should_capture = !self.should_exclude_from_capture(request_data);
 
         // Store the request (if not excluded)
-        let session_id = self.traffic_store.current_session_id();
-        let entry = TrafficEntry::new(&session_id, request_data.clone());
+        let mut entry = TrafficEntry::new(&session_id, request_data.clone());
+        entry.id = request_id.clone();
+        entry.script_intercepted = script_intercepted;
         if should_capture {
             self.traffic_store.store_request(&entry)?;
             // Broadcast to WebSocket clients
@@ -416,7 +528,7 @@ impl<'a> Pipeline<'a> {
         // Forward to upstream server
         let start = std::time::Instant::now();
 
-        match self.forward_via_reqwest(request_data, client_stream).await {
+        match self.fetch_upstream_response(request_data).await {
             Ok(mut response) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
                 response.duration_ms = duration_ms;
@@ -428,7 +540,24 @@ impl<'a> Pipeline<'a> {
 
                 // Run script and plugin response hooks
                 #[cfg(any(feature = "scripting", feature = "plugins"))]
-                self.run_response_hooks(request_data, &response);
+                {
+                    let hook_ctx = self.run_response_hooks(request_data, &response, &request_id, &session_id);
+                    if let Some(ctx) = hook_ctx {
+                        if let Some(ref ext_resp) = ctx.response {
+                            response.status_code = ext_resp.status_code;
+                            response.headers = ext_resp.headers.clone();
+                            if let Some(ref body) = ext_resp.body {
+                                response.body = Some(body.clone());
+                            }
+                            response.content_type = ext_resp.content_type.clone().or_else(|| {
+                                response.headers.get("Content-Type").cloned()
+                            });
+                            if let Some(ref msg) = ext_resp.status_message {
+                                response.status_message = Some(msg.clone());
+                            }
+                        }
+                    }
+                }
 
                 // Record gRPC response frames
                 #[cfg(feature = "grpc")]
@@ -491,6 +620,15 @@ impl<'a> Pipeline<'a> {
                         );
                         debug!("Recorded mock for: {}", request_data.url);
                     }
+                }
+
+                // Write the (possibly modified) response to the client.
+                // This is done AFTER all intercept hooks (scripts, rewrites,
+                // breakpoints) have run so that response modifications are
+                // visible to the client.
+                if let Err(e) = self.write_response_to_client(&response, client_stream).await {
+                    warn!("Failed to write response to client: {}", e);
+                    return Ok(RequestOutcome::Aborted);
                 }
 
                 info!(
@@ -736,16 +874,18 @@ impl<'a> Pipeline<'a> {
     /// - Connection pooling / keep-alive
     /// - Proper header handling (case-insensitive, duplicate headers)
     ///
-    /// The response is read in full, stored as `ResponseData`, then
-    /// re-serialized as HTTP/1.1 and written to the client stream.
-    pub async fn forward_via_reqwest<W>(
+    /// Forward the request to the upstream server via the pooled reqwest
+    /// client and return the response **without** writing it to the client
+    /// stream.
+    ///
+    /// The caller is responsible for writing the (possibly modified by
+    /// script/rewrite hooks) response to `client_stream` after all
+    /// intercept hooks have run.  This ensures that response modifications
+    /// made by `on_response` scripts are visible to the client.
+    pub async fn fetch_upstream_response(
         &self,
         request_data: &RequestData,
-        client_stream: &mut W,
-    ) -> crate::Result<ResponseData>
-    where
-        W: tokio::io::AsyncWrite + Unpin,
-    {
+    ) -> crate::Result<ResponseData> {
         // Use the shared, pooled HTTP client from the engine. This reuses
         // TCP/TLS connections across requests (connection pooling), enables
         // HTTP/2 multiplexing, and TLS session resumption — all critical for
@@ -852,26 +992,38 @@ impl<'a> Pipeline<'a> {
             Some(body_bytes.to_vec())
         };
 
-        let response_data = ResponseData {
+        Ok(ResponseData {
             status_code,
             status_message: None,
             headers: response_headers,
-            body: body.clone(),
+            body,
             content_type,
             duration_ms: 0, // Set by caller
             // The response is delivered to the client over the same protocol
             // the request arrived on, so mirror the downstream HTTP version.
             http_version: request_data.http_version.clone(),
-        };
+        })
+    }
 
-        // Build HTTP/1.1 response bytes and write to client
-        let response_bytes = self.build_response_bytes(&response_data);
+    /// Write a [`ResponseData`] to the client stream as HTTP/1.1.
+    ///
+    /// This is called **after** all intercept hooks (scripts, rewrites,
+    /// breakpoints) have had a chance to modify the response, ensuring
+    /// that script `on_response` modifications are visible to the client.
+    pub async fn write_response_to_client<W>(
+        &self,
+        response: &ResponseData,
+        client_stream: &mut W,
+    ) -> crate::Result<()>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let response_bytes = self.build_response_bytes(response);
         client_stream
             .write_all(&response_bytes)
             .await
             .map_err(|e| Error::Proxy(format!("Failed to write response to client: {}", e)))?;
-
-        Ok(response_data)
+        Ok(())
     }
 
     /// Build a mock response from mock configuration
@@ -1193,21 +1345,34 @@ impl<'a> Pipeline<'a> {
     /// through it (which internally calls the scripting runtime and plugin
     /// manager via adapter trait objects).  Otherwise the legacy direct
     /// calls to `script_runtime` and `plugin_manager` are used.
+    ///
+    /// Returns `Some(ExtensionContext)` when the unified extension manager
+    /// path was used (the context may contain modified request fields and/or
+    /// a short-circuit response).  Returns `None` for the legacy path
+    /// (results are logged but not applied — callers should migrate to the
+    /// extension manager).
     #[cfg(any(feature = "scripting", feature = "plugins"))]
-    fn run_request_hooks(&self, request_data: &RequestData) {
+    fn run_request_hooks(
+        &self,
+        request_data: &RequestData,
+        request_id: &str,
+        session_id: &str,
+    ) -> Option<ExtensionContext> {
         // Unified extension manager path.
         if let Some(ext_mgr) = self.extension_manager {
-            let mut ctx = build_extension_context(request_data, None, "on_request");
-            ext_mgr.on_request(&mut ctx);
-            return;
+            let mut ctx =
+                build_extension_context(request_data, None, "on_request", request_id, session_id);
+            let handled = ext_mgr.on_request(&mut ctx);
+            if handled {
+                debug!("Script/plugin short-circuited request: {}", request_data.url);
+            }
+            return Some(ctx);
         }
 
         // Legacy direct-call path.
         // Script on_request hook
         if let Some(script_runtime) = self.script_runtime {
-            let session_id = self.traffic_store.current_session_id();
-            let request_id = uuid::Uuid::new_v4().to_string();
-            let mut context = ScriptContext::new(&request_id, &session_id, ScriptHook::OnRequest)
+            let mut context = ScriptContext::new(request_id, session_id, ScriptHook::OnRequest)
                 .with_request(request_data);
             let results = script_runtime.execute_hook(ScriptHook::OnRequest.as_str(), &mut context);
             for result in &results {
@@ -1225,12 +1390,10 @@ impl<'a> Pipeline<'a> {
         // Plugin on_request hook
         if let Some(plugin_manager) = self.plugin_manager {
             if plugin_manager.is_enabled() {
-                let session_id = self.traffic_store.current_session_id();
-                let request_id = uuid::Uuid::new_v4().to_string();
                 let mut context =
                     PluginContext::new("", PluginHook::OnRequest).with_request(request_data);
-                context.request_id = Some(request_id);
-                context.session_id = Some(session_id);
+                context.request_id = Some(request_id.to_string());
+                context.session_id = Some(session_id.to_string());
                 let results = plugin_manager.execute_hook(PluginHook::OnRequest, context);
                 for (plugin_id, result) in &results {
                     if let Some(ref err) = result.error {
@@ -1241,6 +1404,7 @@ impl<'a> Pipeline<'a> {
                 }
             }
         }
+        None
     }
 
     /// Run script and plugin response hooks (on_response) after a response is
@@ -1248,21 +1412,30 @@ impl<'a> Pipeline<'a> {
     ///
     /// When an [`ExtensionManager`] is attached, hooks are dispatched
     /// through it.  Otherwise the legacy direct calls are used.
+    ///
+    /// Returns `Some(ExtensionContext)` when the extension manager path was
+    /// used (the context may contain a modified response).  Returns `None`
+    /// for the legacy path.
     #[cfg(any(feature = "scripting", feature = "plugins"))]
-    fn run_response_hooks(&self, request_data: &RequestData, response: &ResponseData) {
+    fn run_response_hooks(
+        &self,
+        request_data: &RequestData,
+        response: &ResponseData,
+        request_id: &str,
+        session_id: &str,
+    ) -> Option<ExtensionContext> {
         // Unified extension manager path.
         if let Some(ext_mgr) = self.extension_manager {
-            let mut ctx = build_extension_context(request_data, Some(response), "on_response");
+            let mut ctx =
+                build_extension_context(request_data, Some(response), "on_response", request_id, session_id);
             ext_mgr.on_response(&mut ctx);
-            return;
+            return Some(ctx);
         }
 
         // Legacy direct-call path.
         // Script on_response hook
         if let Some(script_runtime) = self.script_runtime {
-            let session_id = self.traffic_store.current_session_id();
-            let request_id = uuid::Uuid::new_v4().to_string();
-            let mut context = ScriptContext::new(&request_id, &session_id, ScriptHook::OnResponse)
+            let mut context = ScriptContext::new(request_id, session_id, ScriptHook::OnResponse)
                 .with_request(request_data)
                 .with_response(response);
             let results =
@@ -1282,13 +1455,11 @@ impl<'a> Pipeline<'a> {
         // Plugin on_response hook
         if let Some(plugin_manager) = self.plugin_manager {
             if plugin_manager.is_enabled() {
-                let session_id = self.traffic_store.current_session_id();
-                let request_id = uuid::Uuid::new_v4().to_string();
                 let mut context = PluginContext::new("", PluginHook::OnResponse)
                     .with_request(request_data)
                     .with_response(response);
-                context.request_id = Some(request_id);
-                context.session_id = Some(session_id);
+                context.request_id = Some(request_id.to_string());
+                context.session_id = Some(session_id.to_string());
                 let results = plugin_manager.execute_hook(PluginHook::OnResponse, context);
                 for (plugin_id, result) in &results {
                     if let Some(ref err) = result.error {
@@ -1299,6 +1470,7 @@ impl<'a> Pipeline<'a> {
                 }
             }
         }
+        None
     }
 
     /// Detect gRPC traffic on a request and register the connection/stream and
@@ -1422,6 +1594,8 @@ fn build_extension_context(
     request_data: &RequestData,
     response: Option<&ResponseData>,
     hook: &'static str,
+    request_id: &str,
+    session_id: &str,
 ) -> ExtensionContext {
     let request = ExtensionRequest {
         method: request_data.method.to_string(),
@@ -1443,8 +1617,8 @@ fn build_extension_context(
     });
 
     ExtensionContext {
-        request_id: uuid::Uuid::new_v4().to_string(),
-        session_id: String::new(),
+        request_id: request_id.to_string(),
+        session_id: session_id.to_string(),
         hook,
         request: Some(request),
         response,

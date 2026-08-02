@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, memo, useEffect, useRef } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { cn } from "@/lib/utils"
 import { hostMatchesAnyPattern } from "@/lib/focus"
-import { ArrowUp, ArrowDown, ArrowUpDown, Star } from "lucide-react"
+import { ArrowUp, ArrowDown, ArrowUpDown, Star, Code } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import type { TrafficEntry, FocusHost } from "@/types/traffic"
 
@@ -283,6 +283,7 @@ const TrafficListItem = memo(function TrafficListItem({
     ? `status-${Math.floor(entry.response.status_code / 100)}xx`
     : ""
   const isPassthrough = entry.is_passthrough === true
+  const hasScript = entry.script_intercepted === true
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
@@ -360,6 +361,15 @@ const TrafficListItem = memo(function TrafficListItem({
         {entry.request.host}
       </span>
       <span className="min-w-0 flex-1 truncate px-1 font-mono text-2xs" title={entry.request.path}>
+        {hasScript && (
+          <span
+            className="mr-1 inline-flex items-center rounded bg-purple-500/20 px-1 py-px text-2xs font-semibold text-purple-600 dark:text-purple-400"
+            title="A script ran on this request"
+          >
+            <Code className="mr-0.5 h-2.5 w-2.5" />
+            JS
+          </span>
+        )}
         {entry.request.path}
       </span>
       <span className={cn("shrink-0 text-right font-mono", isPassthrough ? "text-amber-600 dark:text-amber-400" : statusClass)} style={{ width: colWidths.status }}>

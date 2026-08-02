@@ -59,6 +59,14 @@ export interface GrpcFilter {
 
 // ==================== Script Types ====================
 
+/** Declarative match filter — script only fires on matching requests. */
+export interface ScriptMatch {
+  url_pattern?: string;
+  host_pattern?: string;
+  path_pattern?: string;
+  method?: string;
+}
+
 export interface Script {
   id: string;
   name: string;
@@ -68,6 +76,9 @@ export interface Script {
   hooks: string[];
   created_at: string;
   updated_at: string;
+  match_filter?: ScriptMatch | null;
+  /** Execution priority (lower runs first).  Defaults to 100. */
+  priority?: number;
 }
 
 export interface ScriptTemplate {
@@ -82,6 +93,75 @@ export interface ScriptConfig {
   timeout_ms: number;
   max_memory_mb: number;
   enable_console: boolean;
+  /** Policy for how script errors affect the execution chain. */
+  on_error?: 'continue' | 'stop_chain';
+}
+
+export interface ScriptExecution {
+  script_id: string;
+  duration_ms: number;
+  success: boolean;
+  error?: string;
+  console: string[];
+  timestamp: string;
+  /** Traffic entry ID this execution was associated with, if any. */
+  traffic_entry_id?: string;
+  /** Which hook triggered this execution (e.g. "on_request"). */
+  hook?: string;
+}
+
+/** Script execution entry enriched with the script name, returned by
+ * `GET /api/scripts/history` (the global history endpoint). */
+export interface ScriptHistoryEntry {
+  script_id: string;
+  script_name: string | null;
+  duration_ms: number;
+  success: boolean;
+  error?: string;
+  console: string[];
+  timestamp: string;
+  traffic_entry_id?: string;
+  hook?: string;
+}
+
+/** Script execution trace enriched with script name, returned by
+ * `GET /api/traffic/{id}/script-traces`. */
+export interface ScriptTrace {
+  script_id: string;
+  script_name: string | null;
+  duration_ms: number;
+  success: boolean;
+  error?: string;
+  console: string[];
+  timestamp: string;
+  traffic_entry_id?: string;
+  hook?: string;
+}
+
+/** Match-preview item returned by `POST /api/scripts/match-preview`. */
+export interface MatchPreviewItem {
+  id: string;
+  name: string;
+  priority: number;
+  enabled: boolean;
+  hooks: string[];
+  match_filter?: ScriptMatch | null;
+}
+
+export interface ScriptTestResult {
+  modified: boolean;
+  continue_: boolean;
+  response?: { statusCode: number; headers: Record<string, string>; body: string };
+  error?: string;
+  console: string[];
+  duration_ms: number;
+  modified_request?: Record<string, unknown>;
+  modified_response?: Record<string, unknown>;
+}
+
+export interface ScriptValidateResult {
+  valid: boolean;
+  error?: string;
 }
 
 // ==================== Plugin Types ====================
@@ -212,11 +292,91 @@ export function useCreateScript() {
 export function useUpdateScript() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, source }: { id: string; source: string }): Promise<void> => {
-      return apiPut<void>(`/scripts/${id}`, { source });
+    mutationFn: async (params: {
+      id: string;
+      source?: string;
+      name?: string;
+      description?: string;
+      hooks?: string[];
+      match_filter?: ScriptMatch | null;
+      priority?: number;
+    }): Promise<void> => {
+      const body: Record<string, unknown> = {};
+      if (params.source !== undefined) body.source = params.source;
+      if (params.name !== undefined) body.name = params.name;
+      if (params.description !== undefined) body.description = params.description;
+      if (params.hooks !== undefined) body.hooks = params.hooks;
+      if (params.match_filter !== undefined) body.match_filter = params.match_filter;
+      if (params.priority !== undefined) body.priority = params.priority;
+      return apiPut<void>(`/scripts/${params.id}`, body);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scripts'] });
+    },
+  });
+}
+
+/** Reorder a script up (run earlier) or down (run later) by swapping
+ * priorities with the adjacent script. */
+export function useReorderScript() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, direction }: { id: string; direction: 'up' | 'down' }): Promise<void> => {
+      return apiPostVoid(`/scripts/${id}/reorder`, { direction });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['scripts'] });
+    },
+  });
+}
+
+/** Preview which scripts would match a given request without executing
+ * them.  Returns the scripts in execution order (by priority). */
+export function useMatchPreview() {
+  return useMutation({
+    mutationFn: async (req: {
+      method: string;
+      url: string;
+      host: string;
+      path: string;
+      hook?: string;
+    }): Promise<MatchPreviewItem[]> => {
+      return apiPost<MatchPreviewItem[]>('/scripts/match-preview', req);
+    },
+  });
+}
+
+/** Get script execution traces for a specific traffic entry. */
+export function useTrafficScriptTraces(trafficId: string | null) {
+  return useQuery({
+    queryKey: ['traffic-script-traces', trafficId],
+    queryFn: async (): Promise<ScriptTrace[]> => {
+      return apiGet<ScriptTrace[]>(`/traffic/${trafficId}/script-traces`);
+    },
+    enabled: !!trafficId,
+    refetchInterval: trafficId ? 3000 : false,
+  });
+}
+
+/** Get the global script runtime config (timeout, error policy, etc.). */
+export function useScriptConfig() {
+  return useQuery({
+    queryKey: ['script-config'],
+    queryFn: async (): Promise<ScriptConfig> => {
+      return apiGet<ScriptConfig>('/scripts/config');
+    },
+  });
+}
+
+/** Update the global script runtime config. */
+export function useUpdateScriptConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (config: Partial<ScriptConfig>): Promise<void> => {
+      return apiPut<void>('/scripts/config', config);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['script-config'] });
     },
   });
 }
@@ -241,6 +401,53 @@ export function useToggleScript() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scripts'] });
+    },
+  });
+}
+
+export function useScriptHistory(id: string | null, limit = 50) {
+  return useQuery({
+    queryKey: ['script-history', id, limit],
+    queryFn: async (): Promise<ScriptExecution[]> => {
+      return apiGet<ScriptExecution[]>(`/scripts/${id}/history?limit=${limit}`);
+    },
+    enabled: !!id,
+    // Poll every 2s while a script is selected so the history pane
+    // reflects new executions as matching traffic flows through the proxy.
+    // TanStack Query only refetches while the query is actively observed
+    // (i.e. the History tab is open), so this is idle when the tab is closed.
+    refetchInterval: id ? 2000 : false,
+  });
+}
+
+/** Get recent executions across **all** scripts (global history view).
+ *  Entries are enriched with the script name.  Polls every 3s so the
+ *  History tab stays live as traffic flows through the proxy. */
+export function useAllScriptHistory(limit = 100) {
+  return useQuery({
+    queryKey: ['script-history-all', limit],
+    queryFn: async (): Promise<ScriptHistoryEntry[]> => {
+      return apiGet<ScriptHistoryEntry[]>(`/scripts/history?limit=${limit}`);
+    },
+    // Poll every 3s so the global history view reflects new executions.
+    // TanStack Query only refetches while the query is actively observed
+    // (i.e. the History tab is open), so this is idle when the tab is closed.
+    refetchInterval: 3000,
+  });
+}
+
+export function useTestScript() {
+  return useMutation({
+    mutationFn: async ({ source, hook }: { source: string; hook: string }): Promise<ScriptTestResult> => {
+      return apiPost<ScriptTestResult>('/scripts/test', { source, hook });
+    },
+  });
+}
+
+export function useValidateScript() {
+  return useMutation({
+    mutationFn: async (source: string): Promise<ScriptValidateResult> => {
+      return apiPost<ScriptValidateResult>('/scripts/validate', { source });
     },
   });
 }

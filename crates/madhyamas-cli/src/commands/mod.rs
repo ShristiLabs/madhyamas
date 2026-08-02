@@ -138,6 +138,45 @@ impl ApiClient {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))
     }
+
+    /// Execute a POST request without parsing the response body (for 204
+    /// No Content responses).
+    pub async fn post_void(&self, path: &str, body: serde_json::Value) -> Result<()> {
+        let url = format!("{}/api/{}", self.base_url, path);
+        let response = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("API error: HTTP {} - {}", status, body);
+        }
+        Ok(())
+    }
+
+    /// Execute a DELETE request without parsing the response body (for 204
+    /// No Content responses).
+    pub async fn delete_void(&self, path: &str) -> Result<()> {
+        let url = format!("{}/api/{}", self.base_url, path);
+        let response = self
+            .client
+            .delete(&url)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("API error: HTTP {} - {}", status, body);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Subcommand)]

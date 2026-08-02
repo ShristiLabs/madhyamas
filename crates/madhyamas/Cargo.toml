@@ -39,3 +39,4 @@ serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
 parking_lot.workspace = true
+rusqlite.workspace = true

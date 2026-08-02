@@ -13,7 +13,7 @@ For each feature it documents:
 - **What needs to be documented** — docs to create or update
 
 > All file paths are relative to the repository root
-> (`/Users/harikiranbavineni/madhyamas/`).
+> (`madhyamas/`).
 
 ---
 

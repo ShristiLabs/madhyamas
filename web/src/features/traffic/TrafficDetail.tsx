@@ -14,6 +14,9 @@ import {
   EyeOff,
   Terminal,
   X,
+  CheckCircle,
+  XCircle,
+  Zap,
 } from "lucide-react";
 import { JSONPath } from "jsonpath-plus";
 import jmespath from "jmespath";
@@ -28,6 +31,8 @@ import {
 import type { TrafficEntry } from "@/types/traffic";
 import { apiGet } from "@/lib/api/client";
 import { useToast } from "@/components/ui/use-toast";
+import { useTrafficScriptTraces } from "@/lib/api/phase3";
+import type { ScriptTrace } from "@/lib/api/phase3";
 
 interface TrafficDetailProps {
   entry: TrafficEntry;
@@ -168,6 +173,12 @@ export function TrafficDetail({ entry }: TrafficDetailProps) {
             <TabsTrigger value="request">Request</TabsTrigger>
             <TabsTrigger value="response">Response</TabsTrigger>
             <TabsTrigger value="timing">Timing</TabsTrigger>
+            {entry.script_intercepted && (
+              <TabsTrigger value="scripts" className="gap-1">
+                <Zap className="h-3 w-3 text-purple-500" />
+                Scripts
+              </TabsTrigger>
+            )}
           </TabsList>
         </div>
 
@@ -322,7 +333,98 @@ export function TrafficDetail({ entry }: TrafficDetailProps) {
             </div>
           </div>
         </TabsContent>
+
+        {entry.script_intercepted && (
+          <TabsContent value="scripts" className="m-0" role="tabpanel">
+            <ScriptTracesPanel trafficId={entry.id} />
+          </TabsContent>
+        )}
       </Tabs>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Script traces panel — shows which scripts ran on this traffic entry
+// ---------------------------------------------------------------------------
+
+function ScriptTracesPanel({ trafficId }: { trafficId: string }) {
+  const { data: traces = [], isLoading } = useTrafficScriptTraces(trafficId);
+
+  if (isLoading) {
+    return (
+      <div className="p-4 text-sm text-muted-foreground">Loading script traces…</div>
+    );
+  }
+
+  if (traces.length === 0) {
+    return (
+      <div className="p-4 text-sm text-muted-foreground">
+        No script executions recorded for this request yet.  Executions may
+        appear here shortly after the request flows through the pipeline.
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 space-y-3">
+      <div className="text-sm text-muted-foreground">
+        {traces.length} script execution{traces.length !== 1 ? "s" : ""} on
+        this request:
+      </div>
+      {traces.map((trace, i) => (
+        <ScriptTraceItem key={i} trace={trace} index={i} />
+      ))}
+    </div>
+  );
+}
+
+function ScriptTraceItem({ trace, index }: { trace: ScriptTrace; index: number }) {
+  return (
+    <div className="border rounded-lg p-3 text-sm bg-card space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground font-mono text-xs">{index + 1}.</span>
+        {trace.success ? (
+          <CheckCircle className="h-4 w-4 text-green-500" />
+        ) : (
+          <XCircle className="h-4 w-4 text-destructive" />
+        )}
+        <span className="font-medium">
+          {trace.script_name ?? trace.script_id.slice(0, 8)}
+        </span>
+        {trace.hook && (
+          <span className="px-1.5 py-0.5 bg-primary/10 text-primary rounded text-[10px] font-mono">
+            {trace.hook}
+          </span>
+        )}
+        <span className="text-muted-foreground text-xs ml-auto">
+          {trace.duration_ms}ms
+        </span>
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {new Date(trace.timestamp).toLocaleString()}
+      </div>
+      {trace.error && (
+        <pre className="text-destructive text-xs whitespace-pre-wrap font-mono bg-destructive/10 p-2 rounded">
+          {trace.error}
+        </pre>
+      )}
+      {trace.console.length > 0 && (
+        <div className="space-y-1">
+          <div className="flex items-center gap-1 text-muted-foreground text-xs">
+            <Terminal className="h-3 w-3" />
+            <span>Console</span>
+          </div>
+          {trace.console.map((line, j) => (
+            <pre
+              key={j}
+              className="text-xs whitespace-pre-wrap font-mono bg-muted p-1.5 rounded"
+            >
+              {line}
+            </pre>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
