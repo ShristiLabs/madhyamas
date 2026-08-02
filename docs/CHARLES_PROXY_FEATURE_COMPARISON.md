@@ -31,10 +31,10 @@ It was produced by:
 | Metric | Count |
 |---|---|
 | Charles features surveyed | 46 |
-| Madhyamas full parity (✅) | 15 |
+| Madhyamas full parity (✅) | 16 |
 | Madhyamas partial parity (🟡) | 9 |
 | Madhyamas stub only (🔴) | 2 |
-| Madhyamas missing (❌) | 22 |
+| Madhyamas missing (❌) | 21 |
 | Madhyamas-only advantages (➕) | 4 |
 
 **Strengths of Madhyamas relative to Charles**
@@ -54,8 +54,8 @@ It was produced by:
 - No SOCKS proxy, no reverse proxy, no port forwarding, no DNS spoofing.
 - No downstream HTTP/2 (Charles has full HTTP/2 proxying).
 - No auto-configuration of OS/browser proxy settings.
-- No built-in utility tools: Block List, Block Cookies, No Caching, Mirror,
-  Client Process, Repeat/Repeat Advanced, Edit, Validate.
+- No built-in utility tools: Block Cookies, No Caching, Client Process,
+  Validate.
 - No load testing, no chart/timeline visualization, no AMF/Flash support.
 - No NTLM authentication pass-through, no external/upstream proxy chaining.
 - No iOS native app (Charles has an App Store iOS client).
@@ -162,7 +162,7 @@ It was produced by:
 | 62 | Rewrite (header/URL/query/body) | ✅ | ✅ | `intercept/rewrite.rs`, regex support |
 | 63 | Block List (block domains) | ✅ | ❌ | Not implemented |
 | 64 | DNS Spoofing | ✅ | ❌ | Android VPN only, no core impl |
-| 65 | Mirror (save responses to disk) | ✅ | ❌ | Mentioned in `BRAINSTORM.md` only |
+| 65 | Mirror (save responses to disk) | ✅ | ✅ | `mirror.rs::MirrorWriter` — saves response bodies to disk following URL path structure with `.meta.json` sidecar. Host filtering, async writes. See [docs/MIRROR.md](MIRROR.md) |
 | 66 | Auto Save (periodic session save) | ✅ | ✅ | `auto_save.rs::AutoSaveManager` — periodic HAR/Session export, pruning, rotation. See [docs/AUTO_SAVE.md](AUTO_SAVE.md) |
 | 67 | Client Process tracking | ✅ | ❌ | Not implemented |
 | 68 | Repeat (replay single request) | ✅ | ✅ | `replay.rs::ReplayManager` |
@@ -281,8 +281,10 @@ and [docs/REPEAT_ADVANCED.md](REPEAT_ADVANCED.md).
 Madhyamas has no equivalent.
 
 **Mirror / Auto Save / Client Process** — Auto Save is implemented
-(`auto_save.rs::AutoSaveManager`); Mirror and Client Process are not present
-in Madhyamas.
+(`auto_save.rs::AutoSaveManager`); Mirror is implemented
+(`mirror.rs::MirrorWriter` — saves response bodies to disk following URL
+path structure with metadata sidecar, host filtering, and async writes);
+Client Process is not present in Madhyamas.
 
 **Block List / Block Cookies / No Caching** — Charles header-manipulation
 tools not present in Madhyamas (though No Caching could be built as a rewrite

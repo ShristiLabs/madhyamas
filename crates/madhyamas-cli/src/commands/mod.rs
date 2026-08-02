@@ -10,6 +10,7 @@ mod config;
 mod export;
 mod focus;
 mod grpc;
+mod mirror;
 mod mocks;
 mod plugins;
 mod replay;
@@ -26,6 +27,7 @@ use self::config::ConfigCommands;
 use self::export::ExportCommands;
 use self::focus::FocusCommands;
 use self::grpc::GrpcCommands;
+use self::mirror::MirrorCommands;
 use self::mocks::MockCommands;
 use self::plugins::PluginCommands;
 use self::replay::ReplayCommands;
@@ -185,6 +187,9 @@ pub enum Commands {
     /// Auto Save commands (periodic session backup and rotation)
     #[command(subcommand)]
     Autosave(AutoSaveCommands),
+    /// Mirror commands (save response bodies to disk)
+    #[command(subcommand)]
+    Mirror(MirrorCommands),
 }
 
 impl Commands {
@@ -205,6 +210,7 @@ impl Commands {
             Commands::Export(cmd) => cmd.execute(api_url).await,
             Commands::Focus(cmd) => cmd.execute(api_url).await,
             Commands::Autosave(cmd) => cmd.execute(api_url).await,
+            Commands::Mirror(cmd) => cmd.execute(api_url).await,
         }
     }
 }

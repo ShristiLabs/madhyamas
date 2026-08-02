@@ -326,6 +326,10 @@ fn create_routes_inner(
         .route("/focus", post(handlers::add_focus_host))
         .route("/focus/{id}", delete(handlers::remove_focus_host))
         .route("/focus", delete(handlers::clear_focus_hosts))
+        // Mirror tool endpoints
+        .route("/mirror", get(handlers::get_mirror_status))
+        .route("/mirror/toggle", post(handlers::toggle_mirror))
+        .route("/mirror/config", patch(handlers::update_mirror_config))
         // === Persistence endpoints ===
         .route("/persistence/export", get(handlers::export_all_rules))
         .route("/persistence/import", post(handlers::import_all_rules))

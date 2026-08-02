@@ -4,6 +4,7 @@ use super::{
     CaptureStats, FocusHost, ImportResult, RequestData, ResponseData, Session, TrafficEntry,
     TrafficEntrySnapshot, TrafficEvent, TrafficFilter,
 };
+use crate::mirror::MirrorWriter;
 use crate::Error;
 use chrono::{DateTime, Utc};
 use parking_lot::{Mutex, RwLock};
@@ -43,6 +44,10 @@ pub struct TrafficStore {
     /// Monotonic insert counter used to throttle the (expensive) total-size
     /// check. The size check runs every `SIZE_CHECK_INTERVAL` inserts.
     insert_counter: AtomicUsize,
+    /// Optional mirror writer for saving response bodies to disk. When set
+    /// and enabled, captured responses are written to disk asynchronously
+    /// after being stored in the database.
+    mirror_writer: RwLock<Option<Arc<MirrorWriter>>>,
 }
 
 /// How often (in inserts) to run the total-size pruning check.
@@ -66,6 +71,7 @@ impl TrafficStore {
             capture_response_bodies: AtomicBool::new(true),
             ignored_domains: RwLock::new(Vec::new()),
             insert_counter: AtomicUsize::new(0),
+            mirror_writer: RwLock::new(None),
         });
 
         store.create_tables()?;
@@ -91,6 +97,7 @@ impl TrafficStore {
             capture_response_bodies: AtomicBool::new(true),
             ignored_domains: RwLock::new(Vec::new()),
             insert_counter: AtomicUsize::new(0),
+            mirror_writer: RwLock::new(None),
         });
 
         store.create_tables()?;
@@ -409,6 +416,18 @@ impl TrafficStore {
     /// Get the current list of ignored domains.
     pub fn ignored_domains(&self) -> Vec<String> {
         self.ignored_domains.read().clone()
+    }
+
+    /// Set the mirror writer used to save response bodies to disk. When set
+    /// and enabled, captured responses are written to disk asynchronously
+    /// after being stored in the database.
+    pub fn set_mirror_writer(&self, writer: Arc<MirrorWriter>) {
+        *self.mirror_writer.write() = Some(writer);
+    }
+
+    /// Get the mirror writer, if one is attached.
+    pub fn mirror_writer(&self) -> Option<Arc<MirrorWriter>> {
+        self.mirror_writer.read().clone()
     }
 
     /// Check whether a host matches any of the ignored domain patterns.
@@ -759,6 +778,45 @@ impl TrafficStore {
         if let Ok(Some(entry)) = self.get_by_id(request_id) {
             let snapshot = TrafficEntrySnapshot::from(&entry);
             self.emit_event(TrafficEvent::Updated(snapshot));
+
+            // Mirror the response to disk if a mirror writer is attached.
+            // Passthrough entries have no captured body, so they are skipped.
+            // The write is spawned on a background task to avoid blocking the
+            // proxy pipeline.
+            if !entry.is_passthrough {
+                if let Some(mirror) = self.mirror_writer.read().clone() {
+                    if mirror.is_enabled() {
+                        let mirror = mirror.clone();
+                        let entry = entry.clone();
+                        let max_body_size = self.max_body_size();
+                        tokio::spawn(async move {
+                            let body_truncated = entry
+                                .response
+                                .as_ref()
+                                .and_then(|r| r.body.as_ref())
+                                .map(|b| b.len() > max_body_size)
+                                .unwrap_or(false);
+                            if let Some(response) = &entry.response {
+                                if let Err(e) = mirror.write_response(
+                                    &entry.request.host,
+                                    &entry.request.path,
+                                    &entry.request.method.to_string(),
+                                    &entry.request.url,
+                                    response,
+                                    entry.timestamp,
+                                    body_truncated,
+                                ) {
+                                    tracing::warn!(
+                                        "Mirror write failed for {}: {}",
+                                        entry.request.url,
+                                        e
+                                    );
+                                }
+                            }
+                        });
+                    }
+                }
+            }
         }
 
         Ok(())

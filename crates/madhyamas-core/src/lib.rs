@@ -10,6 +10,7 @@ pub mod extension;
 #[cfg(feature = "grpc")]
 pub mod grpc;
 pub mod intercept;
+pub mod mirror;
 pub mod performance;
 pub mod persistence;
 #[cfg(feature = "plugins")]
@@ -30,7 +31,10 @@ pub use access_control::AccessControlList;
 pub use auto_save::AutoSaveManager;
 
 // Re-exports from config
-pub use config::{AutoSaveConfig, ProxyConfig, UpstreamProxyConfig};
+pub use config::{AutoSaveConfig, MirrorConfig, ProxyConfig, UpstreamProxyConfig};
+
+// Re-exports from mirror
+pub use mirror::{MirrorStats, MirrorWriter};
 
 // Re-exports from traffic
 pub use traffic::{

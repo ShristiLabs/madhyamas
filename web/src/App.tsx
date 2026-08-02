@@ -17,6 +17,7 @@ const ReplayPanel = lazy(() => import("@/features/tools/ReplayPanel").then((m) =
 const GrpcPanel = lazy(() => import("@/features/tools/GrpcPanel").then((m) => ({ default: m.GrpcPanel })))
 const ScriptsPanel = lazy(() => import("@/features/tools/ScriptsPanel").then((m) => ({ default: m.ScriptsPanel })))
 const PluginsPanel = lazy(() => import("@/features/tools/PluginsPanel").then((m) => ({ default: m.PluginsPanel })))
+const MirrorPanel = lazy(() => import("@/features/tools/MirrorPanel").then((m) => ({ default: m.MirrorPanel })))
 const SessionsPanel = lazy(() => import("@/features/sessions/SessionsPanel").then((m) => ({ default: m.SessionsPanel })))
 
 const queryClient = new QueryClient({
@@ -69,6 +70,7 @@ const TOOL_VIEWS: NavView[] = [
   { id: "mocks", label: "Mocks", icon: "Theater" },
   { id: "rewrites", label: "Rewrites", icon: "Pencil" },
   { id: "replay", label: "Replay", icon: "RotateCcw" },
+  { id: "mirror", label: "Mirror", icon: "HardDriveDownload" },
   { id: "grpc", label: "gRPC", icon: "Zap", experimental: true },
   { id: "scripts", label: "Scripts", icon: "Code", experimental: true },
   { id: "plugins", label: "Plugins", icon: "Puzzle", experimental: true },
@@ -103,6 +105,7 @@ export default function App() {
                 {activeView === "mocks" && <MocksPanel />}
                 {activeView === "rewrites" && <RewritesPanel />}
                 {activeView === "replay" && <ReplayPanel selectedEntry={null} />}
+                {activeView === "mirror" && <MirrorPanel />}
                 {activeView === "grpc" && <GrpcPanel />}
                 {activeView === "scripts" && <ScriptsPanel />}
                 {activeView === "plugins" && <PluginsPanel />}

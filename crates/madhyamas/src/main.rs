@@ -16,9 +16,9 @@ use madhyamas_api::{create_router, RateLimitConfig};
 use madhyamas_core::GrpcManager;
 use madhyamas_core::{
     AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, ExtensionManager,
-    InterceptStore, MemoryManager, MetricsCollector, MockManager, PerformanceMonitor, Persistable,
-    ProxyConfig, ProxyEngine, RewriteManager, SessionManager, ThrottleManager, TrafficStore,
-    UpstreamProxyConfig,
+    InterceptStore, MemoryManager, MetricsCollector, MirrorWriter, MockManager, PerformanceMonitor,
+    Persistable, ProxyConfig, ProxyEngine, RewriteManager, SessionManager, ThrottleManager,
+    TrafficStore, UpstreamProxyConfig,
 };
 #[cfg(feature = "plugins")]
 use madhyamas_core::{PluginExtension, PluginManager};
@@ -533,6 +533,10 @@ async fn run_proxy_server(args: Args) -> Result<()> {
             .as_ref()
             .map(|s| s.auto_save.clone())
             .unwrap_or_default(),
+        // Mirror: preserve the saved config (if any) so runtime API changes
+        // persist across restarts. Defaults to disabled when no saved config
+        // exists.
+        mirror: saved.as_ref().map(|s| s.mirror.clone()).unwrap_or_default(),
     };
 
     if saved.is_some() {
@@ -668,6 +672,12 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         session_manager.clone(),
     );
 
+    // Create the mirror writer. The writer holds its own shared config so the
+    // API layer can update it live (PATCH /api/mirror/config). The writer is
+    // registered with the traffic store so captured responses are written to
+    // disk asynchronously after being stored in the database.
+    let mirror_writer = MirrorWriter::new(config.mirror.clone());
+
     let proxy_engine = ProxyEngine::new(shared_config.clone(), cert_manager, traffic_store.clone())
         .await?
         .with_mock_manager(mock_manager.clone())
@@ -679,7 +689,8 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         .with_metrics_collector(metrics_collector)
         .with_memory_manager(memory_manager)
         .with_performance_monitor(performance_monitor)
-        .with_auto_save_manager(autosave_manager.clone());
+        .with_auto_save_manager(autosave_manager.clone())
+        .with_mirror_writer(mirror_writer.clone());
     #[cfg(feature = "grpc")]
     let proxy_engine = proxy_engine.with_grpc_manager(grpc_manager.clone());
     #[cfg(feature = "scripting")]
@@ -699,6 +710,7 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         .with_proxy_config(shared_config)
         .with_session_manager(session_manager)
         .with_autosave_manager(autosave_manager)
+        .with_mirror_writer(mirror_writer)
         .with_mock_manager(mock_manager)
         .with_rewrite_manager(rewrite_manager)
         .with_breakpoint_manager(breakpoint_manager)

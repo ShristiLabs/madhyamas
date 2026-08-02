@@ -51,6 +51,9 @@ madhyamas traffic import-har /path/to/traffic.har --name "Imported" --switch
 madhyamas replay run-advanced <id> --iterations 100 --concurrency 10 --delay-ms 50
 madhyamas focus list
 madhyamas focus add "*.example.com"
+madhyamas mirror status
+madhyamas mirror start
+madhyamas mirror config --output-dir /tmp/mirror --host-filter "*.example.com"
 madhyamas --help  # See all commands
 ```
 
@@ -207,6 +210,21 @@ Configured via Config → Auto Save tab, `GET/PATCH /api/autosave`,
 `POST /api/autosave/snapshot` (manual snapshot), or the `madhyamas autosave`
 CLI subcommand. See [docs/AUTO_SAVE.md](docs/AUTO_SAVE.md).
 
+**Mirror Tool**: Save response bodies to disk following the URL path
+structure (`output_dir/host/path/content`). A `.meta.json` sidecar is
+written alongside each file with request/response metadata. When enabled,
+captured responses are written to disk asynchronously (via `tokio::spawn`)
+after being stored in the database. Passthrough traffic is skipped (no
+captured body). Config fields: `mirror.enabled` (default `false`),
+`mirror.output_dir` (default `~/.madhyamas/mirror`),
+`mirror.host_filter` (optional list of host patterns; `null` = all hosts),
+`mirror.save_request_bodies` (default `false`). Host filter patterns
+support exact hostnames, wildcard subdomains (`*.example.com`), and globs
+(`*api*`). Configured via the Mirror panel in the tools sidebar,
+`GET /api/mirror`, `POST /api/mirror/toggle`, `PATCH /api/mirror/config`,
+or the `madhyamas mirror` CLI subcommand. See
+[docs/MIRROR.md](docs/MIRROR.md).
+
 **Timeline View (Waterfall)**: The web UI traffic panel has a toggle to switch
 between the list (table) view and a waterfall timeline view. The timeline shows
 each request as a horizontal bar positioned by start time and sized by duration,
@@ -256,6 +274,7 @@ capped at 10,000 and concurrency at 100. See
 | Replay | `GET/POST /replay/saved`, `POST /replay/execute/{id}`, `POST /replay/execute/{id}/batch`, `GET /replay/history` |
 | Block List | `GET/POST /blocklist`, `GET /blocklist/stats`, `GET/PUT/DELETE /blocklist/{id}`, `POST /blocklist/{id}/toggle` |
 | Focus | `GET/POST /focus`, `DELETE /focus/{id}`, `DELETE /focus` (clear all) |
+| Mirror | `GET /mirror`, `POST /mirror/toggle`, `PATCH /mirror/config` |
 | gRPC | `GET /grpc/connections`, `GET /grpc/streams`, `GET /grpc/frames`, `GET /grpc/stats` |
 | Scripts | `GET/POST /scripts`, `GET/PUT/DELETE /scripts/{id}`, `POST /scripts/{id}/toggle` |
 | Plugins | `GET /plugins`, `POST /plugins/{id}/enable`, `POST /plugins/{id}/disable`, `POST /plugins/reload` |

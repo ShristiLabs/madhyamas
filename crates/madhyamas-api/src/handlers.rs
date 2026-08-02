@@ -1638,3 +1638,204 @@ pub async fn clear_focus_hosts(State(state): State<Arc<AppState>>) -> impl IntoR
             .into_response(),
     }
 }
+
+// ============================================================================
+// Mirror tool
+// ============================================================================
+
+/// Get the current mirror configuration and statistics.
+pub async fn get_mirror_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Prefer the live MirrorWriter config (reflects runtime changes),
+    // then fall back to the proxy config, then to defaults.
+    let (cfg, stats) = if let Some(mgr) = state.mirror_writer.as_ref() {
+        let c = mgr.config().read().clone();
+        let s = mgr.stats();
+        (c, s)
+    } else if let Some(pc) = state.proxy_config.as_ref() {
+        let c = pc.read().mirror.clone();
+        let s = madhyamas_core::MirrorStats {
+            enabled: c.enabled,
+            output_dir: c.output_dir.clone(),
+            files_written: 0,
+            bytes_written: 0,
+        };
+        (c, s)
+    } else {
+        let c = madhyamas_core::MirrorConfig::default();
+        let s = madhyamas_core::MirrorStats {
+            enabled: c.enabled,
+            output_dir: c.output_dir.clone(),
+            files_written: 0,
+            bytes_written: 0,
+        };
+        (c, s)
+    };
+
+    Json(serde_json::json!({
+        "enabled": cfg.enabled,
+        "output_dir": cfg.output_dir,
+        "host_filter": cfg.host_filter,
+        "save_request_bodies": cfg.save_request_bodies,
+        "files_written": stats.files_written,
+        "bytes_written": stats.bytes_written,
+    }))
+}
+
+/// Request body for toggling the mirror on/off.
+#[derive(Debug, Deserialize)]
+pub struct ToggleMirrorRequest {
+    pub enabled: bool,
+}
+
+/// Toggle mirroring on or off at runtime.
+///
+/// This updates the live [`MirrorWriter`] config (when attached) and
+/// persists the change to the proxy config so it survives restarts.
+pub async fn toggle_mirror(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ToggleMirrorRequest>,
+) -> impl IntoResponse {
+    // Apply to the live MirrorWriter config (if attached).
+    if let Some(mgr) = state.mirror_writer.as_ref() {
+        mgr.config().write().enabled = req.enabled;
+    }
+
+    // Persist to the proxy config so changes survive restarts.
+    if let Some(pc) = state.proxy_config.as_ref() {
+        let snapshot = {
+            let mut config = pc.write();
+            config.mirror.enabled = req.enabled;
+            config.clone()
+        };
+        if let Err(e) = snapshot.save() {
+            tracing::warn!("Failed to persist mirror config to disk: {}", e);
+        }
+    }
+
+    Json(serde_json::json!({
+        "enabled": req.enabled,
+        "message": if req.enabled { "Mirroring enabled" } else { "Mirroring disabled" },
+    }))
+}
+
+/// Partial update payload for PATCH /api/mirror/config.
+#[derive(Debug, Deserialize)]
+pub struct PatchMirrorConfigRequest {
+    pub enabled: Option<bool>,
+    pub output_dir: Option<String>,
+    /// Set to null to clear the host filter (mirror all hosts).
+    pub host_filter: Option<serde_json::Value>,
+    pub save_request_bodies: Option<bool>,
+}
+
+/// Update the mirror configuration at runtime.
+///
+/// Changes are applied to the live [`MirrorWriter`] config (when attached)
+/// and persisted to the proxy config so they survive restarts.
+pub async fn update_mirror_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PatchMirrorConfigRequest>,
+) -> impl IntoResponse {
+    // Resolve the target config: live writer config or proxy config.
+    let (mut enabled, mut output_dir, host_filter, mut save_req) = {
+        let current = if let Some(mgr) = state.mirror_writer.as_ref() {
+            mgr.config().read().clone()
+        } else if let Some(pc) = state.proxy_config.as_ref() {
+            pc.read().mirror.clone()
+        } else {
+            madhyamas_core::MirrorConfig::default()
+        };
+        (
+            current.enabled,
+            current.output_dir,
+            current.host_filter,
+            current.save_request_bodies,
+        )
+    };
+
+    if let Some(v) = req.enabled {
+        enabled = v;
+    }
+    if let Some(ref dir) = req.output_dir {
+        output_dir = dir.trim().to_string();
+    }
+    if let Some(v) = req.save_request_bodies {
+        save_req = v;
+    }
+
+    // Parse host_filter (accept array of strings or null to clear).
+    let host_filter = match req.host_filter {
+        Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Array(arr)) => {
+            let mut patterns = Vec::new();
+            for item in arr {
+                match item {
+                    serde_json::Value::String(s) => {
+                        let trimmed = s.trim().to_string();
+                        if !trimmed.is_empty() {
+                            patterns.push(trimmed);
+                        }
+                    }
+                    _ => {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "error": "host_filter must be an array of strings or null"
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+            if patterns.is_empty() {
+                None
+            } else {
+                Some(patterns)
+            }
+        }
+        Some(other) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "host_filter must be an array of strings or null",
+                    "value": other
+                })),
+            )
+                .into_response();
+        }
+        None => host_filter,
+    };
+
+    let new_cfg = madhyamas_core::MirrorConfig {
+        enabled,
+        output_dir,
+        host_filter: host_filter.clone(),
+        save_request_bodies: save_req,
+    };
+
+    // Apply to the live MirrorWriter config (if attached).
+    if let Some(mgr) = state.mirror_writer.as_ref() {
+        *mgr.config().write() = new_cfg.clone();
+    }
+
+    // Persist to the proxy config so changes survive restarts.
+    if let Some(pc) = state.proxy_config.as_ref() {
+        let snapshot = {
+            let mut config = pc.write();
+            config.mirror = new_cfg.clone();
+            config.clone()
+        };
+        if let Err(e) = snapshot.save() {
+            tracing::warn!("Failed to persist mirror config to disk: {}", e);
+        }
+    }
+
+    let resp = serde_json::json!({
+        "enabled": new_cfg.enabled,
+        "output_dir": new_cfg.output_dir,
+        "host_filter": new_cfg.host_filter,
+        "save_request_bodies": new_cfg.save_request_bodies,
+    });
+
+    (StatusCode::OK, Json(resp)).into_response()
+}

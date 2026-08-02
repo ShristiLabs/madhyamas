@@ -25,8 +25,8 @@ use madhyamas_core::PluginManager;
 use madhyamas_core::ScriptRuntime;
 use madhyamas_core::{
     AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, InterceptStore,
-    MockManager, ProxyConfig, ReplayManager, RewriteManager, SessionManager, ThrottleManager,
-    TrafficStore, WsManager,
+    MirrorWriter, MockManager, ProxyConfig, ReplayManager, RewriteManager, SessionManager,
+    ThrottleManager, TrafficStore, WsManager,
 };
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -85,6 +85,9 @@ pub struct AppState {
     /// Auto Save manager (periodic session backup). Optional — only set
     /// when the proxy engine is running with Auto Save enabled.
     pub autosave_manager: Option<Arc<AutoSaveManager>>,
+    /// Mirror writer (saves response bodies to disk). Optional — only set
+    /// when the proxy engine is running with mirroring enabled.
+    pub mirror_writer: Option<Arc<MirrorWriter>>,
     /// Optional enterprise auth manager. When present and Phase 4 is enabled,
     /// JWT authentication is enforced on protected routes.
     #[cfg(feature = "enterprise")]
@@ -114,6 +117,7 @@ impl AppState {
             intercept_store: None,
             proxy_config: None,
             autosave_manager: None,
+            mirror_writer: None,
             #[cfg(feature = "enterprise")]
             auth_service: None,
         }
@@ -196,6 +200,13 @@ impl AppState {
     /// live Auto Save configuration and trigger manual snapshots.
     pub fn with_autosave_manager(mut self, manager: Arc<AutoSaveManager>) -> Self {
         self.autosave_manager = Some(manager);
+        self
+    }
+
+    /// Attach the mirror writer so the API layer can query/update the live
+    /// mirror configuration and statistics.
+    pub fn with_mirror_writer(mut self, writer: Arc<MirrorWriter>) -> Self {
+        self.mirror_writer = Some(writer);
         self
     }
 

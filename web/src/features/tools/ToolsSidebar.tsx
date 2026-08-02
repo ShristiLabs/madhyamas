@@ -12,6 +12,7 @@ const GrpcPanel = lazy(() => import('@/features/tools/GrpcPanel').then((m) => ({
 const ScriptsPanel = lazy(() => import('@/features/tools/ScriptsPanel').then((m) => ({ default: m.ScriptsPanel })))
 const PluginsPanel = lazy(() => import('@/features/tools/PluginsPanel').then((m) => ({ default: m.PluginsPanel })))
 const BlockListPanel = lazy(() => import('@/features/tools/BlockListPanel').then((m) => ({ default: m.BlockListPanel })))
+const MirrorPanel = lazy(() => import('@/features/tools/MirrorPanel').then((m) => ({ default: m.MirrorPanel })))
 import {
   Pause,
   Theater,
@@ -22,6 +23,7 @@ import {
   Code,
   Puzzle,
   Shield,
+  HardDriveDownload,
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -32,7 +34,7 @@ interface ToolsSidebarProps {
   onClose: () => void
 }
 
-type TabValue = 'mocks' | 'rewrites' | 'breakpoints' | 'throttle' | 'replay' | 'grpc' | 'scripts' | 'plugins' | 'blocklist'
+type TabValue = 'mocks' | 'rewrites' | 'breakpoints' | 'throttle' | 'replay' | 'grpc' | 'scripts' | 'plugins' | 'blocklist' | 'mirror'
 
 interface TabConfig {
   value: TabValue
@@ -48,6 +50,7 @@ const tabs: TabConfig[] = [
   { value: 'mocks', label: 'Mocks', icon: Theater, category: 'modify' },
   { value: 'rewrites', label: 'Rewrites', icon: Pencil, category: 'modify' },
   { value: 'replay', label: 'Replay', icon: RotateCcw, category: 'debug' },
+  { value: 'mirror', label: 'Mirror', icon: HardDriveDownload, category: 'debug' },
   { value: 'grpc', label: 'gRPC', icon: Zap, category: 'debug' },
   { value: 'scripts', label: 'Scripts', icon: Code, category: 'extend' },
   { value: 'plugins', label: 'Plugins', icon: Puzzle, category: 'extend' },
@@ -130,6 +133,7 @@ export function ToolsSidebar({ selectedEntry, isOpen, onClose }: ToolsSidebarPro
           {activeTab === 'rewrites' && <RewritesPanel />}
           {activeTab === 'throttle' && <ThrottlePanel />}
           {activeTab === 'replay' && <ReplayPanel selectedEntry={selectedEntry} />}
+          {activeTab === 'mirror' && <MirrorPanel />}
           {activeTab === 'grpc' && <GrpcPanel />}
           {activeTab === 'scripts' && <ScriptsPanel />}
           {activeTab === 'plugins' && <PluginsPanel />}

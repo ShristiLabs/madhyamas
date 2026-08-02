@@ -13,6 +13,7 @@ use crate::grpc::GrpcManager;
 use crate::intercept::{
     BlockListManager, BreakpointManager, MockManager, RewriteManager, ThrottleManager,
 };
+use crate::mirror::MirrorWriter;
 use crate::performance::{MemoryManager, MetricsCollector, PerformanceMonitor};
 #[cfg(feature = "plugins")]
 use crate::plugin::PluginManager;
@@ -321,6 +322,15 @@ impl ProxyEngine {
     pub fn with_auto_save_manager(self: Arc<Self>, manager: Arc<AutoSaveManager>) -> Arc<Self> {
         manager.clone().start();
         let _ = self.auto_save_manager.set(manager);
+        self
+    }
+
+    /// Attach a mirror writer and register it with the traffic store so that
+    /// captured responses are written to disk following the URL path
+    /// structure. The writer holds a live-updatable config shared with the
+    /// API layer so runtime changes take effect immediately.
+    pub fn with_mirror_writer(self: Arc<Self>, writer: Arc<MirrorWriter>) -> Arc<Self> {
+        self.traffic_store.set_mirror_writer(writer);
         self
     }
 

@@ -180,6 +180,19 @@ pub struct ProxyConfig {
     /// [`docs/AUTO_SAVE.md`](../../docs/AUTO_SAVE.md) for the end-user guide.
     #[serde(default)]
     pub auto_save: AutoSaveConfig,
+
+    /// Mirror tool configuration for saving response bodies to disk.
+    ///
+    /// When enabled, the proxy writes each captured response body to disk
+    /// following the URL path structure (`output_dir/host/path/content`),
+    /// along with a `.meta.json` sidecar containing request/response
+    /// metadata. This is useful for offline browsing, debugging, and
+    /// archiving.
+    ///
+    /// See [`MirrorConfig`] for field details and
+    /// [`docs/MIRROR.md`](../../docs/MIRROR.md) for the end-user guide.
+    #[serde(default)]
+    pub mirror: MirrorConfig,
 }
 
 /// Upstream (external) proxy chaining configuration.
@@ -353,6 +366,68 @@ impl Default for AutoSaveConfig {
             max_backups: default_autosave_max_backups(),
             rotate_after_requests: None,
             rotate_after_minutes: None,
+        }
+    }
+}
+
+/// Default value provider for [`MirrorConfig::output_dir`].
+fn default_mirror_output_dir() -> String {
+    get_data_dir().join("mirror").to_string_lossy().to_string()
+}
+
+/// Mirror tool configuration for saving response bodies to disk.
+///
+/// When `enabled` is `true`, the proxy writes each captured response body
+/// to disk following the URL path structure (`output_dir/host/path/content`),
+/// along with a `.meta.json` sidecar containing request/response metadata.
+/// This is the equivalent of Charles Proxy's "Mirror" / "Save Responses"
+/// feature and is useful for offline browsing, debugging, and archiving.
+///
+/// # Path mapping
+///
+/// | URL | Filesystem path |
+/// |-----|-----------------|
+/// | `https://api.example.com/v1/users/123` | `output_dir/api.example.com/v1/users/123/index.json` |
+/// | `https://cdn.example.com/assets/img/logo.png` | `output_dir/cdn.example.com/assets/img/logo.png` |
+///
+/// Paths ending with `/` or having no file extension are saved as
+/// `index.html` (or `index.json` based on content-type). Query strings are
+/// stored in the metadata sidecar to keep filenames clean.
+///
+/// See [`docs/MIRROR.md`](../../docs/MIRROR.md) for the end-user guide.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MirrorConfig {
+    /// Master switch. When `false` (the default), no response bodies are
+    /// written to disk.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Directory where mirrored response bodies are written. The directory
+    /// is created if it does not exist. Default: `~/.madhyamas/mirror`.
+    #[serde(default = "default_mirror_output_dir")]
+    pub output_dir: String,
+
+    /// Optional list of host patterns to mirror. When set, only responses
+    /// from matching hosts are written. Patterns support exact hostnames,
+    /// wildcard subdomains (`*.example.com`), and globs (`*api*`).
+    /// When `None` or empty, all hosts are mirrored.
+    #[serde(default)]
+    pub host_filter: Option<Vec<String>>,
+
+    /// Whether to also save request bodies to disk (alongside response
+    /// bodies). Request bodies are written as `<file>.request`. Default:
+    /// `false`.
+    #[serde(default)]
+    pub save_request_bodies: bool,
+}
+
+impl Default for MirrorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            output_dir: default_mirror_output_dir(),
+            host_filter: None,
+            save_request_bodies: false,
         }
     }
 }
@@ -544,6 +619,7 @@ impl Default for ProxyConfig {
             upstream_proxy: UpstreamProxyConfig::default(),
             allowed_ips: Vec::new(),
             auto_save: AutoSaveConfig::default(),
+            mirror: MirrorConfig::default(),
         }
     }
 }
