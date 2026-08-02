@@ -274,6 +274,7 @@ export function TrafficDetail({ entry }: TrafficDetailProps) {
           <div className="p-4 space-y-4">
             <div>
               <h4 className="font-semibold mb-3 text-sm">Request Timing</h4>
+              <MiniWaterfall entry={entry} />
               <div className="space-y-2">
                 <div className="flex justify-between items-center py-2 border-b">
                   <span className="text-sm text-muted-foreground">
@@ -375,6 +376,52 @@ function formatBytes(bytes: number): string {
   const sizes = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+}
+
+function miniBarColor(statusCode?: number): string {
+  if (!statusCode) return "bg-muted-foreground/40";
+  const cls = Math.floor(statusCode / 100);
+  switch (cls) {
+    case 2:
+      return "bg-success/70";
+    case 3:
+      return "bg-primary/70";
+    case 4:
+      return "bg-warning/70";
+    case 5:
+      return "bg-destructive/70";
+    default:
+      return "bg-muted-foreground/40";
+  }
+}
+
+function MiniWaterfall({ entry }: { entry: TrafficEntry }) {
+  const duration = entry.response?.duration_ms ?? 0;
+  const hasResponse = !!entry.response;
+  const barColor = miniBarColor(entry.response?.status_code);
+  const scaleMax = Math.max(duration, 100);
+  const barPct = hasResponse ? Math.max((duration / scaleMax) * 100, 1) : 0;
+
+  return (
+    <div className="mb-4 rounded-md border border-border bg-muted/20 p-3">
+      <div className="mb-1.5 flex items-center justify-between text-2xs text-muted-foreground">
+        <span>Duration</span>
+        <span className="font-mono">
+          {hasResponse ? `${duration}ms` : "Pending"}
+        </span>
+      </div>
+      <div className="relative h-4 w-full overflow-hidden rounded-sm bg-muted/40">
+        <div
+          className={`absolute top-0 left-0 h-full rounded-sm ${barColor}`}
+          style={{ width: `${barPct}%` }}
+        />
+      </div>
+      <div className="mt-1 flex justify-between text-2xs text-muted-foreground">
+        <span>0ms</span>
+        <span>{scaleMax >= 1000 ? `${(scaleMax / 1000).toFixed(1)}s` : `${scaleMax}ms`}</span>
+      </div>
+    </div>
+  );
 }
 
 type JsonQueryMode = "none" | "jsonpath" | "jmespath";

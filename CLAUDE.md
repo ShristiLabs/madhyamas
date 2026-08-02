@@ -192,6 +192,16 @@ tab, `PATCH /api/config`, or config file. Stats via
 `GET /api/capture/stats`. See
 [docs/RECORDING_LIMITS.md](docs/RECORDING_LIMITS.md).
 
+**Timeline View (Waterfall)**: The web UI traffic panel has a toggle to switch
+between the list (table) view and a waterfall timeline view. The timeline shows
+each request as a horizontal bar positioned by start time and sized by duration,
+color-coded by status code (2xx green, 3xx blue, 4xx orange, 5xx red, pending
+gray). Hover shows a tooltip with method/host/path/status/duration; click
+selects the entry and opens the detail panel. Rows are virtualized with
+`@tanstack/react-virtual` for large datasets. The detail panel's Timing tab
+also includes a mini waterfall bar visualizing the request's duration. See
+[docs/TIMELINE_VIEW.md](docs/TIMELINE_VIEW.md).
+
 **Edit-then-Repeat**: Saved requests can be modified before replaying via
 the web UI's "Edit & Replay" button (opens a `RequestEditor` dialog that
 diffs changes against the original and sends only modified fields as

@@ -93,7 +93,7 @@ It was produced by:
 | 18 | Structure view (tree by host) | ✅ | ✅ | Web UI tree view |
 | 19 | Sequence view (chronological) | ✅ | ✅ | Web UI list view |
 | 20 | Focus (highlight hosts) | ✅ | ✅ | FocusPanel, right-click "Focus this host", pattern matching, persistence |
-| 21 | Chart/timeline visualization | ✅ | ❌ | No visualization code in `web/` |
+| 21 | Chart/timeline visualization | ✅ | ✅ | Waterfall timeline view with status-color-coded bars, hover tooltips, virtualization; mini-chart in detail timing tab |
 | 22 | Request/response header viewers | ✅ | ✅ | Web UI detail tabs |
 | 23 | Body viewers (JSON/XML/form/binary) | ✅ | ✅ | Web UI renderers |
 | 24 | Query param / cookie / auth viewers | ✅ | ✅ | Web UI detail tabs |
@@ -237,8 +237,10 @@ proxying (`no_proxy()`).
 ### 3.2 Traffic Inspection
 
 **Chart/timeline** — Charles shows a timeline chart with Request/Latency/
-Response segments for visualizing parallel downloads. Madhyamas has no
-equivalent visualization.
+Response segments for visualizing parallel downloads. Madhyamas now has a
+waterfall timeline view (toggle from the list view) with status-color-coded
+bars, hover tooltips, and virtualization for large datasets, plus a mini-chart
+in the detail timing tab. See [docs/TIMELINE_VIEW.md](TIMELINE_VIEW.md).
 
 **Focus** — Charles lets you mark hosts as "focused" to separate them from
 noise. Madhyamas now has a dedicated Focus feature with a FocusPanel UI,

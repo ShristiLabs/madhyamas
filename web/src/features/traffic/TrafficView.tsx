@@ -7,6 +7,7 @@ import {
   useImportHar,
 } from "@/hooks/useTraffic"
 import { TrafficList } from "./TrafficList"
+import { TrafficTimeline } from "./TrafficTimeline"
 import { TrafficDetail } from "./TrafficDetail"
 import { TrafficToolbar } from "./TrafficToolbar"
 import { FocusPanel } from "./FocusPanel"
@@ -29,6 +30,8 @@ import {
   Loader2,
   X,
   Star,
+  List,
+  Activity,
 } from "lucide-react"
 import type { TrafficEntry } from "@/types/traffic"
 import type { ActiveFilter } from "@/types/filters"
@@ -52,6 +55,7 @@ export function TrafficView() {
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
   const [showFocusPanel, setShowFocusPanel] = useState(false)
   const [showOnlyFocused, setShowOnlyFocused] = useState(false)
+  const [viewMode, setViewMode] = useState<"list" | "timeline">("list")
 
   const [listWidth, setListWidth] = useState(() => {
     if (typeof window !== "undefined") {
@@ -321,6 +325,27 @@ export function TrafficView() {
                   </span>
                 )}
               </Button>
+
+              <div className="flex items-center gap-px rounded-md border border-border">
+                <Button
+                  variant={viewMode === "list" ? "secondary" : "ghost"}
+                  size="icon-sm"
+                  className="h-5 w-6 rounded-r-none border-0"
+                  onClick={() => setViewMode("list")}
+                  title="List view"
+                >
+                  <List className="h-3 w-3" />
+                </Button>
+                <Button
+                  variant={viewMode === "timeline" ? "secondary" : "ghost"}
+                  size="icon-sm"
+                  className="h-5 w-6 rounded-l-none border-0"
+                  onClick={() => setViewMode("timeline")}
+                  title="Timeline view"
+                >
+                  <Activity className="h-3 w-3" />
+                </Button>
+              </div>
             </div>
 
             <div className="flex items-center gap-1">
@@ -400,6 +425,12 @@ export function TrafficView() {
                   <div className="flex h-full items-center justify-center text-2xs text-muted-foreground">
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Loading…
                   </div>
+                ) : viewMode === "timeline" ? (
+                  <TrafficTimeline
+                    traffic={filteredTraffic}
+                    selectedId={selectedId}
+                    onSelect={handleSelect}
+                  />
                 ) : (
                   <TrafficList
                     traffic={filteredTraffic}
