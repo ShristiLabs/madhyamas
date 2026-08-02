@@ -274,12 +274,16 @@ mod script_adapter {
             let results = self
                 .runtime
                 .execute_hook(ScriptHook::OnRequest.as_str(), &mut script_ctx.clone());
-            let config = self.runtime.config();
             let mut modified = false;
             let mut logs = Vec::new();
             let mut errors = Vec::new();
             let mut handled = false;
-            let mut stop_chain = false;
+            // The per-script on_error policy (StopChain/Continue) is
+            // enforced inside `execute_hook`, which stops running
+            // subsequent scripts when a script errors with StopChain.
+            // The results vector only contains scripts that actually ran.
+            // Script errors do NOT stop the extension chain (plugins, etc.)
+            // — only the script chain.
             for r in results {
                 if r.modified {
                     modified = true;
@@ -305,23 +309,14 @@ mod script_adapter {
                 }
                 if let Some(e) = r.error {
                     errors.push(e);
-                    // Apply the error policy: if StopChain, stop running
-                    // subsequent scripts but still let the request continue
-                    // through the proxy pipeline.
-                    if config.on_error == crate::scripting::ScriptErrorPolicy::StopChain {
-                        stop_chain = true;
-                    }
                 }
                 logs.extend(r.console);
-                if stop_chain {
-                    break;
-                }
             }
             ExtensionResult {
                 modified,
                 logs,
                 error: errors.into_iter().next(),
-                continue_chain: !handled && !stop_chain,
+                continue_chain: !handled,
                 handled,
             }
         }
@@ -331,11 +326,10 @@ mod script_adapter {
             let results = self
                 .runtime
                 .execute_hook(ScriptHook::OnResponse.as_str(), &mut script_ctx.clone());
-            let config = self.runtime.config();
             let mut modified = false;
             let mut logs = Vec::new();
             let mut errors = Vec::new();
-            let mut stop_chain = false;
+            // Per-script on_error is enforced inside `execute_hook`.
             for r in results {
                 if r.modified {
                     modified = true;
@@ -346,20 +340,14 @@ mod script_adapter {
                 }
                 if let Some(e) = r.error {
                     errors.push(e);
-                    if config.on_error == crate::scripting::ScriptErrorPolicy::StopChain {
-                        stop_chain = true;
-                    }
                 }
                 logs.extend(r.console);
-                if stop_chain {
-                    break;
-                }
             }
             ExtensionResult {
                 modified,
                 logs,
                 error: errors.into_iter().next(),
-                continue_chain: !stop_chain,
+                continue_chain: true,
                 handled: false,
             }
         }

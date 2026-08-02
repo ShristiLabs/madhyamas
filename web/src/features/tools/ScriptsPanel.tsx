@@ -22,14 +22,13 @@ import {
   useAllScriptHistory,
   useReorderScript,
   useMatchPreview,
-  useScriptConfig,
-  useUpdateScriptConfig,
 } from '@/lib/api/tools';
 import type {
   Script,
   ScriptMatch,
   ScriptTemplate,
   ScriptTestResult,
+  ScriptErrorPolicy,
   MatchPreviewItem,
   ScriptHistoryEntry,
 } from '@/lib/api/tools';
@@ -102,8 +101,6 @@ export function ScriptsPanel() {
   const validateScript = useValidateScript();
   const reorderScript = useReorderScript();
   const matchPreview = useMatchPreview();
-  const { data: scriptConfig } = useScriptConfig();
-  const updateScriptConfig = useUpdateScriptConfig();
   const { data: history = [] } = useScriptHistory(historyScriptId);
 
   // Sort scripts by priority (then created_at) for display so the list
@@ -317,29 +314,6 @@ export function ScriptsPanel() {
               </div>
             ) : (
               <div className="space-y-2">
-                {/* Error policy selector */}
-                <div className="flex items-center gap-2 text-[11px] border rounded-lg p-2 bg-muted/30">
-                  <span className="text-muted-foreground">On error:</span>
-                  <select
-                    value={scriptConfig?.on_error ?? 'continue'}
-                    onChange={(e) =>
-                      updateScriptConfig.mutate({
-                        on_error: e.target.value as 'continue' | 'stop_chain',
-                      })
-                    }
-                    className="h-6 text-[11px] border rounded px-1.5 bg-background"
-                    title="What happens when a script fails while multiple scripts are registered for the same hook"
-                  >
-                    <option value="continue">Continue chain</option>
-                    <option value="stop_chain">Stop chain</option>
-                  </select>
-                  <span className="text-muted-foreground text-[10px]">
-                    {scriptConfig?.on_error === 'stop_chain'
-                      ? '— subsequent scripts are skipped on error'
-                      : '— subsequent scripts still run on error'}
-                  </span>
-                </div>
-
                 {filteredScripts.map((script, index) => (
                   <ScriptItem
                     key={script.id}
@@ -355,6 +329,9 @@ export function ScriptsPanel() {
                     }}
                     onReorder={(id, direction) => reorderScript.mutate({ id, direction })}
                     isReordering={reorderScript.isPending}
+                    onErrorChange={(id, on_error) =>
+                      updateScript.mutate({ id, on_error })
+                    }
                   />
                 ))}
               </div>
@@ -437,12 +414,14 @@ interface ScriptItemProps {
   onShowHistory: (id: string) => void;
   onReorder: (id: string, direction: 'up' | 'down') => void;
   isReordering: boolean;
+  onErrorChange: (id: string, on_error: ScriptErrorPolicy) => void;
 }
 
 function ScriptItem({
-  script, canMoveUp, canMoveDown, onToggle, onDelete, onEdit, onShowHistory, onReorder, isReordering,
+  script, canMoveUp, canMoveDown, onToggle, onDelete, onEdit, onShowHistory, onReorder, isReordering, onErrorChange,
 }: ScriptItemProps) {
   const matchStr = matchSummary(script.match_filter);
+  const onError = script.on_error ?? 'stop_chain';
   return (
     <div className="border rounded-lg p-3 text-xs hover:shadow-sm transition-shadow bg-card">
       <div className="flex items-center justify-between">
@@ -521,6 +500,19 @@ function ScriptItem({
             {matchStr}
           </span>
         )}
+        {/* Per-script error policy selector */}
+        <span className="flex items-center gap-1 ml-auto">
+          <span className="text-[10px] text-muted-foreground">On error:</span>
+          <select
+            value={onError}
+            onChange={(e) => onErrorChange(script.id, e.target.value as ScriptErrorPolicy)}
+            className="h-5 text-[10px] border rounded px-1 bg-background"
+            title="What happens to subsequent scripts when this script fails"
+          >
+            <option value="stop_chain">Stop chain</option>
+            <option value="continue">Continue</option>
+          </select>
+        </span>
       </div>
     </div>
   );

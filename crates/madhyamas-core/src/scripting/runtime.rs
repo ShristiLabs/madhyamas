@@ -136,6 +136,13 @@ pub struct Script {
     /// matches every request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub match_filter: Option<ScriptMatch>,
+    /// Per-script error policy: what happens to the script chain when this
+    /// script returns an error.  Defaults to [`ScriptErrorPolicy::StopChain`]
+    /// (subsequent scripts for the same hook are skipped).  Set to
+    /// [`ScriptErrorPolicy::Continue`] to keep running subsequent scripts
+    /// after this one fails.
+    #[serde(default)]
+    pub on_error: ScriptErrorPolicy,
 }
 
 impl Script {
@@ -152,6 +159,7 @@ impl Script {
             modified_at: now,
             priority: 100,
             match_filter: None,
+            on_error: ScriptErrorPolicy::default(),
         }
     }
 }
@@ -185,20 +193,23 @@ pub struct ScriptExecution {
 /// Policy for how script errors affect the execution chain.
 ///
 /// When multiple scripts are registered for the same hook, this controls
-/// what happens when one script returns an error.
+/// what happens when a script returns an error.  This is a per-script
+/// setting: a script with [`ScriptErrorPolicy::StopChain`] stops the chain
+/// when *it* errors, while [`ScriptErrorPolicy::Continue`] lets subsequent
+/// scripts run.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ScriptErrorPolicy {
-    /// Continue running subsequent scripts after one fails (default).
-    /// The error is logged and recorded in history but does not stop
-    /// the chain.  The request/response continues through the pipeline
+    /// Continue running subsequent scripts after this one fails.  The
+    /// error is logged and recorded in history but does not stop the
+    /// chain.  The request/response continues through the pipeline
     /// normally.
-    #[default]
     Continue,
-    /// Stop the script chain when any script fails.  No subsequent
+    /// Stop the script chain when this script fails.  No subsequent
     /// scripts in the same hook are executed.  The request itself still
     /// continues through the proxy pipeline (it is not aborted) — only
-    /// script processing stops.
+    /// script processing stops.  This is the default.
+    #[default]
     StopChain,
 }
 
@@ -225,10 +236,6 @@ pub struct ScriptConfig {
     /// Allow file system access from scripts (enforced: always false — no
     /// filesystem functions are registered)
     pub allow_fs: bool,
-    /// Policy for how script errors affect the execution chain when
-    /// multiple scripts are registered for the same hook.
-    #[serde(default)]
-    pub on_error: ScriptErrorPolicy,
 }
 
 impl Default for ScriptConfig {
@@ -239,7 +246,6 @@ impl Default for ScriptConfig {
             enable_console: true,
             allow_network: false,
             allow_fs: false,
-            on_error: ScriptErrorPolicy::default(),
         }
     }
 }
@@ -260,6 +266,9 @@ pub struct UpdateScriptFields {
     /// Update the script priority (lower runs first).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<u32>,
+    /// Update the per-script error policy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_error: Option<ScriptErrorPolicy>,
 }
 
 /// JavaScript runtime manager
@@ -401,11 +410,14 @@ impl ScriptRuntime {
         }
     }
 
-    /// Reorder a script relative to its neighbors by swapping priorities.
+    /// Reorder a script relative to its neighbors.
     /// `direction` is `"up"` (run earlier = lower priority) or `"down"`
-    /// (run later = higher priority).  Swaps the priority of the target
-    /// script with the adjacent script in the requested direction (sorted
-    /// by priority, then created_at).  Returns `true` if a swap occurred.
+    /// (run later = higher priority).  Swaps the target script with the
+    /// adjacent script in the requested direction (sorted by priority, then
+    /// created_at), then **renumbers** all scripts' priorities to distinct
+    /// values (100, 110, 120, …) so the new order is stable regardless of
+    /// whether the scripts previously shared a priority.  Returns `true` if
+    /// a swap occurred.
     pub fn reorder_script(&self, id: &str, direction: &str) -> bool {
         let scripts = self.scripts.read();
         let mut sorted: Vec<Script> = scripts.values().cloned().collect();
@@ -427,32 +439,34 @@ impl ScriptRuntime {
             _ => None,
         };
 
-        if let Some(sp) = swap_pos {
-            let a = &sorted[pos];
-            let b = &sorted[sp];
-            let a_priority = a.priority;
-            let b_priority = b.priority;
-            // Swap priorities
-            {
-                let mut scripts = self.scripts.write();
-                if let Some(script_a) = scripts.get_mut(&a.id) {
-                    script_a.priority = b_priority;
-                    script_a.modified_at = chrono::Utc::now();
-                }
-                if let Some(script_b) = scripts.get_mut(&b.id) {
-                    script_b.priority = a_priority;
-                    script_b.modified_at = chrono::Utc::now();
+        let sp = match swap_pos {
+            Some(sp) => sp,
+            None => return false,
+        };
+
+        // Swap the two entries in the sorted list, then renumber all
+        // scripts with distinct priorities so the order is stable.
+        sorted.swap(pos, sp);
+
+        const BASE: u32 = 100;
+        const STEP: u32 = 10;
+        let now = chrono::Utc::now();
+        let mut to_persist = Vec::new();
+        {
+            let mut scripts = self.scripts.write();
+            for (i, script) in sorted.iter().enumerate() {
+                let new_priority = BASE + (i as u32) * STEP;
+                if let Some(s) = scripts.get_mut(&script.id) {
+                    s.priority = new_priority;
+                    s.modified_at = now;
+                    to_persist.push(s.clone());
                 }
             }
-            // Persist both
-            let a_updated = self.get_script(&a.id).unwrap();
-            let b_updated = self.get_script(&b.id).unwrap();
-            self.persist_script(&a_updated);
-            self.persist_script(&b_updated);
-            true
-        } else {
-            false
         }
+        for script in to_persist {
+            self.persist_script(&script);
+        }
+        true
     }
 
     /// Update script metadata (source, name, description, hooks, match filter).
@@ -478,6 +492,9 @@ impl ScriptRuntime {
             }
             if let Some(priority) = fields.priority {
                 script.priority = priority;
+            }
+            if let Some(on_error) = fields.on_error {
+                script.on_error = on_error;
             }
             script.modified_at = chrono::Utc::now();
             let script_clone = script.clone();
@@ -588,7 +605,16 @@ impl ScriptRuntime {
                 }
             }
             let result = self.execute(&script.id, context);
+            // Per-script error policy: if this script errored and its
+            // policy is StopChain, skip all subsequent scripts for this
+            // hook.  The request itself still flows through the proxy
+            // pipeline normally — only script processing stops.
+            let stop_chain = result.error.is_some()
+                && script.on_error == ScriptErrorPolicy::StopChain;
             results.push(result);
+            if stop_chain {
+                break;
+            }
         }
 
         results

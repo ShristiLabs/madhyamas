@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use madhyamas_core::{
-    GrpcDirection, GrpcFilter, Script, ScriptMatch, ScriptTemplates,
+    GrpcDirection, GrpcFilter, Script, ScriptErrorPolicy, ScriptMatch, ScriptTemplates,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -108,6 +108,9 @@ pub struct CreateScriptRequest {
     /// on requests matching all specified fields.
     #[serde(default)]
     pub match_filter: Option<ScriptMatch>,
+    /// Per-script error policy.  Defaults to `stop_chain`.
+    #[serde(default)]
+    pub on_error: Option<ScriptErrorPolicy>,
 }
 
 /// Create a new script
@@ -122,6 +125,9 @@ pub async fn create_script(
     script.description = req.description;
     script.hooks = req.hooks;
     script.match_filter = req.match_filter;
+    if let Some(on_error) = req.on_error {
+        script.on_error = on_error;
+    }
     let id = state.script_runtime.register_script(script.clone());
     (
         StatusCode::CREATED,
@@ -144,6 +150,9 @@ pub struct UpdateScriptRequest {
     /// Update the script priority (lower runs first).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<u32>,
+    /// Update the per-script error policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_error: Option<ScriptErrorPolicy>,
 }
 
 /// Update a script
@@ -168,6 +177,7 @@ pub async fn update_script(
         hooks: req.hooks,
         match_filter: req.match_filter,
         priority: req.priority,
+        on_error: req.on_error,
     };
     if state.script_runtime.update_script_fields(&id, fields) {
         StatusCode::NO_CONTENT.into_response()
@@ -398,8 +408,6 @@ pub struct UpdateScriptConfigRequest {
     pub allow_network: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allow_fs: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub on_error: Option<madhyamas_core::ScriptErrorPolicy>,
 }
 
 /// Update script configuration (partial update — only provided fields
@@ -423,9 +431,6 @@ pub async fn update_script_config(
     }
     if let Some(v) = req.allow_fs {
         config.allow_fs = v;
-    }
-    if let Some(v) = req.on_error {
-        config.on_error = v;
     }
     state.script_runtime.set_config(config.clone());
     Json(config)

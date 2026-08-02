@@ -7,15 +7,16 @@
 
 use rusqlite::{params, Connection};
 
-use super::runtime::{Script, ScriptExecution};
+use super::runtime::{Script, ScriptErrorPolicy, ScriptExecution};
 
 /// Persist and load scripts from SQLite.
 pub struct ScriptPersistence;
 
 impl ScriptPersistence {
     /// Create the `scripts` and `script_executions` tables if they do not
-    /// already exist.  Safe to call on every startup.  Also runs a migration
-    /// to add the `match_json` column to pre-existing `scripts` tables.
+    /// already exist.  Safe to call on every startup.  Also runs migrations
+    /// to add the `match_json` and `on_error` columns to pre-existing
+    /// `scripts` tables.
     pub fn create_tables(conn: &Connection) -> crate::Result<()> {
         conn.execute_batch(
             r#"
@@ -29,7 +30,8 @@ impl ScriptPersistence {
                 priority INTEGER NOT NULL DEFAULT 100,
                 created_at TEXT NOT NULL,
                 modified_at TEXT NOT NULL,
-                match_json TEXT
+                match_json TEXT,
+                on_error TEXT NOT NULL DEFAULT 'stop_chain'
             );
 
             CREATE TABLE IF NOT EXISTS script_executions (
@@ -57,6 +59,10 @@ impl ScriptPersistence {
         // ADD COLUMN fails if the column already exists, so we check the
         // pragma table_info first.
         Self::ensure_column(conn, "scripts", "match_json", "TEXT")?;
+
+        // Migration: add on_error column to pre-existing scripts tables.
+        // Stores the per-script error policy ('continue' or 'stop_chain').
+        Self::ensure_column(conn, "scripts", "on_error", "TEXT NOT NULL DEFAULT 'stop_chain'")?;
 
         // Migration: add traffic_entry_id and hook columns to
         // pre-existing script_executions tables.
@@ -99,10 +105,11 @@ impl ScriptPersistence {
             Some(f) if !f.is_empty() => Some(serde_json::to_string(f)?),
             _ => None,
         };
+        let on_error_json = serde_json::to_string(&script.on_error)?;
         conn.execute(
             "INSERT OR REPLACE INTO scripts
-                (id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                (id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json, on_error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 script.id,
                 script.name,
@@ -114,6 +121,7 @@ impl ScriptPersistence {
                 script.created_at.to_rfc3339(),
                 script.modified_at.to_rfc3339(),
                 match_json,
+                on_error_json,
             ],
         )?;
         Ok(())
@@ -128,7 +136,7 @@ impl ScriptPersistence {
     /// Load all scripts from the database.
     pub fn load_scripts(conn: &Connection) -> crate::Result<Vec<Script>> {
         let mut stmt = conn.prepare(
-            "SELECT id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json
+            "SELECT id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json, on_error
              FROM scripts ORDER BY priority ASC, name ASC",
         )?;
 
@@ -142,6 +150,9 @@ impl ScriptPersistence {
                 let match_filter = match_json
                     .as_deref()
                     .and_then(|s| serde_json::from_str(s).ok());
+                let on_error_json: String = row.get::<_, String>(10)?;
+                let on_error: ScriptErrorPolicy =
+                    serde_json::from_str(&on_error_json).unwrap_or_default();
                 Ok(Script {
                     id: row.get(0)?,
                     name: row.get(1)?,
@@ -153,6 +164,7 @@ impl ScriptPersistence {
                     created_at: parse_rfc3339(&created_at),
                     modified_at: parse_rfc3339(&modified_at),
                     match_filter,
+                    on_error,
                 })
             })?
             .filter_map(|r| r.ok())

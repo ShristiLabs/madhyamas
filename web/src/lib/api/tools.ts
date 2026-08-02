@@ -67,6 +67,10 @@ export interface ScriptMatch {
   method?: string;
 }
 
+/** Per-script error policy: what happens to the script chain when this
+ *  script returns an error. */
+export type ScriptErrorPolicy = 'continue' | 'stop_chain';
+
 export interface Script {
   id: string;
   name: string;
@@ -79,6 +83,8 @@ export interface Script {
   match_filter?: ScriptMatch | null;
   /** Execution priority (lower runs first).  Defaults to 100. */
   priority?: number;
+  /** Per-script error policy.  Defaults to `stop_chain`. */
+  on_error?: ScriptErrorPolicy;
 }
 
 export interface ScriptTemplate {
@@ -93,8 +99,6 @@ export interface ScriptConfig {
   timeout_ms: number;
   max_memory_mb: number;
   enable_console: boolean;
-  /** Policy for how script errors affect the execution chain. */
-  on_error?: 'continue' | 'stop_chain';
 }
 
 export interface ScriptExecution {
@@ -300,6 +304,7 @@ export function useUpdateScript() {
       hooks?: string[];
       match_filter?: ScriptMatch | null;
       priority?: number;
+      on_error?: ScriptErrorPolicy;
     }): Promise<void> => {
       const body: Record<string, unknown> = {};
       if (params.source !== undefined) body.source = params.source;
@@ -308,6 +313,7 @@ export function useUpdateScript() {
       if (params.hooks !== undefined) body.hooks = params.hooks;
       if (params.match_filter !== undefined) body.match_filter = params.match_filter;
       if (params.priority !== undefined) body.priority = params.priority;
+      if (params.on_error !== undefined) body.on_error = params.on_error;
       return apiPut<void>(`/scripts/${params.id}`, body);
     },
     onSuccess: () => {
@@ -316,8 +322,8 @@ export function useUpdateScript() {
   });
 }
 
-/** Reorder a script up (run earlier) or down (run later) by swapping
- * priorities with the adjacent script. */
+/** Reorder a script up (run earlier) or down (run later) by renumbering
+ * priorities so the new order is stable. */
 export function useReorderScript() {
   const queryClient = useQueryClient();
   return useMutation({
