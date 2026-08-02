@@ -132,6 +132,19 @@ function loadLS<T>(key: string, defaults: T): T {
   return defaults;
 }
 
+// Format a byte count as a human-readable string (e.g. "20 MB", "512 KB").
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    const mb = bytes / (1024 * 1024);
+    return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    const kb = bytes / 1024;
+    return `${Number.isInteger(kb) ? kb : kb.toFixed(0)} KB`;
+  }
+  return `${bytes} B`;
+}
+
 // ─── Section wrapper ──────────────────────────────────────────────────────────
 
 function Section({
@@ -660,15 +673,15 @@ function CaptureTab() {
         <div className="space-y-3">
           <Row
             label="Max Body Size"
-            description={`Bodies larger than ${cfg.max_body_size_kb} KB will be truncated.`}
+            description={`Bodies larger than ${formatSize(cfg.max_body_size_kb * 1024)} will be truncated.`}
           >
-            <span className="text-sm font-mono w-20 text-right inline-block">
-              {cfg.max_body_size_kb} KB
+            <span className="text-sm font-mono w-24 text-right inline-block">
+              {formatSize(cfg.max_body_size_kb * 1024)}
             </span>
           </Row>
           <Slider
             min={16}
-            max={4096}
+            max={20480}
             step={16}
             value={[cfg.max_body_size_kb]}
             onValueChange={([v]) =>
@@ -678,7 +691,7 @@ function CaptureTab() {
           />
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>16 KB</span>
-            <span>4096 KB</span>
+            <span>20 MB</span>
           </div>
         </div>
       </Section>
@@ -1258,7 +1271,7 @@ export function ConfigDialog({ trigger }: ConfigDialogProps) {
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-0">
+      <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col p-0">
         <DialogHeader className="px-6 pt-6 pb-0">
           <DialogTitle className="text-lg">Proxy Configuration</DialogTitle>
         </DialogHeader>
@@ -1266,7 +1279,7 @@ export function ConfigDialog({ trigger }: ConfigDialogProps) {
           defaultValue="general"
           className="flex-1 flex flex-col min-h-0 mt-4"
         >
-          <TabsList className="mx-6 justify-start shrink-0">
+          <TabsList className="mx-6 justify-start shrink-0 flex-wrap h-auto">
             <TabsTrigger value="general" className="flex items-center gap-1.5">
               <Server className="h-3.5 w-3.5" />
               General
