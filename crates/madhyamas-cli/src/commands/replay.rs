@@ -3,13 +3,38 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 use super::ApiClient;
 
 #[derive(Debug, Args)]
 pub struct ReplayRequestArgs {
-    /// Traffic entry ID to replay
+    /// Saved request ID to replay
     pub id: String,
+
+    /// Override the URL
+    #[arg(long)]
+    pub url: Option<String>,
+
+    /// Override the HTTP method
+    #[arg(long)]
+    pub method: Option<String>,
+
+    /// Header to add/replace (repeatable). Format: "Key: Value"
+    #[arg(long = "header", value_name = "KEY: VALUE")]
+    pub headers: Vec<String>,
+
+    /// New request body (raw text)
+    #[arg(long)]
+    pub body: Option<String>,
+
+    /// Read request body from a file
+    #[arg(long, value_name = "PATH")]
+    pub body_file: Option<String>,
+
+    /// Follow redirect responses (3xx)
+    #[arg(long)]
+    pub follow_redirects: bool,
 
     /// Output as JSON
     #[arg(long)]
@@ -78,14 +103,74 @@ impl ReplayCommands {
         match self {
             ReplayCommands::Run(args) => {
                 let client = ApiClient::new(api_url);
-                let body = json!({ "traffic_id": args.id });
-                let result = client.post("replay", body).await?;
+
+                let mut modifications = json!({});
+                let mut has_modifications = false;
+
+                if let Some(ref url) = args.url {
+                    modifications["url"] = Value::String(url.clone());
+                    has_modifications = true;
+                }
+
+                if let Some(ref method) = args.method {
+                    modifications["method"] = Value::String(method.to_uppercase());
+                    has_modifications = true;
+                }
+
+                if !args.headers.is_empty() {
+                    let mut headers = HashMap::new();
+                    for header in &args.headers {
+                        if let Some((name, value)) = header.split_once(':') {
+                            headers.insert(name.trim().to_string(), value.trim().to_string());
+                        }
+                    }
+                    modifications["headers"] = serde_json::to_value(&headers)?;
+                    has_modifications = true;
+                }
+
+                if let Some(ref body) = args.body {
+                    modifications["body"] = Value::String(body.clone());
+                    has_modifications = true;
+                }
+
+                if let Some(ref path) = args.body_file {
+                    let content = std::fs::read_to_string(path)
+                        .map_err(|e| anyhow::anyhow!("Failed to read body file: {}", e))?;
+                    modifications["body"] = Value::String(content);
+                    has_modifications = true;
+                }
+
+                if args.follow_redirects {
+                    modifications["follow_redirects"] = Value::Bool(true);
+                    has_modifications = true;
+                }
+
+                let request_body = if has_modifications {
+                    json!({ "modifications": modifications })
+                } else {
+                    json!({})
+                };
+
+                let result = client
+                    .post(&format!("replay/execute/{}", args.id), request_body)
+                    .await?;
                 if args.json {
                     println!("{}", serde_json::to_string_pretty(&result)?);
                 } else {
-                    println!("Replay completed successfully");
-                    if let Some(status) = result.get("status") {
-                        println!("Status: {}", status);
+                    if let Some(error) = result.get("error").and_then(|v| v.as_str()) {
+                        println!("Replay failed: {}", error);
+                    } else if let Some(response) = result.get("response") {
+                        let status = response
+                            .get("status_code")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let duration = result
+                            .get("duration_ms")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        println!("Replay completed: {} ({}ms)", status, duration);
+                    } else {
+                        println!("Replay completed successfully");
                     }
                 }
             }

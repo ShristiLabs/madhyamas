@@ -18,9 +18,12 @@ import {
   useReplayHistory,
   type SavedRequest,
   type ReplayResult,
+  type RequestModifications,
 } from '@/lib/api/intercept';
 import { useToast } from '@/components/ui/use-toast';
 import type { TrafficEntry } from '@/lib/api';
+import { RequestEditor } from '@/features/traffic/RequestEditor';
+import { Pencil } from 'lucide-react';
 
 interface ReplayPanelProps {
   selectedEntry?: TrafficEntry | null;
@@ -36,7 +39,9 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
 
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [showReplayDialog, setShowReplayDialog] = useState(false);
+  const [showEditor, setShowEditor] = useState(false);
   const [selectedSaved, setSelectedSaved] = useState<SavedRequest | null>(null);
+  const [editingSaved, setEditingSaved] = useState<SavedRequest | null>(null);
   const [saveName, setSaveName] = useState('');
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
 
@@ -63,6 +68,25 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
 
     const result = await replayRequest.mutateAsync({ id: saved.id });
     setReplayResult(result);
+  };
+
+  const handleEditReplay = (saved: SavedRequest) => {
+    setEditingSaved(saved);
+    setShowEditor(true);
+  };
+
+  const handleEditorSubmit = async (modifications: RequestModifications) => {
+    if (!editingSaved) return;
+    setShowEditor(false);
+    setSelectedSaved(editingSaved);
+    setShowReplayDialog(true);
+
+    const result = await replayRequest.mutateAsync({
+      id: editingSaved.id,
+      modifications,
+    });
+    setReplayResult(result);
+    setEditingSaved(null);
   };
 
   const handleDelete = async (id: string, name: string) => {
@@ -128,6 +152,15 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
                       disabled={replayRequest.isPending}
                     >
                       Replay
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleEditReplay(saved)}
+                      disabled={replayRequest.isPending}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Edit & Replay
                     </Button>
                     <Button
                       variant="ghost"
@@ -289,6 +322,19 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Edit & Replay Dialog */}
+      {editingSaved && (
+        <RequestEditor
+          open={showEditor}
+          onOpenChange={(open) => {
+            setShowEditor(open);
+            if (!open) setEditingSaved(null);
+          }}
+          initialRequest={editingSaved.request}
+          onSubmit={handleEditorSubmit}
+        />
+      )}
     </div>
   );
 }

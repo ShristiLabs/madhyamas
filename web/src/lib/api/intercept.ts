@@ -206,6 +206,15 @@ export interface SavedRequest {
   created_at: string;
 }
 
+export interface RequestModifications {
+  url?: string;
+  method?: string;
+  headers?: Record<string, string>;
+  remove_headers?: string[];
+  body?: string;
+  follow_redirects?: boolean;
+}
+
 export interface ReplayResult {
   id: string;
   saved_request_id: string;
@@ -755,7 +764,7 @@ export function useDeleteSavedRequest() {
 export function useReplayRequest() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, modifications }: { id: string; modifications?: Partial<SavedRequest['request']> }): Promise<ReplayResult> => {
+    mutationFn: async ({ id, modifications }: { id: string; modifications?: RequestModifications }): Promise<ReplayResult> => {
       return apiPost<ReplayResult>(`/replay/execute/${id}`, { modifications });
     },
     onSuccess: () => {

@@ -167,7 +167,7 @@ It was produced by:
 | 67 | Client Process tracking | ✅ | ❌ | Not implemented |
 | 68 | Repeat (replay single request) | ✅ | ✅ | `replay.rs::ReplayManager` |
 | 69 | Repeat Advanced (concurrency) | ✅ | ❌ | No concurrency/iterations control |
-| 70 | Edit (edit then repeat) | ✅ | ❌ | No edit-then-repeat tool |
+| 70 | Edit (edit then repeat) | ✅ | ✅ | `RequestEditor` + `RequestModifications` |
 | 71 | Validate (W3C HTML/CSS/Feed) | ✅ | ❌ | Not implemented |
 | 72 | Command-line tools (convert/ssl) | ✅ | ✅ | `madhyamas` CLI with 58 subcommands |
 
@@ -267,8 +267,9 @@ tool.
 
 **Repeat / Repeat Advanced / Edit** — Charles has three related tools for
 replaying requests with optional concurrency and editing. Madhyamas has
-`ReplayManager` (single replay with modification support) but no concurrency
-control or edit-then-repeat workflow.
+`ReplayManager` (single replay with modification support) and an
+edit-then-repeat workflow via the `RequestEditor` UI and CLI flags, but no
+concurrency control. See [docs/EDIT_THEN_REPEAT.md](EDIT_THEN_REPEAT.md).
 
 **Validate** — Charles sends responses to W3C HTML/CSS/Feed validators.
 Madhyamas has no equivalent.
@@ -325,7 +326,7 @@ by impact and effort:
 
 8. **Repeat Advanced** — Add concurrency/iterations to replay for basic load
    testing.
-9. **Edit-then-repeat** — Allow editing a request before replaying.
+9. **Edit-then-repeat** — Implemented. See [docs/EDIT_THEN_REPEAT.md](EDIT_THEN_REPEAT.md).
 10. **Chart/timeline visualization** — Add a waterfall chart to the web UI.
 11. **Focus feature** — Add a dedicated Focus UI for host filtering.
 12. **Mirror tool** — Save responses to disk as a mirror of the site.

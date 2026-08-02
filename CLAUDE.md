@@ -164,6 +164,14 @@ and glob patterns (`*ads*`). Managed via `GET/POST/PUT/DELETE /api/blocklist`.
 Entries persist to SQLite and survive restarts. See
 [docs/BLOCK_LIST.md](docs/BLOCK_LIST.md).
 
+**Edit-then-Repeat**: Saved requests can be modified before replaying via
+the web UI's "Edit & Replay" button (opens a `RequestEditor` dialog that
+diffs changes against the original and sends only modified fields as
+`RequestModifications`), CLI flags (`madhyamas replay run <id> --url`,
+`--method`, `--header`, `--body`, `--body-file`, `--follow-redirects`), or
+the MCP `madhyamas_replay_request` tool's `modifications` parameter. See
+[docs/EDIT_THEN_REPEAT.md](docs/EDIT_THEN_REPEAT.md).
+
 **Data Directory**: `~/.madhyamas/` (certs, logs, traffic.db)
 
 **API Endpoints** (all under `/api` prefix):

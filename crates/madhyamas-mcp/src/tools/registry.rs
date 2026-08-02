@@ -577,30 +577,44 @@ impl ToolRegistry {
             // Replay tools
             Tool {
                 name: "madhyamas_replay_request".to_string(),
-                description: "Replay a captured request. Optionally modify headers/body before replaying. Useful for debugging or testing different scenarios.".to_string(),
+                description: "Replay a saved request with optional edit-then-repeat. Supports modifying the URL, method, headers, body, and redirect behavior before replaying. Useful for debugging, testing different scenarios, or re-running requests with modified payloads.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "id": {
                             "type": "string",
-                            "description": "The ID of the traffic entry to replay"
+                            "description": "The ID of the saved request to replay"
                         },
                         "modifications": {
                             "type": "object",
                             "properties": {
-                                "headers": {
-                                    "type": "object",
-                                    "description": "Headers to add/modify"
-                                },
-                                "body": {
-                                    "description": "New request body"
-                                },
                                 "url": {
                                     "type": "string",
-                                    "description": "Override URL"
+                                    "description": "Override the request URL"
+                                },
+                                "method": {
+                                    "type": "string",
+                                    "description": "Override the HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)"
+                                },
+                                "headers": {
+                                    "type": "object",
+                                    "description": "Headers to add or replace (key-value pairs)"
+                                },
+                                "remove_headers": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Header names to remove from the request"
+                                },
+                                "body": {
+                                    "type": "string",
+                                    "description": "New request body (raw text)"
+                                },
+                                "follow_redirects": {
+                                    "type": "boolean",
+                                    "description": "Whether to follow 3xx redirect responses (default: false)"
                                 }
                             },
-                            "description": "Optional modifications to apply before replaying"
+                            "description": "Optional modifications to apply before replaying (edit-then-repeat)"
                         }
                     },
                     "required": ["id"]
