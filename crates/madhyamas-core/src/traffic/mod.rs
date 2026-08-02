@@ -9,4 +9,6 @@ pub use events::{
     WsClientMessage, WsServerMessage, TRAFFIC_EVENT_CHANNEL_CAPACITY,
 };
 pub use store::TrafficStore;
-pub use types::{HttpMethod, RequestData, ResponseData, Session, TrafficEntry, TrafficFilter};
+pub use types::{
+    HttpMethod, ImportResult, RequestData, ResponseData, Session, TrafficEntry, TrafficFilter,
+};

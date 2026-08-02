@@ -47,6 +47,7 @@ madhyamas grpc status
 madhyamas scripts list
 madhyamas plugins list
 madhyamas export har --output traffic.har
+madhyamas traffic import-har /path/to/traffic.har --name "Imported" --switch
 madhyamas --help  # See all commands
 ```
 
@@ -178,7 +179,7 @@ the MCP `madhyamas_replay_request` tool's `modifications` parameter. See
 
 | Category | Endpoints |
 |----------|-----------|
-| Traffic | `GET /traffic`, `GET /traffic/{id}` (supports `?decompressed=true` for on-demand gzip/deflate/brotli/zstd decompression), `POST /traffic/clear`, `GET /traffic/count` |
+| Traffic | `GET /traffic`, `GET /traffic/{id}` (supports `?decompressed=true` for on-demand gzip/deflate/brotli/zstd decompression), `POST /traffic/clear`, `GET /traffic/count`, `POST /traffic/import/har` |
 | Sessions | `GET /sessions`, `POST /sessions`, `GET/DELETE /sessions/{id}`, `GET /sessions/{id}/export`, `POST /sessions/{id}/switch`, `POST /sessions/import` |
 | Export | `GET /export/har`, `GET /export/curl/{id}` |
 | Certificate | `GET /cert/ca` |

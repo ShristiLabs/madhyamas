@@ -4,6 +4,7 @@ import {
   useTrafficCount,
   useClearTraffic,
   useTrafficEntry,
+  useImportHar,
 } from "@/hooks/useTraffic"
 import { TrafficList } from "./TrafficList"
 import { TrafficDetail } from "./TrafficDetail"
@@ -20,6 +21,7 @@ import {
   RefreshCw,
   Keyboard,
   Download,
+  Upload,
   ChevronDown,
   Wifi,
   WifiOff,
@@ -63,6 +65,9 @@ export function TrafficView() {
   } = useTraffic(search ? { filter: { search } } : undefined)
   const { data: count } = useTrafficCount()
   const clearTraffic = useClearTraffic()
+  const importHar = useImportHar()
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const wsConnected = connectionInfo?.state === "connected"
   const wsReconnecting = connectionInfo?.state === "reconnecting"
@@ -142,6 +147,36 @@ export function TrafficView() {
       }
     },
     [selectedIds],
+  )
+
+  const handleImportHar = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      if (!file) return
+      try {
+        const text = await file.text()
+        const har = JSON.parse(text)
+        importHar.mutate(
+          { har, switchSession: true },
+          {
+            onSuccess: (result) => {
+              const skippedMsg =
+                result.skipped_count > 0 ? ` (${result.skipped_count} skipped)` : ""
+              alert(`Imported ${result.imported_count} entries${skippedMsg} into a new session.`)
+            },
+            onError: (error) => {
+              alert(`Failed to import HAR: ${error instanceof Error ? error.message : String(error)}`)
+            },
+          },
+        )
+      } catch (error) {
+        alert(`Failed to read HAR file: ${error instanceof Error ? error.message : String(error)}`)
+      } finally {
+        // Reset the input so the same file can be selected again
+        if (fileInputRef.current) fileInputRef.current.value = ""
+      }
+    },
+    [importHar],
   )
 
   // Keyboard shortcuts
@@ -254,6 +289,28 @@ export function TrafficView() {
             </div>
 
             <div className="flex items-center gap-1">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".har,application/json"
+                className="hidden"
+                onChange={handleImportHar}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                title="Import HAR"
+                disabled={importHar.isPending}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {importHar.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Upload className="h-3.5 w-3.5" />
+                )}
+                <span className="hidden sm:inline">Import</span>
+              </Button>
+
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" title="Export HAR">

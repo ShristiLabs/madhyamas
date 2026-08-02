@@ -59,6 +59,7 @@ fn create_routes_inner(
         .route("/traffic/{id}", get(handlers::get_traffic_entry))
         .route("/traffic/clear", post(handlers::clear_traffic))
         .route("/traffic/count", get(handlers::get_traffic_count))
+        .route("/traffic/import/har", post(handlers::import_traffic_har))
         // Session endpoints
         .route("/sessions", get(handlers::get_sessions))
         .route("/sessions", post(handlers::create_session))

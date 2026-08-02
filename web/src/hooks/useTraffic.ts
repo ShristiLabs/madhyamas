@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { TrafficEntry, TrafficFilter } from "@/types/traffic";
 import { useTrafficWebSocket } from "./useTrafficWebSocket";
 import type { TrafficEntrySnapshot, WsConnectionInfo } from "@/types/websocket";
-import { apiGet, apiPostVoid } from "@/lib/api/client";
+import { apiGet, apiPost, apiPostVoid } from "@/lib/api/client";
 
 // Storage key for WebSocket mode preference
 const WS_MODE_STORAGE_KEY = "madhyamas-use-websocket";
@@ -208,6 +208,42 @@ export function useClearTraffic() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["traffic"] });
       queryClient.invalidateQueries({ queryKey: ["traffic-count"] });
+    },
+  });
+}
+
+/** Result returned by the HAR import endpoint. */
+export interface HarImportResult {
+  session_id: string;
+  imported_count: number;
+  skipped_count: number;
+  errors: string[];
+}
+
+interface ImportHarParams {
+  har: unknown;
+  sessionName?: string;
+  switchSession?: boolean;
+}
+
+async function importHar(params: ImportHarParams): Promise<HarImportResult> {
+  return apiPost<HarImportResult>("/traffic/import/har", {
+    har: params.har,
+    session_name: params.sessionName,
+    switch_session: params.switchSession ?? false,
+  });
+}
+
+/** Import traffic from a HAR JSON document into a new session. */
+export function useImportHar() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: importHar,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["traffic"] });
+      queryClient.invalidateQueries({ queryKey: ["traffic-count"] });
+      queryClient.invalidateQueries({ queryKey: ["sessions"] });
     },
   });
 }

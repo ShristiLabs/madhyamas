@@ -172,6 +172,48 @@ pub async fn clear_traffic(client: &Client, api_url: &str) -> Result<Value, McpE
     Ok(json!({ "success": true, "message": "Traffic cleared" }))
 }
 
+/// Import traffic from a HAR JSON document into a new session.
+///
+/// `har` is the full HAR object (`{ "log": { ... } }`). When `session_name`
+/// is provided it is used as the new session's name; otherwise the server
+/// defaults to `"Imported HAR"`. When `switch_session` is true the active
+/// session is switched to the newly created one.
+pub async fn import_har(
+    client: &Client,
+    api_url: &str,
+    har: Value,
+    session_name: Option<&str>,
+    switch_session: bool,
+) -> Result<Value, McpError> {
+    let url = format!("{}/api/traffic/import/har", api_url);
+
+    let body = json!({
+        "har": har,
+        "session_name": session_name,
+        "switch_session": switch_session,
+    });
+
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| McpError::Http(e.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(McpError::Http(format!("HTTP {}: {}", status, body)));
+    }
+
+    let result: Value = response
+        .json()
+        .await
+        .map_err(|e| McpError::Parse(e.to_string()))?;
+
+    Ok(result)
+}
+
 /// Get traffic count
 pub async fn get_traffic_count(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/traffic/count", api_url);

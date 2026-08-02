@@ -112,7 +112,7 @@ It was produced by:
 | 32 | Clear session | ✅ | ✅ | `POST /api/traffic/clear` |
 | 33 | Switch active session | ✅ | ✅ | `POST /api/sessions/{id}/switch` |
 | 34 | Session export (CSV/Trace/XML) | ✅ | ✅ | HAR + cURL (different formats) |
-| 35 | Session import (Trace/XML) | ✅ | 🟡 | Session + mock import; no HAR traffic import |
+| 35 | Session import (Trace/XML) | ✅ | ✅ | Session import + HAR traffic import (`POST /api/traffic/import/har`) |
 | 36 | `.chlz` session format | ✅ (5.0) | ❌ | Madhyamas uses SQLite (`traffic.db`) |
 
 ### 2.4 Export / Import
@@ -124,7 +124,7 @@ It was produced by:
 | 39 | CSV export | ✅ | ❌ | Not implemented |
 | 40 | XML session export | ✅ | ❌ | Not implemented |
 | 41 | Trace text export | ✅ | ❌ | Not implemented |
-| 42 | HAR import | ✅ (5.0) | ❌ | Not implemented |
+| 42 | HAR import | ✅ (5.0) | ✅ | `POST /api/traffic/import/har`; see [docs/HAR_IMPORT.md](HAR_IMPORT.md) |
 | 43 | Mock import/export | ➕ | ✅ | `intercept/mock.rs` |
 | 44 | Config import/export | ➕ | ✅ | `GET/PATCH /api/config` |
 
@@ -332,7 +332,7 @@ by impact and effort:
 12. **Mirror tool** — Save responses to disk as a mirror of the site.
 13. **Auto Save** — Periodic session save to avoid memory growth.
 14. **Recording size limits** — Prevent runaway memory usage.
-15. **HAR import** — Import traffic from HAR files (Charles 5.0 supports this).
+15. **HAR import** — Import traffic from HAR files (Charles 5.0 supports this). **Implemented** — see [docs/HAR_IMPORT.md](HAR_IMPORT.md).
 
 ### Lower Priority (niche / legacy)
 

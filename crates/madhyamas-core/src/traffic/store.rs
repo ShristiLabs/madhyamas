@@ -1,10 +1,14 @@
 //! Traffic storage using SQLite
 
-use super::{Session, TrafficEntry, TrafficEntrySnapshot, TrafficEvent, TrafficFilter};
+use super::{
+    ImportResult, RequestData, ResponseData, Session, TrafficEntry, TrafficEntrySnapshot,
+    TrafficEvent, TrafficFilter,
+};
 use crate::Error;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -782,6 +786,184 @@ impl TrafficStore {
         Ok(har)
     }
 
+    /// Import traffic from a HAR (HTTP Archive) JSON document.
+    ///
+    /// A new session is created (named after `session_name` or
+    /// `"Imported HAR"` by default) and each `log.entries[]` entry is
+    /// converted into a [`TrafficEntry`] and stored via [`store_request`] /
+    /// [`store_response`].
+    ///
+    /// Invalid entries are skipped rather than aborting the entire import;
+    /// their error messages are collected in the returned [`ImportResult`].
+    /// Both HAR 1.1 and 1.2 are accepted. Base64-encoded bodies
+    /// (`content.encoding == "base64"`) are decoded before storage.
+    ///
+    /// [`store_request`]: TrafficStore::store_request
+    /// [`store_response`]: TrafficStore::store_response
+    pub fn import_har(
+        &self,
+        har: &serde_json::Value,
+        session_name: Option<&str>,
+    ) -> crate::Result<ImportResult> {
+        let log = har
+            .get("log")
+            .ok_or_else(|| Error::Config("Invalid HAR: missing 'log' field".to_string()))?;
+
+        let entries = log
+            .get("entries")
+            .and_then(|e| e.as_array())
+            .ok_or_else(|| Error::Config("Invalid HAR: missing 'log.entries' array".to_string()))?;
+
+        // Create a new session for the imported traffic.
+        let name = session_name.unwrap_or("Imported HAR");
+        let session = self.create_session(Some(name))?;
+
+        let mut imported_count = 0usize;
+        let mut skipped_count = 0usize;
+        let mut errors: Vec<String> = Vec::new();
+
+        for (idx, entry) in entries.iter().enumerate() {
+            match self.convert_har_entry(entry, &session.id) {
+                Ok(entry) => {
+                    if let Err(e) = self.store_request(&entry) {
+                        skipped_count += 1;
+                        errors.push(format!("entry {}: failed to store request: {}", idx, e));
+                        continue;
+                    }
+                    if let Some(ref response) = entry.response {
+                        if let Err(e) = self.store_response(&entry.id, response) {
+                            skipped_count += 1;
+                            errors.push(format!("entry {}: failed to store response: {}", idx, e));
+                            continue;
+                        }
+                    }
+                    imported_count += 1;
+                }
+                Err(e) => {
+                    skipped_count += 1;
+                    errors.push(format!("entry {}: {}", idx, e));
+                }
+            }
+        }
+
+        Ok(ImportResult {
+            session_id: session.id,
+            imported_count,
+            skipped_count,
+            errors,
+        })
+    }
+
+    /// Convert a single HAR `log.entries[]` object into a [`TrafficEntry`]
+    /// belonging to `session_id`. Returns an error when the entry is missing
+    /// the required `request` object.
+    fn convert_har_entry(
+        &self,
+        entry: &serde_json::Value,
+        session_id: &str,
+    ) -> crate::Result<TrafficEntry> {
+        let request = entry
+            .get("request")
+            .ok_or_else(|| Error::Config("HAR entry missing 'request' field".to_string()))?;
+
+        let method_str = request
+            .get("method")
+            .and_then(|m| m.as_str())
+            .unwrap_or("GET");
+        let method = method_str
+            .parse::<crate::traffic::HttpMethod>()
+            .unwrap_or(crate::traffic::HttpMethod::Get);
+
+        let url = request
+            .get("url")
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let (host, path) = parse_url(&url);
+
+        let headers = parse_har_headers(request.get("headers"));
+        let content_type = header_value(&headers, "content-type");
+
+        let body = parse_har_post_data(request.get("postData"));
+        let http_version = request
+            .get("httpVersion")
+            .and_then(|v| v.as_str())
+            .map(normalize_http_version);
+
+        let request_data = RequestData {
+            method,
+            url: url.clone(),
+            host,
+            path,
+            headers,
+            body,
+            content_type,
+            http_version,
+        };
+
+        let response = entry
+            .get("response")
+            .and_then(|r| r.as_object())
+            .map(|resp| {
+                let status_code = resp.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16;
+                let status_message = resp
+                    .get("statusText")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string());
+                let resp_headers = parse_har_headers(resp.get("headers"));
+                let resp_content_type = header_value(&resp_headers, "content-type").or_else(|| {
+                    resp.get("content")
+                        .and_then(|c| c.get("mimeType"))
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string())
+                });
+                let resp_body = parse_har_content(resp.get("content"));
+                let duration_ms = entry
+                    .get("time")
+                    .and_then(|t| t.as_f64())
+                    .map(|t| t as u64)
+                    .unwrap_or(0);
+                let resp_http_version = resp
+                    .get("httpVersion")
+                    .and_then(|v| v.as_str())
+                    .map(normalize_http_version);
+
+                ResponseData {
+                    status_code,
+                    status_message,
+                    headers: resp_headers,
+                    body: resp_body,
+                    content_type: resp_content_type,
+                    duration_ms,
+                    http_version: resp_http_version,
+                }
+            });
+
+        let timestamp = entry
+            .get("startedDateTime")
+            .and_then(|t| t.as_str())
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+
+        let request_size = request_data.size();
+        let response_size = response.as_ref().map(|r| r.size());
+
+        Ok(TrafficEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            session_id: session_id.to_string(),
+            request: request_data,
+            response,
+            timestamp,
+            modified: false,
+            notes: None,
+            request_size,
+            response_size,
+            is_passthrough: false,
+        })
+    }
+
     /// List all sessions
     pub fn list_sessions(&self) -> crate::Result<Vec<Session>> {
         let conn = self.conn.lock();
@@ -965,5 +1147,368 @@ impl TrafficStore {
             .map_err(Error::Database)?;
 
         Ok(entries)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HAR import helper functions
+// ---------------------------------------------------------------------------
+
+/// Parse a full URL string into `(host, path)` components.
+///
+/// Uses the `url` crate when the string is a valid absolute URL; otherwise
+/// falls back to a simple manual split on the first `/` after the host.
+fn parse_url(url: &str) -> (String, String) {
+    if let Ok(parsed) = url::Url::parse(url) {
+        let host = parsed.host_str().unwrap_or("").to_string();
+        let path = if let Some(query) = parsed.query() {
+            format!("{}?{}", parsed.path(), query)
+        } else {
+            parsed.path().to_string()
+        };
+        (host, path)
+    } else {
+        // Fallback: try to split manually for relative or unusual URLs.
+        if let Some(rest) = url
+            .strip_prefix("http://")
+            .or_else(|| url.strip_prefix("https://"))
+        {
+            if let Some((h, p)) = rest.split_once('/') {
+                (h.to_string(), format!("/{}", p))
+            } else {
+                (rest.to_string(), String::from("/"))
+            }
+        } else if let Some((h, p)) = url.split_once('/') {
+            (h.to_string(), format!("/{}", p))
+        } else {
+            (url.to_string(), String::from("/"))
+        }
+    }
+}
+
+/// Convert a HAR `httpVersion` string (e.g. `"HTTP/1.1"`, `"http/2.0"`) into
+/// the canonical form used by Madhyamas (`"HTTP/1.1"`, `"HTTP/2"`).
+fn normalize_http_version(version: &str) -> String {
+    let upper = version.to_uppercase();
+    match upper.as_str() {
+        "HTTP/1.0" | "HTTP/1" => "HTTP/1.0".to_string(),
+        "HTTP/1.1" => "HTTP/1.1".to_string(),
+        "HTTP/2" | "HTTP/2.0" | "H2" => "HTTP/2".to_string(),
+        "HTTP/3" | "HTTP/3.0" | "H3" => "HTTP/3".to_string(),
+        _ => version.to_string(),
+    }
+}
+
+/// Parse a HAR `headers` array (`[{"name":..,"value":..}, ...]`) into a
+/// `HashMap<String, String>`. Malformed entries are silently skipped.
+fn parse_har_headers(headers: Option<&serde_json::Value>) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    if let Some(arr) = headers.and_then(|h| h.as_array()) {
+        for h in arr {
+            if let (Some(name), Some(value)) = (
+                h.get("name").and_then(|n| n.as_str()),
+                h.get("value").and_then(|v| v.as_str()),
+            ) {
+                if !name.is_empty() {
+                    map.insert(name.to_string(), value.to_string());
+                }
+            }
+        }
+    }
+    map
+}
+
+/// Look up a header value case-insensitively.
+fn header_value(headers: &HashMap<String, String>, name: &str) -> Option<String> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.clone())
+}
+
+/// Parse a HAR request `postData` object into an optional byte body.
+/// Handles `encoding: "base64"` for binary payloads.
+fn parse_har_post_data(post_data: Option<&serde_json::Value>) -> Option<Vec<u8>> {
+    let pd = post_data?;
+    let text = pd.get("text").and_then(|t| t.as_str())?;
+    let encoding = pd.get("encoding").and_then(|e| e.as_str()).unwrap_or("");
+    if encoding.eq_ignore_ascii_case("base64") {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(text)
+            .ok()
+            .or_else(|| Some(text.as_bytes().to_vec()))
+    } else {
+        Some(text.as_bytes().to_vec())
+    }
+}
+
+/// Parse a HAR response `content` object into an optional byte body.
+/// Handles `encoding: "base64"` for binary payloads.
+fn parse_har_content(content: Option<&serde_json::Value>) -> Option<Vec<u8>> {
+    let content = content?;
+    let text = content.get("text").and_then(|t| t.as_str())?;
+    let encoding = content
+        .get("encoding")
+        .and_then(|e| e.as_str())
+        .unwrap_or("");
+    if encoding.eq_ignore_ascii_case("base64") {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(text)
+            .ok()
+            .or_else(|| Some(text.as_bytes().to_vec()))
+    } else {
+        Some(text.as_bytes().to_vec())
+    }
+}
+
+#[cfg(test)]
+mod har_import_tests {
+    use super::*;
+    use base64::Engine;
+    use serde_json::json;
+
+    fn make_store() -> Arc<TrafficStore> {
+        TrafficStore::in_memory().expect("failed to create in-memory store")
+    }
+
+    #[test]
+    fn test_import_har_two_entries() {
+        let store = make_store();
+        let har = json!({
+            "log": {
+                "version": "1.2",
+                "creator": { "name": "test", "version": "1.0" },
+                "entries": [
+                    {
+                        "startedDateTime": "2024-01-01T00:00:00Z",
+                        "time": 42.0,
+                        "request": {
+                            "method": "GET",
+                            "url": "https://example.com/api/users",
+                            "httpVersion": "HTTP/1.1",
+                            "headers": [{"name": "Accept", "value": "application/json"}]
+                        },
+                        "response": {
+                            "status": 200,
+                            "statusText": "OK",
+                            "httpVersion": "HTTP/1.1",
+                            "headers": [{"name": "Content-Type", "value": "application/json"}],
+                            "content": { "size": 17, "mimeType": "application/json", "text": "{\"users\":[]}" }
+                        }
+                    },
+                    {
+                        "startedDateTime": "2024-01-01T00:00:01Z",
+                        "time": 10.0,
+                        "request": {
+                            "method": "POST",
+                            "url": "https://example.com/api/login",
+                            "headers": [{"name": "Content-Type", "value": "application/json"}],
+                            "postData": { "mimeType": "application/json", "text": "{\"user\":\"a\"}" }
+                        },
+                        "response": {
+                            "status": 204,
+                            "statusText": "No Content",
+                            "headers": [],
+                            "content": { "size": 0, "mimeType": "" }
+                        }
+                    }
+                ]
+            }
+        });
+
+        let result = store.import_har(&har, None).expect("import should succeed");
+        assert_eq!(result.imported_count, 2);
+        assert_eq!(result.skipped_count, 0);
+        assert!(result.errors.is_empty());
+
+        let entries = store
+            .get_traffic_by_session(&result.session_id)
+            .expect("fetch entries");
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn test_import_har_missing_response() {
+        let store = make_store();
+        let har = json!({
+            "log": {
+                "version": "1.2",
+                "entries": [
+                    {
+                        "startedDateTime": "2024-01-01T00:00:00Z",
+                        "time": 0,
+                        "request": {
+                            "method": "GET",
+                            "url": "https://example.com/pending"
+                        }
+                    }
+                ]
+            }
+        });
+
+        let result = store.import_har(&har, None).expect("import should succeed");
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(result.skipped_count, 0);
+
+        let entries = store
+            .get_traffic_by_session(&result.session_id)
+            .expect("fetch entries");
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].response.is_none());
+    }
+
+    #[test]
+    fn test_import_har_base64_body() {
+        let store = make_store();
+        // "Hello" base64-encoded
+        let encoded = base64::engine::general_purpose::STANDARD.encode(b"Hello");
+        let har = json!({
+            "log": {
+                "version": "1.2",
+                "entries": [
+                    {
+                        "startedDateTime": "2024-01-01T00:00:00Z",
+                        "time": 0,
+                        "request": {
+                            "method": "POST",
+                            "url": "https://example.com/upload",
+                            "postData": { "text": encoded, "encoding": "base64" }
+                        },
+                        "response": {
+                            "status": 200,
+                            "headers": [],
+                            "content": { "text": encoded, "encoding": "base64" }
+                        }
+                    }
+                ]
+            }
+        });
+
+        let result = store.import_har(&har, None).expect("import should succeed");
+        assert_eq!(result.imported_count, 1);
+
+        let entries = store
+            .get_traffic_by_session(&result.session_id)
+            .expect("fetch entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].request.body.as_deref(), Some(b"Hello" as &[u8]));
+        assert_eq!(
+            entries[0].response.as_ref().unwrap().body.as_deref(),
+            Some(b"Hello" as &[u8])
+        );
+    }
+
+    #[test]
+    fn test_import_har_invalid_missing_log() {
+        let store = make_store();
+        let har = json!({ "foo": "bar" });
+
+        let result = store.import_har(&har, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_import_har_entry_missing_request_skipped() {
+        let store = make_store();
+        let har = json!({
+            "log": {
+                "version": "1.2",
+                "entries": [
+                    { "startedDateTime": "2024-01-01T00:00:00Z", "time": 0 },
+                    {
+                        "startedDateTime": "2024-01-01T00:00:01Z",
+                        "time": 0,
+                        "request": { "method": "GET", "url": "https://example.com/ok" }
+                    }
+                ]
+            }
+        });
+
+        let result = store.import_har(&har, None).expect("import should succeed");
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(result.skipped_count, 1);
+        assert_eq!(result.errors.len(), 1);
+    }
+
+    #[test]
+    fn test_import_har_round_trip() {
+        let store = make_store();
+
+        // Create a session with a couple of entries via the store.
+        let session = store
+            .create_session(Some("Round Trip"))
+            .expect("create session");
+        store.switch_session(&session.id).expect("switch session");
+
+        let req1 = RequestData {
+            method: crate::traffic::HttpMethod::Get,
+            url: "https://example.com/api/1".to_string(),
+            host: "example.com".to_string(),
+            path: "/api/1".to_string(),
+            headers: {
+                let mut m = HashMap::new();
+                m.insert("Accept".to_string(), "text/html".to_string());
+                m
+            },
+            body: None,
+            content_type: None,
+            http_version: Some("HTTP/1.1".to_string()),
+        };
+        let mut entry1 = TrafficEntry::new(&session.id, req1);
+        entry1.response = Some(ResponseData {
+            status_code: 200,
+            status_message: Some("OK".to_string()),
+            headers: HashMap::new(),
+            body: Some(b"hello".to_vec()),
+            content_type: Some("text/html".to_string()),
+            duration_ms: 5,
+            http_version: Some("HTTP/1.1".to_string()),
+        });
+        entry1.response_size = Some(entry1.response.as_ref().unwrap().size());
+        store.store_request(&entry1).expect("store req1");
+        store
+            .store_response(&entry1.id, entry1.response.as_ref().unwrap())
+            .expect("store resp1");
+
+        // Export to HAR, then import it back.
+        let har = store.export_har(&session.id).expect("export har");
+        let result = store
+            .import_har(&har, Some("Imported Round Trip"))
+            .expect("import har");
+
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(result.skipped_count, 0);
+
+        let imported = store
+            .get_traffic_by_session(&result.session_id)
+            .expect("fetch imported");
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].request.method, crate::traffic::HttpMethod::Get);
+        assert_eq!(imported[0].request.url, "https://example.com/api/1");
+        assert_eq!(imported[0].response.as_ref().unwrap().status_code, 200);
+    }
+
+    #[test]
+    fn test_parse_url_absolute() {
+        let (host, path) = parse_url("https://api.example.com/v1/users?page=1");
+        assert_eq!(host, "api.example.com");
+        assert_eq!(path, "/v1/users?page=1");
+    }
+
+    #[test]
+    fn test_parse_url_no_scheme() {
+        let (host, path) = parse_url("example.com/path");
+        assert_eq!(host, "example.com");
+        assert_eq!(path, "/path");
+    }
+
+    #[test]
+    fn test_normalize_http_version() {
+        assert_eq!(normalize_http_version("HTTP/1.1"), "HTTP/1.1");
+        assert_eq!(normalize_http_version("http/2.0"), "HTTP/2");
+        assert_eq!(normalize_http_version("h2"), "HTTP/2");
+        assert_eq!(normalize_http_version("HTTP/3"), "HTTP/3");
     }
 }

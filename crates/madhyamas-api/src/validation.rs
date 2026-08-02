@@ -19,6 +19,34 @@ use madhyamas_core::{
 };
 use validator::{Validate, ValidationError};
 
+/// Validate the structure of a HAR JSON document before importing it.
+///
+/// Checks that the document is an object containing a `log` object with an
+/// `entries` array. Returns a [`ValidationError`] describing the first
+/// structural problem found, or `Ok(())` when the document is well-formed
+/// enough to attempt import.
+pub fn validate_har_import(har: &serde_json::Value) -> Result<(), ValidationError> {
+    let log = har
+        .get("log")
+        .ok_or_else(|| ValidationError::new("HAR document is missing the 'log' field"))?;
+
+    let log_obj = log
+        .as_object()
+        .ok_or_else(|| ValidationError::new("HAR 'log' field must be an object"))?;
+
+    if !log_obj.contains_key("entries") {
+        return Err(ValidationError::new(
+            "HAR 'log' is missing the 'entries' field",
+        ));
+    }
+
+    if !log_obj["entries"].is_array() {
+        return Err(ValidationError::new("HAR 'log.entries' must be an array"));
+    }
+
+    Ok(())
+}
+
 /// Validate a request body and convert any validation errors into an
 /// [`ApiError::bad_request`].
 ///

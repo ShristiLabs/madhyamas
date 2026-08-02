@@ -49,6 +49,24 @@ pub struct TrafficSearchArgs {
     pub json: bool,
 }
 
+#[derive(Debug, Args)]
+pub struct TrafficImportHarArgs {
+    /// Path to the HAR file to import
+    pub file: String,
+
+    /// Optional name for the newly created session
+    #[arg(short, long)]
+    pub name: Option<String>,
+
+    /// Switch to the newly created session after import
+    #[arg(long)]
+    pub switch: bool,
+
+    /// Output as JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum TrafficCommands {
     /// List captured traffic
@@ -61,6 +79,8 @@ pub enum TrafficCommands {
     Count,
     /// Clear all traffic
     Clear,
+    /// Import traffic from a HAR file into a new session
+    ImportHar(TrafficImportHarArgs),
 }
 
 impl TrafficCommands {
@@ -123,6 +143,49 @@ impl TrafficCommands {
                 let client = ApiClient::new(api_url);
                 let result = client.delete("traffic").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            TrafficCommands::ImportHar(args) => {
+                let file_content = std::fs::read_to_string(&args.file).map_err(|e| {
+                    anyhow::anyhow!("Failed to read HAR file '{}': {}", args.file, e)
+                })?;
+                let har: serde_json::Value = serde_json::from_str(&file_content)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse HAR JSON: {}", e))?;
+
+                let body = serde_json::json!({
+                    "har": har,
+                    "session_name": args.name,
+                    "switch_session": args.switch,
+                });
+
+                let client = ApiClient::new(api_url);
+                let result = client.post("traffic/import/har", body).await?;
+                if args.json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    let imported = result
+                        .get("imported_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let skipped = result
+                        .get("skipped_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let session_id = result
+                        .get("session_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("-");
+                    println!(
+                        "Imported {} entries ({} skipped) into session {}",
+                        imported, skipped, session_id
+                    );
+                    if let Some(errors) = result.get("errors").and_then(|v| v.as_array()) {
+                        for err in errors {
+                            if let Some(msg) = err.as_str() {
+                                eprintln!("  - {}", msg);
+                            }
+                        }
+                    }
+                }
             }
         }
         Ok(())

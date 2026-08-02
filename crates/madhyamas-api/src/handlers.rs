@@ -276,6 +276,56 @@ pub async fn export_har(State(state): State<Arc<AppState>>) -> impl IntoResponse
     }
 }
 
+/// Request body for importing traffic from a HAR file.
+#[derive(Debug, Deserialize)]
+pub struct HarImportRequest {
+    /// HAR JSON document (the full `{ "log": { ... } }` object).
+    pub har: serde_json::Value,
+    /// Optional name for the newly created session. Defaults to
+    /// `"Imported HAR"` when omitted.
+    #[serde(default)]
+    pub session_name: Option<String>,
+    /// When true, switch the active session to the newly created one after
+    /// a successful import. Defaults to false.
+    #[serde(default)]
+    pub switch_session: bool,
+}
+
+/// Import traffic from a HAR file into a new session.
+pub async fn import_traffic_har(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<HarImportRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = super::validation::validate_har_import(&req.har) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response();
+    }
+
+    match state
+        .traffic_store
+        .import_har(&req.har, req.session_name.as_deref())
+    {
+        Ok(result) => {
+            if req.switch_session {
+                let _ = state.traffic_store.switch_session(&result.session_id);
+            }
+            Json(result).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
 /// Export request as cURL
 pub async fn export_curl(
     State(state): State<Arc<AppState>>,

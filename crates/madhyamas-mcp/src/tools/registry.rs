@@ -125,6 +125,28 @@ impl ToolRegistry {
                     "properties": {}
                 }),
             },
+            Tool {
+                name: "madhyamas_import_har".to_string(),
+                description: "Import traffic from a HAR (HTTP Archive) JSON document into a new session. Each log.entries[] entry is converted into a traffic entry. Invalid entries are skipped. Useful for loading traffic captured by other tools (Chrome DevTools, Charles, Fiddler).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "har": {
+                            "type": "object",
+                            "description": "The full HAR JSON document (must contain a 'log' object with an 'entries' array)"
+                        },
+                        "session_name": {
+                            "type": "string",
+                            "description": "Optional name for the newly created session (default: 'Imported HAR')"
+                        },
+                        "switch_session": {
+                            "type": "boolean",
+                            "description": "Switch the active session to the newly created one after import (default: false)"
+                        }
+                    },
+                    "required": ["har"]
+                }),
+            },
 
             // Mock tools
             Tool {

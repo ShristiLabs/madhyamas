@@ -300,6 +300,24 @@ impl Session {
     }
 }
 
+/// Result of importing traffic from a HAR file.
+///
+/// Returned by [`TrafficStore::import_har`](super::TrafficStore::import_har).
+/// Because HAR import is best-effort (invalid entries are skipped rather than
+/// aborting the whole import), this reports both the successfully imported
+/// count and the skipped count, along with per-entry error messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    /// ID of the newly created session that holds the imported entries.
+    pub session_id: String,
+    /// Number of HAR entries successfully imported.
+    pub imported_count: usize,
+    /// Number of HAR entries that were skipped due to errors.
+    pub skipped_count: usize,
+    /// Human-readable error messages for each skipped entry.
+    pub errors: Vec<String>,
+}
+
 /// Filter for traffic queries
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TrafficFilter {

@@ -106,6 +106,21 @@ impl ToolExecutor {
                 }])
             }
 
+            "madhyamas_import_har" => {
+                let args: ImportHarArgs = self.parse_args(&arguments)?;
+                let result = traffic::import_har(
+                    &self.client,
+                    &self.api_url,
+                    args.har,
+                    args.session_name.as_deref(),
+                    args.switch_session.unwrap_or(false),
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+
             // Mock tools
             "madhyamas_create_mock" => {
                 let args: MockCreateArgs = self.parse_args(&arguments)?;
@@ -978,6 +993,15 @@ struct EntryArgs {
 #[derive(Debug, Clone, Deserialize)]
 struct SearchArgs {
     query: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ImportHarArgs {
+    har: Value,
+    #[serde(default)]
+    session_name: Option<String>,
+    #[serde(default)]
+    switch_session: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
