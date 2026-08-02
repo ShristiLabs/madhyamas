@@ -276,6 +276,10 @@ fn create_routes_inner(
             post(intercept_handlers::replay_request),
         )
         .route(
+            "/replay/execute/{id}/batch",
+            post(intercept_handlers::replay_request_batch),
+        )
+        .route(
             "/replay/history",
             get(intercept_handlers::get_replay_history),
         )

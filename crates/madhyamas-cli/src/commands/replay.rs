@@ -82,10 +82,58 @@ pub struct ReplayExportArgs {
     pub format: String,
 }
 
+#[derive(Debug, Args)]
+pub struct ReplayAdvancedArgs {
+    /// Saved request ID to replay
+    pub id: String,
+
+    /// Total number of requests to send (max 10,000)
+    #[arg(long, default_value_t = 1)]
+    pub iterations: usize,
+
+    /// Number of simultaneous in-flight requests (max 100)
+    #[arg(long, default_value_t = 1)]
+    pub concurrency: usize,
+
+    /// Delay between requests in milliseconds
+    #[arg(long)]
+    pub delay_ms: Option<u64>,
+
+    /// Override the URL
+    #[arg(long)]
+    pub url: Option<String>,
+
+    /// Override the HTTP method
+    #[arg(long)]
+    pub method: Option<String>,
+
+    /// Header to add/replace (repeatable). Format: "Key: Value"
+    #[arg(long = "header", value_name = "KEY: VALUE")]
+    pub headers: Vec<String>,
+
+    /// New request body (raw text)
+    #[arg(long)]
+    pub body: Option<String>,
+
+    /// Read request body from a file
+    #[arg(long, value_name = "PATH")]
+    pub body_file: Option<String>,
+
+    /// Follow redirect responses (3xx)
+    #[arg(long)]
+    pub follow_redirects: bool,
+
+    /// Output as JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum ReplayCommands {
     /// Replay a captured request
     Run(ReplayRequestArgs),
+    /// Replay a captured request multiple times with concurrency and delay
+    RunAdvanced(ReplayAdvancedArgs),
     /// Save a request for later replay
     Save(ReplaySaveArgs),
     /// List saved requests
@@ -172,6 +220,72 @@ impl ReplayCommands {
                     } else {
                         println!("Replay completed successfully");
                     }
+                }
+            }
+            ReplayCommands::RunAdvanced(args) => {
+                let client = ApiClient::new(api_url);
+
+                let mut modifications = json!({});
+                let mut has_modifications = false;
+
+                if let Some(ref url) = args.url {
+                    modifications["url"] = Value::String(url.clone());
+                    has_modifications = true;
+                }
+
+                if let Some(ref method) = args.method {
+                    modifications["method"] = Value::String(method.to_uppercase());
+                    has_modifications = true;
+                }
+
+                if !args.headers.is_empty() {
+                    let mut headers = HashMap::new();
+                    for header in &args.headers {
+                        if let Some((name, value)) = header.split_once(':') {
+                            headers.insert(name.trim().to_string(), value.trim().to_string());
+                        }
+                    }
+                    modifications["headers"] = serde_json::to_value(&headers)?;
+                    has_modifications = true;
+                }
+
+                if let Some(ref body) = args.body {
+                    modifications["body"] = Value::String(body.clone());
+                    has_modifications = true;
+                }
+
+                if let Some(ref path) = args.body_file {
+                    let content = std::fs::read_to_string(path)
+                        .map_err(|e| anyhow::anyhow!("Failed to read body file: {}", e))?;
+                    modifications["body"] = Value::String(content);
+                    has_modifications = true;
+                }
+
+                if args.follow_redirects {
+                    modifications["follow_redirects"] = Value::Bool(true);
+                    has_modifications = true;
+                }
+
+                let mut request_body = json!({
+                    "config": {
+                        "iterations": args.iterations,
+                        "concurrency": args.concurrency,
+                    }
+                });
+                if let Some(delay) = args.delay_ms {
+                    request_body["config"]["delay_ms"] = Value::Number(delay.into());
+                }
+                if has_modifications {
+                    request_body["modifications"] = modifications;
+                }
+
+                let result = client
+                    .post(&format!("replay/execute/{}/batch", args.id), request_body)
+                    .await?;
+                if args.json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    print_batch_result(&result);
                 }
             }
             ReplayCommands::Save(args) => {
@@ -289,4 +403,28 @@ fn print_replay_history(result: &Value) {
             serde_json::to_string_pretty(result).unwrap_or_default()
         );
     }
+}
+
+fn print_batch_result(result: &Value) {
+    let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+    let succeeded = result
+        .get("succeeded")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let failed = result.get("failed").and_then(|v| v.as_u64()).unwrap_or(0);
+    let min_ms = result.get("min_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+    let max_ms = result.get("max_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+    let avg_ms = result.get("avg_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+    let p95_ms = result.get("p95_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    println!("Batch replay completed");
+    println!("{}", "-".repeat(40));
+    println!("Total:     {}", total);
+    println!("Succeeded: {}", succeeded);
+    println!("Failed:    {}", failed);
+    println!("Latency (ms):");
+    println!("  min: {}", min_ms);
+    println!("  avg: {}", avg_ms);
+    println!("  max: {}", max_ms);
+    println!("  p95: {}", p95_ms);
 }

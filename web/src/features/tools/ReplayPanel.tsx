@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Dialog,
@@ -15,9 +18,12 @@ import {
   useSaveRequest,
   useDeleteSavedRequest,
   useReplayRequest,
+  useReplayRequestBatch,
   useReplayHistory,
   type SavedRequest,
   type ReplayResult,
+  type ReplayBatchConfig,
+  type ReplayBatchResult,
   type RequestModifications,
 } from '@/lib/api/intercept';
 import { useToast } from '@/components/ui/use-toast';
@@ -35,6 +41,7 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
   const saveRequest = useSaveRequest();
   const deleteSavedRequest = useDeleteSavedRequest();
   const replayRequest = useReplayRequest();
+  const replayRequestBatch = useReplayRequestBatch();
   const { toast } = useToast();
 
   const [showSaveDialog, setShowSaveDialog] = useState(false);
@@ -44,6 +51,15 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
   const [editingSaved, setEditingSaved] = useState<SavedRequest | null>(null);
   const [saveName, setSaveName] = useState('');
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
+
+  // Advanced (batch) replay state
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [advancedSaved, setAdvancedSaved] = useState<SavedRequest | null>(null);
+  const [iterations, setIterations] = useState(3);
+  const [concurrency, setConcurrency] = useState(1);
+  const [delayMs, setDelayMs] = useState('');
+  const [useDelay, setUseDelay] = useState(false);
+  const [batchResult, setBatchResult] = useState<ReplayBatchResult | null>(null);
 
   const handleSave = async () => {
     if (!selectedEntry || !saveName) return;
@@ -95,6 +111,38 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
       title: 'Request Deleted',
       description: `"${name}" has been removed`,
     });
+  };
+
+  const handleAdvancedReplay = async (saved: SavedRequest) => {
+    setAdvancedSaved(saved);
+    setShowAdvanced(true);
+    setBatchResult(null);
+  };
+
+  const handleRunBatch = async () => {
+    if (!advancedSaved) return;
+    const config: ReplayBatchConfig = {
+      iterations,
+      concurrency,
+      delay_ms: useDelay && delayMs ? Number(delayMs) : undefined,
+    };
+    try {
+      const result = await replayRequestBatch.mutateAsync({
+        id: advancedSaved.id,
+        config,
+      });
+      setBatchResult(result);
+      toast({
+        title: 'Batch Replay Complete',
+        description: `${result.succeeded}/${result.total} succeeded`,
+      });
+    } catch (e) {
+      toast({
+        title: 'Batch Replay Failed',
+        description: String(e),
+        variant: 'destructive',
+      });
+    }
   };
 
   if (isLoading) {
@@ -161,6 +209,14 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
                     >
                       <Pencil className="h-3.5 w-3.5" />
                       Edit & Replay
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleAdvancedReplay(saved)}
+                      disabled={replayRequestBatch.isPending}
+                    >
+                      Advanced
                     </Button>
                     <Button
                       variant="ghost"
@@ -335,6 +391,151 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
           onSubmit={handleEditorSubmit}
         />
       )}
+
+      {/* Advanced (Batch) Replay Dialog */}
+      <Dialog open={showAdvanced} onOpenChange={setShowAdvanced}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Advanced Replay (Repeat)</DialogTitle>
+            <DialogDescription>
+              {advancedSaved?.name || 'Unnamed request'} &mdash; batch replay
+              with concurrency, iterations, and delay.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-5">
+            {/* Iterations */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="iterations">Iterations</Label>
+                <span className="text-sm font-mono text-muted-foreground">
+                  {iterations}
+                </span>
+              </div>
+              <Slider
+                id="iterations"
+                min={1}
+                max={1000}
+                step={1}
+                value={[iterations]}
+                onValueChange={(v) => setIterations(v[0])}
+              />
+              <p className="text-xs text-muted-foreground">
+                Total number of requests to send (max 10,000).
+              </p>
+            </div>
+
+            {/* Concurrency */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="concurrency">Concurrency</Label>
+                <span className="text-sm font-mono text-muted-foreground">
+                  {concurrency}
+                </span>
+              </div>
+              <Slider
+                id="concurrency"
+                min={1}
+                max={100}
+                step={1}
+                value={[concurrency]}
+                onValueChange={(v) => setConcurrency(v[0])}
+              />
+              <p className="text-xs text-muted-foreground">
+                Number of simultaneous in-flight requests (max 100).
+              </p>
+            </div>
+
+            {/* Delay */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={useDelay}
+                  onCheckedChange={setUseDelay}
+                />
+                <Label>Delay between requests</Label>
+              </div>
+              {useDelay && (
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    placeholder="Delay (ms)"
+                    value={delayMs}
+                    onChange={(e) => setDelayMs(e.target.value)}
+                    className="w-40"
+                  />
+                  <span className="text-sm text-muted-foreground">ms</span>
+                </div>
+              )}
+            </div>
+
+            {/* Results summary */}
+            {replayRequestBatch.isPending ? (
+              <div className="text-center py-6">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+                <p className="mt-2 text-muted-foreground">
+                  Running batch replay...
+                </p>
+              </div>
+            ) : batchResult ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 border rounded-lg text-center">
+                    <div className="text-2xl font-bold">{batchResult.total}</div>
+                    <div className="text-xs text-muted-foreground">Total</div>
+                  </div>
+                  <div className="p-3 border rounded-lg text-center">
+                    <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                      {batchResult.succeeded}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Succeeded</div>
+                  </div>
+                  <div className="p-3 border rounded-lg text-center">
+                    <div className="text-2xl font-bold text-red-600 dark:text-red-400">
+                      {batchResult.failed}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Failed</div>
+                  </div>
+                </div>
+                <div className="border rounded-lg">
+                  <div className="px-3 py-2 border-b text-sm font-medium">
+                    Latency Statistics (ms)
+                  </div>
+                  <div className="grid grid-cols-4 divide-x">
+                    <div className="p-3 text-center">
+                      <div className="text-lg font-mono">{batchResult.min_ms}</div>
+                      <div className="text-xs text-muted-foreground">min</div>
+                    </div>
+                    <div className="p-3 text-center">
+                      <div className="text-lg font-mono">{batchResult.avg_ms}</div>
+                      <div className="text-xs text-muted-foreground">avg</div>
+                    </div>
+                    <div className="p-3 text-center">
+                      <div className="text-lg font-mono">{batchResult.max_ms}</div>
+                      <div className="text-xs text-muted-foreground">max</div>
+                    </div>
+                    <div className="p-3 text-center">
+                      <div className="text-lg font-mono">{batchResult.p95_ms}</div>
+                      <div className="text-xs text-muted-foreground">p95</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAdvanced(false)}>
+              Close
+            </Button>
+            <Button
+              onClick={handleRunBatch}
+              disabled={replayRequestBatch.isPending || iterations < 1}
+            >
+              Run Batch
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

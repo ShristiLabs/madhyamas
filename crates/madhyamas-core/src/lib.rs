@@ -83,7 +83,10 @@ pub use scripting::{Script, ScriptConfig, ScriptRuntime, ScriptTemplates};
 pub use session::{SessionExport, SessionManager, SessionMetadata, SessionPreset, SessionSummary};
 
 // Re-exports from replay
-pub use replay::{ReplayManager, ReplayResult, RequestModifications, SavedRequest};
+pub use replay::{
+    ReplayBatchConfig, ReplayBatchResult, ReplayManager, ReplayResult, RequestModifications,
+    SavedRequest,
+};
 
 // Re-exports from plugin
 #[cfg(feature = "plugins")]

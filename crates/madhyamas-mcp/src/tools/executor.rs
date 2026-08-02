@@ -448,6 +448,23 @@ impl ToolExecutor {
                 }])
             }
 
+            "madhyamas_replay_advanced" => {
+                let args: ReplayAdvancedArgs = self.parse_args(&arguments)?;
+                let result = replay::replay_request_advanced(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.modifications,
+                    args.iterations,
+                    args.concurrency,
+                    args.delay_ms,
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: replay::format_batch_replay_result(&result),
+                }])
+            }
+
             "madhyamas_save_request" => {
                 let args: SaveRequestArgs = self.parse_args(&arguments)?;
                 let result = replay::save_request(
@@ -1050,6 +1067,17 @@ struct BreakpointCreateArgs {
 #[derive(Debug, Clone, Deserialize)]
 struct ReplayArgs {
     id: String,
+    #[serde(default)]
+    modifications: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReplayAdvancedArgs {
+    id: String,
+    iterations: usize,
+    concurrency: usize,
+    #[serde(default)]
+    delay_ms: Option<u64>,
     #[serde(default)]
     modifications: Option<Value>,
 }

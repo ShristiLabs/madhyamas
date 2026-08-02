@@ -7,8 +7,8 @@ use axum::{
 };
 use madhyamas_core::{
     BlockListEntry, BreakpointDecision, BreakpointRule, InterceptDirection, MatchCondition,
-    MockCollection, MockResponse, MockRule, RequestData, RequestModifications, ResponseConfig,
-    RewriteAction, RewriteDirection, RewriteRule, SavedRequest, ThrottleProfile,
+    MockCollection, MockResponse, MockRule, ReplayBatchConfig, RequestData, RequestModifications,
+    ResponseConfig, RewriteAction, RewriteDirection, RewriteRule, SavedRequest, ThrottleProfile,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -1150,6 +1150,26 @@ pub async fn replay_request(
     Json(req): Json<ReplayRequest>,
 ) -> impl IntoResponse {
     let result = state.replay_manager.replay(&id, req.modifications).await;
+    Json(result)
+}
+
+/// Replay a saved request multiple times with concurrency and delay (batch
+/// replay / "Repeat Advanced").
+#[derive(Debug, Deserialize)]
+pub struct ReplayBatchRequest {
+    pub modifications: Option<RequestModifications>,
+    pub config: ReplayBatchConfig,
+}
+
+pub async fn replay_request_batch(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<ReplayBatchRequest>,
+) -> impl IntoResponse {
+    let result = state
+        .replay_manager
+        .replay_batch(&id, req.modifications, req.config)
+        .await;
     Json(result)
 }
 

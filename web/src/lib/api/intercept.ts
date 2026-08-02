@@ -229,6 +229,26 @@ export interface ReplayResult {
   };
 }
 
+export interface ReplayBatchConfig {
+  iterations: number;
+  concurrency: number;
+  delay_ms?: number;
+}
+
+export interface ReplayBatchResult {
+  saved_request_id: string;
+  results: ReplayResult[];
+  total: number;
+  succeeded: number;
+  failed: number;
+  min_ms: number;
+  max_ms: number;
+  avg_ms: number;
+  p95_ms: number;
+  started_at: string;
+  finished_at: string;
+}
+
 // ==================== Breakpoints API ====================
 
 export function useBreakpoints() {
@@ -766,6 +786,26 @@ export function useReplayRequest() {
   return useMutation({
     mutationFn: async ({ id, modifications }: { id: string; modifications?: RequestModifications }): Promise<ReplayResult> => {
       return apiPost<ReplayResult>(`/replay/execute/${id}`, { modifications });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['replay-history'] });
+    },
+  });
+}
+
+export function useReplayRequestBatch() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      modifications,
+      config,
+    }: {
+      id: string;
+      modifications?: RequestModifications;
+      config: ReplayBatchConfig;
+    }): Promise<ReplayBatchResult> => {
+      return apiPost<ReplayBatchResult>(`/replay/execute/${id}/batch`, { modifications, config });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['replay-history'] });

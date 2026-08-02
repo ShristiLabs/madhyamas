@@ -166,7 +166,7 @@ It was produced by:
 | 66 | Auto Save (periodic session save) | ✅ | ❌ | Not implemented |
 | 67 | Client Process tracking | ✅ | ❌ | Not implemented |
 | 68 | Repeat (replay single request) | ✅ | ✅ | `replay.rs::ReplayManager` |
-| 69 | Repeat Advanced (concurrency) | ✅ | ❌ | No concurrency/iterations control |
+| 69 | Repeat Advanced (concurrency) | ✅ | ✅ | `replay.rs::ReplayManager::replay_batch` |
 | 70 | Edit (edit then repeat) | ✅ | ✅ | `RequestEditor` + `RequestModifications` |
 | 71 | Validate (W3C HTML/CSS/Feed) | ✅ | ❌ | Not implemented |
 | 72 | Command-line tools (convert/ssl) | ✅ | ✅ | `madhyamas` CLI with 58 subcommands |
@@ -267,9 +267,11 @@ tool.
 
 **Repeat / Repeat Advanced / Edit** — Charles has three related tools for
 replaying requests with optional concurrency and editing. Madhyamas has
-`ReplayManager` (single replay with modification support) and an
-edit-then-repeat workflow via the `RequestEditor` UI and CLI flags, but no
-concurrency control. See [docs/EDIT_THEN_REPEAT.md](EDIT_THEN_REPEAT.md).
+`ReplayManager` (single replay with modification support), an
+edit-then-repeat workflow via the `RequestEditor` UI and CLI flags, and
+batch/advanced replay with concurrency, iterations, and delay via
+`ReplayManager::replay_batch`. See [docs/EDIT_THEN_REPEAT.md](EDIT_THEN_REPEAT.md)
+and [docs/REPEAT_ADVANCED.md](REPEAT_ADVANCED.md).
 
 **Validate** — Charles sends responses to W3C HTML/CSS/Feed validators.
 Madhyamas has no equivalent.
@@ -324,8 +326,8 @@ by impact and effort:
 
 ### Medium Priority (utility & UX)
 
-8. **Repeat Advanced** — Add concurrency/iterations to replay for basic load
-   testing.
+8. **Repeat Advanced** — Implemented. Batch replay with concurrency,
+   iterations, and delay. See [docs/REPEAT_ADVANCED.md](REPEAT_ADVANCED.md).
 9. **Edit-then-repeat** — Implemented. See [docs/EDIT_THEN_REPEAT.md](EDIT_THEN_REPEAT.md).
 10. **Chart/timeline visualization** — Add a waterfall chart to the web UI.
 11. **Focus feature** — Add a dedicated Focus UI for host filtering.

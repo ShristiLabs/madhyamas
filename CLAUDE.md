@@ -48,6 +48,7 @@ madhyamas scripts list
 madhyamas plugins list
 madhyamas export har --output traffic.har
 madhyamas traffic import-har /path/to/traffic.har --name "Imported" --switch
+madhyamas replay run-advanced <id> --iterations 100 --concurrency 10 --delay-ms 50
 madhyamas --help  # See all commands
 ```
 
@@ -173,6 +174,16 @@ diffs changes against the original and sends only modified fields as
 the MCP `madhyamas_replay_request` tool's `modifications` parameter. See
 [docs/EDIT_THEN_REPEAT.md](docs/EDIT_THEN_REPEAT.md).
 
+**Repeat Advanced (Batch Replay)**: Saved requests can be replayed multiple
+times with configurable concurrency, iterations, and inter-request delay via
+the web UI's "Advanced" button (iterations slider, concurrency slider,
+optional delay), the CLI (`madhyamas replay run-advanced <id> --iterations
+N --concurrency N --delay-ms N`), the API (`POST /replay/execute/{id}/batch`),
+or the MCP `madhyamas_replay_advanced` tool. Returns aggregate statistics
+(success/failure counts, min/avg/max/p95 latency). Safety limits: iterations
+capped at 10,000 and concurrency at 100. See
+[docs/REPEAT_ADVANCED.md](docs/REPEAT_ADVANCED.md).
+
 **Data Directory**: `~/.madhyamas/` (certs, logs, traffic.db)
 
 **API Endpoints** (all under `/api` prefix):
@@ -190,7 +201,7 @@ the MCP `madhyamas_replay_request` tool's `modifications` parameter. See
 | Mocks | `GET/POST /mocks`, `GET/PUT/DELETE /mocks/{id}`, `POST /mocks/{id}/toggle`, collections, recording, import/export |
 | Rewrites | `GET/POST /rewrites`, `GET /rewrites/templates`, `GET/PUT/DELETE /rewrites/{id}`, `POST /rewrites/{id}/toggle`, `POST /rewrites/batch-toggle` |
 | Throttle | `GET/POST /throttle`, `POST /throttle/enabled`, `GET /throttle/presets` |
-| Replay | `GET/POST /replay/saved`, `POST /replay/execute/{id}`, `GET /replay/history` |
+| Replay | `GET/POST /replay/saved`, `POST /replay/execute/{id}`, `POST /replay/execute/{id}/batch`, `GET /replay/history` |
 | Block List | `GET/POST /blocklist`, `GET /blocklist/stats`, `GET/PUT/DELETE /blocklist/{id}`, `POST /blocklist/{id}/toggle` |
 | gRPC | `GET /grpc/connections`, `GET /grpc/streams`, `GET /grpc/frames`, `GET /grpc/stats` |
 | Scripts | `GET/POST /scripts`, `GET/PUT/DELETE /scripts/{id}`, `POST /scripts/{id}/toggle` |

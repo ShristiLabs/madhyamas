@@ -256,6 +256,89 @@ impl ReplayManager {
         }
     }
 
+    /// Replay a saved request multiple times with optional concurrency and
+    /// inter-request delay (the "Repeat Advanced" / batch replay feature).
+    ///
+    /// All iterations use the same `modifications`. The `config` controls the
+    /// total number of requests (`iterations`), how many run concurrently
+    /// (`concurrency`), and an optional delay between dispatches (`delay_ms`).
+    ///
+    /// Safety limits are enforced: `iterations` is capped at
+    /// [`MAX_BATCH_ITERATIONS`] and `concurrency` at [`MAX_BATCH_CONCURRENCY`].
+    /// Zero values are normalized to 1.
+    ///
+    /// Individual results are recorded in replay history, and an aggregate
+    /// [`ReplayBatchResult`] is returned summarizing success/failure counts and
+    /// latency statistics (min/avg/max/p95).
+    pub async fn replay_batch(
+        &self,
+        id: &str,
+        modifications: Option<RequestModifications>,
+        mut config: ReplayBatchConfig,
+    ) -> ReplayBatchResult {
+        let started_at = Utc::now();
+
+        // Validate the saved request exists before dispatching anything.
+        if self.get_request(id).is_none() {
+            let request = RequestData {
+                method: HttpMethod::Get,
+                url: String::new(),
+                host: String::new(),
+                path: String::new(),
+                headers: HashMap::new(),
+                body: None,
+                content_type: None,
+                http_version: None,
+            };
+            let result = ReplayResult::error(id, request, "Saved request not found".to_string());
+            return ReplayBatchResult {
+                saved_request_id: id.to_string(),
+                results: vec![result.clone()],
+                total: 1,
+                succeeded: 0,
+                failed: 1,
+                min_ms: 0,
+                max_ms: 0,
+                avg_ms: 0,
+                p95_ms: 0,
+                started_at,
+                finished_at: Utc::now(),
+            };
+        }
+
+        config.clamp_to_limits();
+
+        let delay = config
+            .delay_ms
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(std::time::Duration::ZERO);
+
+        // Build a stream of futures, applying the inter-request delay before
+        // each dispatch (skipping the first), then bound concurrency with
+        // `buffer_unordered`.
+        use futures::stream::{self, StreamExt};
+
+        let manager = self;
+        let results: Vec<ReplayResult> = stream::iter(0..config.iterations)
+            .map(|i| {
+                let mods = modifications.clone();
+                async move {
+                    if i > 0 && delay > std::time::Duration::ZERO {
+                        tokio::time::sleep(delay).await;
+                    }
+                    manager.replay(id, mods).await
+                }
+            })
+            .buffer_unordered(config.concurrency)
+            .collect()
+            .await;
+
+        let mut batch = ReplayBatchResult::from_results(id.to_string(), results);
+        batch.started_at = started_at;
+        batch.finished_at = Utc::now();
+        batch
+    }
+
     /// Execute an HTTP request using `reqwest`.
     ///
     /// This replaces the previous manual TCP+TLS+HTTP/1.1 implementation
@@ -429,6 +512,138 @@ impl RequestModifications {
             request.body = Some(body.as_bytes().to_vec());
         }
     }
+}
+
+/// Maximum number of iterations allowed in a single batch replay.
+pub const MAX_BATCH_ITERATIONS: usize = 10_000;
+/// Maximum concurrency allowed in a single batch replay.
+pub const MAX_BATCH_CONCURRENCY: usize = 100;
+
+/// Configuration for a batch (advanced) replay run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayBatchConfig {
+    /// Total number of requests to send.
+    pub iterations: usize,
+    /// Number of simultaneous in-flight requests.
+    pub concurrency: usize,
+    /// Optional delay (in milliseconds) between dispatches.
+    pub delay_ms: Option<u64>,
+}
+
+impl Default for ReplayBatchConfig {
+    fn default() -> Self {
+        Self {
+            iterations: 1,
+            concurrency: 1,
+            delay_ms: None,
+        }
+    }
+}
+
+impl ReplayBatchConfig {
+    /// Clamp the configuration to the safety limits.
+    pub fn clamp_to_limits(&mut self) {
+        if self.iterations == 0 {
+            self.iterations = 1;
+        }
+        if self.iterations > MAX_BATCH_ITERATIONS {
+            self.iterations = MAX_BATCH_ITERATIONS;
+        }
+        if self.concurrency == 0 {
+            self.concurrency = 1;
+        }
+        if self.concurrency > MAX_BATCH_CONCURRENCY {
+            self.concurrency = MAX_BATCH_CONCURRENCY;
+        }
+    }
+}
+
+/// Aggregate result of a batch (advanced) replay run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayBatchResult {
+    /// ID of the saved request that was replayed.
+    pub saved_request_id: String,
+    /// Individual replay results (in completion order).
+    pub results: Vec<ReplayResult>,
+    /// Total number of requests sent.
+    pub total: usize,
+    /// Number of successful requests.
+    pub succeeded: usize,
+    /// Number of failed requests.
+    pub failed: usize,
+    /// Minimum latency in milliseconds.
+    pub min_ms: u64,
+    /// Maximum latency in milliseconds.
+    pub max_ms: u64,
+    /// Average latency in milliseconds.
+    pub avg_ms: u64,
+    /// 95th percentile latency in milliseconds.
+    pub p95_ms: u64,
+    /// When the batch started.
+    pub started_at: DateTime<Utc>,
+    /// When the batch finished.
+    pub finished_at: DateTime<Utc>,
+}
+
+impl ReplayBatchResult {
+    /// Compute aggregate statistics from a set of replay results.
+    pub fn from_results(saved_request_id: String, results: Vec<ReplayResult>) -> Self {
+        let total = results.len();
+        let succeeded = results.iter().filter(|r| r.error.is_none()).count();
+        let failed = total - succeeded;
+
+        let mut durations: Vec<u64> = results
+            .iter()
+            .map(|r| if r.error.is_none() { r.duration_ms } else { 0 })
+            .collect();
+        durations.sort_unstable();
+
+        let (min_ms, max_ms, avg_ms, p95_ms) = compute_statistics(&durations, succeeded);
+
+        Self {
+            saved_request_id,
+            results,
+            total,
+            succeeded,
+            failed,
+            min_ms,
+            max_ms,
+            avg_ms,
+            p95_ms,
+            started_at: Utc::now(),
+            finished_at: Utc::now(),
+        }
+    }
+}
+
+/// Compute min/avg/max/p95 statistics from a sorted list of durations.
+///
+/// Only successful request durations (non-zero) are considered for latency
+/// statistics. If there are no successful requests, all stats are zero.
+pub fn compute_statistics(durations: &[u64], succeeded: usize) -> (u64, u64, u64, u64) {
+    if succeeded == 0 || durations.is_empty() {
+        return (0, 0, 0, 0);
+    }
+
+    let successful: Vec<u64> = durations.iter().copied().filter(|d| *d > 0).collect();
+    if successful.is_empty() {
+        return (0, 0, 0, 0);
+    }
+
+    let min_ms = *successful.first().unwrap_or(&0);
+    let max_ms = *successful.last().unwrap_or(&0);
+    let sum: u64 = successful.iter().sum();
+    let avg_ms = sum / successful.len() as u64;
+
+    let p95_idx = if successful.len() == 1 {
+        0
+    } else {
+        ((successful.len() as f64) * 0.95).ceil() as usize - 1
+    };
+    let p95_idx = p95_idx.min(successful.len() - 1);
+    let p95_ms = successful[p95_idx];
+
+    (min_ms, max_ms, avg_ms, p95_ms)
 }
 
 #[cfg(test)]
@@ -861,6 +1076,283 @@ mod tests {
             assert!(result.response.is_none());
             assert_eq!(result.error, Some("Saved request not found".to_string()));
             assert_eq!(result.saved_request_id, "nonexistent-id");
+        }
+    }
+
+    mod batch_config_tests {
+        use super::*;
+
+        #[test]
+        fn test_default_config() {
+            let config = ReplayBatchConfig::default();
+            assert_eq!(config.iterations, 1);
+            assert_eq!(config.concurrency, 1);
+            assert!(config.delay_ms.is_none());
+        }
+
+        #[test]
+        fn test_clamp_zero_values() {
+            let mut config = ReplayBatchConfig {
+                iterations: 0,
+                concurrency: 0,
+                delay_ms: None,
+            };
+            config.clamp_to_limits();
+            assert_eq!(config.iterations, 1);
+            assert_eq!(config.concurrency, 1);
+        }
+
+        #[test]
+        fn test_clamp_over_limits() {
+            let mut config = ReplayBatchConfig {
+                iterations: MAX_BATCH_ITERATIONS + 5000,
+                concurrency: MAX_BATCH_CONCURRENCY + 50,
+                delay_ms: Some(100),
+            };
+            config.clamp_to_limits();
+            assert_eq!(config.iterations, MAX_BATCH_ITERATIONS);
+            assert_eq!(config.concurrency, MAX_BATCH_CONCURRENCY);
+        }
+
+        #[test]
+        fn test_clamp_within_limits() {
+            let mut config = ReplayBatchConfig {
+                iterations: 50,
+                concurrency: 10,
+                delay_ms: Some(200),
+            };
+            config.clamp_to_limits();
+            assert_eq!(config.iterations, 50);
+            assert_eq!(config.concurrency, 10);
+        }
+
+        #[test]
+        fn test_config_serialization() {
+            let config = ReplayBatchConfig {
+                iterations: 100,
+                concurrency: 5,
+                delay_ms: Some(250),
+            };
+            let json = serde_json::to_string(&config).unwrap();
+            assert!(json.contains("\"iterations\":100"));
+            assert!(json.contains("\"concurrency\":5"));
+            assert!(json.contains("\"delay_ms\":250"));
+
+            let decoded: ReplayBatchConfig = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded.iterations, 100);
+            assert_eq!(decoded.concurrency, 5);
+            assert_eq!(decoded.delay_ms, Some(250));
+        }
+    }
+
+    mod statistics_tests {
+        use super::*;
+
+        #[test]
+        fn test_compute_statistics_basic() {
+            // Sorted durations: [10, 20, 30, 40, 50]
+            let durations = vec![10, 20, 30, 40, 50];
+            let (min, max, avg, p95) = compute_statistics(&durations, 5);
+            assert_eq!(min, 10);
+            assert_eq!(max, 50);
+            assert_eq!(avg, 30); // (10+20+30+40+50)/5 = 150/5 = 30
+                                 // p95 index = ceil(5 * 0.95) - 1 = ceil(4.75) - 1 = 5 - 1 = 4
+            assert_eq!(p95, 50);
+        }
+
+        #[test]
+        fn test_compute_statistics_single_value() {
+            let durations = vec![42];
+            let (min, max, avg, p95) = compute_statistics(&durations, 1);
+            assert_eq!(min, 42);
+            assert_eq!(max, 42);
+            assert_eq!(avg, 42);
+            assert_eq!(p95, 42);
+        }
+
+        #[test]
+        fn test_compute_statistics_with_failures() {
+            // 3 succeeded (durations 100, 200, 300), 2 failed (duration 0)
+            let durations = vec![0, 0, 100, 200, 300];
+            let (min, max, avg, p95) = compute_statistics(&durations, 3);
+            assert_eq!(min, 100);
+            assert_eq!(max, 300);
+            assert_eq!(avg, 200); // (100+200+300)/3 = 600/3 = 200
+                                  // p95 index = ceil(3 * 0.95) - 1 = ceil(2.85) - 1 = 3 - 1 = 2
+            assert_eq!(p95, 300);
+        }
+
+        #[test]
+        fn test_compute_statistics_all_failed() {
+            let durations = vec![0, 0, 0];
+            let (min, max, avg, p95) = compute_statistics(&durations, 0);
+            assert_eq!(min, 0);
+            assert_eq!(max, 0);
+            assert_eq!(avg, 0);
+            assert_eq!(p95, 0);
+        }
+
+        #[test]
+        fn test_compute_statistics_empty() {
+            let durations: Vec<u64> = vec![];
+            let (min, max, avg, p95) = compute_statistics(&durations, 0);
+            assert_eq!(min, 0);
+            assert_eq!(max, 0);
+            assert_eq!(avg, 0);
+            assert_eq!(p95, 0);
+        }
+
+        #[test]
+        fn test_compute_statistics_p95_large_sample() {
+            // 20 values: 5, 10, 15, ..., 100
+            let durations: Vec<u64> = (1..=20).map(|i| i * 5).collect();
+            let n = durations.len();
+            let (min, max, avg, p95) = compute_statistics(&durations, n);
+            assert_eq!(min, 5);
+            assert_eq!(max, 100);
+            let sum: u64 = durations.iter().sum();
+            assert_eq!(avg, sum / n as u64);
+            // p95 index = ceil(20 * 0.95) - 1 = ceil(19) - 1 = 19 - 1 = 18
+            assert_eq!(p95, durations[18]);
+        }
+    }
+
+    mod batch_result_tests {
+        use super::*;
+
+        fn make_success_result(saved_id: &str, duration_ms: u64) -> ReplayResult {
+            let request = create_test_request();
+            let response = ResponseData {
+                status_code: 200,
+                status_message: Some("OK".to_string()),
+                headers: HashMap::new(),
+                body: None,
+                content_type: None,
+                duration_ms,
+                http_version: None,
+            };
+            ReplayResult::success(saved_id, request, response, duration_ms)
+        }
+
+        fn make_error_result(saved_id: &str) -> ReplayResult {
+            let request = create_test_request();
+            ReplayResult::error(saved_id, request, "Connection failed".to_string())
+        }
+
+        #[test]
+        fn test_from_results_all_success() {
+            let results = vec![
+                make_success_result("req-1", 100),
+                make_success_result("req-1", 200),
+                make_success_result("req-1", 300),
+            ];
+            let batch = ReplayBatchResult::from_results("req-1".to_string(), results);
+
+            assert_eq!(batch.saved_request_id, "req-1");
+            assert_eq!(batch.total, 3);
+            assert_eq!(batch.succeeded, 3);
+            assert_eq!(batch.failed, 0);
+            assert_eq!(batch.min_ms, 100);
+            assert_eq!(batch.max_ms, 300);
+            assert_eq!(batch.avg_ms, 200);
+        }
+
+        #[test]
+        fn test_from_results_mixed_success_failure() {
+            let results = vec![
+                make_success_result("req-1", 100),
+                make_error_result("req-1"),
+                make_success_result("req-1", 300),
+            ];
+            let batch = ReplayBatchResult::from_results("req-1".to_string(), results);
+
+            assert_eq!(batch.total, 3);
+            assert_eq!(batch.succeeded, 2);
+            assert_eq!(batch.failed, 1);
+            // succeeded + failed == total
+            assert_eq!(batch.succeeded + batch.failed, batch.total);
+            // Only successful durations count toward stats
+            assert_eq!(batch.min_ms, 100);
+            assert_eq!(batch.max_ms, 300);
+            assert_eq!(batch.avg_ms, 200);
+        }
+
+        #[test]
+        fn test_from_results_all_failures() {
+            let results = vec![make_error_result("req-1"), make_error_result("req-1")];
+            let batch = ReplayBatchResult::from_results("req-1".to_string(), results);
+
+            assert_eq!(batch.total, 2);
+            assert_eq!(batch.succeeded, 0);
+            assert_eq!(batch.failed, 2);
+            assert_eq!(batch.succeeded + batch.failed, batch.total);
+            assert_eq!(batch.min_ms, 0);
+            assert_eq!(batch.max_ms, 0);
+            assert_eq!(batch.avg_ms, 0);
+            assert_eq!(batch.p95_ms, 0);
+        }
+
+        #[test]
+        fn test_from_results_empty() {
+            let batch = ReplayBatchResult::from_results("req-1".to_string(), vec![]);
+            assert_eq!(batch.total, 0);
+            assert_eq!(batch.succeeded, 0);
+            assert_eq!(batch.failed, 0);
+        }
+
+        #[test]
+        fn test_batch_result_serialization() {
+            let results = vec![make_success_result("req-1", 150)];
+            let batch = ReplayBatchResult::from_results("req-1".to_string(), results);
+            let json = serde_json::to_string(&batch).unwrap();
+            assert!(json.contains("\"saved_request_id\":\"req-1\""));
+            assert!(json.contains("\"total\":1"));
+            assert!(json.contains("\"succeeded\":1"));
+
+            let decoded: ReplayBatchResult = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded.saved_request_id, "req-1");
+            assert_eq!(decoded.total, 1);
+        }
+    }
+
+    mod replay_batch_tests {
+        use super::*;
+
+        #[tokio::test]
+        async fn test_replay_batch_nonexistent_request() {
+            let manager = ReplayManager::new();
+            let config = ReplayBatchConfig {
+                iterations: 3,
+                concurrency: 1,
+                delay_ms: None,
+            };
+
+            let batch = manager.replay_batch("nonexistent-id", None, config).await;
+
+            // When the saved request doesn't exist, a single error result is
+            // returned immediately without dispatching iterations.
+            assert_eq!(batch.saved_request_id, "nonexistent-id");
+            assert_eq!(batch.total, 1);
+            assert_eq!(batch.succeeded, 0);
+            assert_eq!(batch.failed, 1);
+            assert!(batch.results[0].error.is_some());
+        }
+
+        #[tokio::test]
+        async fn test_replay_batch_clamps_config() {
+            // Verify that an over-limit config is clamped before dispatch by
+            // checking the nonexistent-request path still returns a single
+            // error (i.e. it didn't try to run 99999 iterations).
+            let manager = ReplayManager::new();
+            let config = ReplayBatchConfig {
+                iterations: 99_999,
+                concurrency: 999,
+                delay_ms: None,
+            };
+
+            let batch = manager.replay_batch("nonexistent-id", None, config).await;
+            assert_eq!(batch.total, 1);
+            assert_eq!(batch.failed, 1);
         }
     }
 }

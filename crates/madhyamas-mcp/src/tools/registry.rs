@@ -643,6 +643,66 @@ impl ToolRegistry {
                 }),
             },
             Tool {
+                name: "madhyamas_replay_advanced".to_string(),
+                description: "Replay a saved request multiple times with concurrency, iterations, and inter-request delay (batch/advanced replay). Returns aggregate statistics including success/failure counts and latency percentiles (min/avg/max/p95). Useful for basic load testing and performance benchmarking. Safety limits: iterations capped at 10,000 and concurrency at 100.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the saved request to replay"
+                        },
+                        "iterations": {
+                            "type": "integer",
+                            "description": "Total number of requests to send (max 10,000, default: 1)",
+                            "minimum": 1
+                        },
+                        "concurrency": {
+                            "type": "integer",
+                            "description": "Number of simultaneous in-flight requests (max 100, default: 1)",
+                            "minimum": 1
+                        },
+                        "delay_ms": {
+                            "type": "integer",
+                            "description": "Optional delay between requests in milliseconds",
+                            "minimum": 0
+                        },
+                        "modifications": {
+                            "type": "object",
+                            "properties": {
+                                "url": {
+                                    "type": "string",
+                                    "description": "Override the request URL"
+                                },
+                                "method": {
+                                    "type": "string",
+                                    "description": "Override the HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)"
+                                },
+                                "headers": {
+                                    "type": "object",
+                                    "description": "Headers to add or replace (key-value pairs)"
+                                },
+                                "remove_headers": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Header names to remove from the request"
+                                },
+                                "body": {
+                                    "type": "string",
+                                    "description": "New request body (raw text)"
+                                },
+                                "follow_redirects": {
+                                    "type": "boolean",
+                                    "description": "Whether to follow 3xx redirect responses (default: false)"
+                                }
+                            },
+                            "description": "Optional modifications to apply before replaying (applied to all iterations)"
+                        }
+                    },
+                    "required": ["id", "iterations", "concurrency"]
+                }),
+            },
+            Tool {
                 name: "madhyamas_save_request".to_string(),
                 description: "Save a request for later replay. Useful for creating a library of test requests.".to_string(),
                 input_schema: json!({
