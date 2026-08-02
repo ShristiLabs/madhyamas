@@ -100,7 +100,7 @@ It was produced by:
 | 25 | Save request/response bodies | ✅ | ✅ | Export cURL, HAR |
 | 26 | Find in session / find in request | ✅ (5.0) | ✅ | Web UI search |
 | 27 | Unicode/charset decoding | ✅ | ✅ | Rust handles UTF-8 natively |
-| 28 | zstd content-encoding | ✅ (5.1) | ❌ | Not implemented |
+| 28 | zstd content-encoding | ✅ (5.1) | ✅ | On-demand decompression via `?decompressed=true` |
 | 29 | 1xx interim responses (103 Early Hints) | ✅ (5.2) | ❌ | Not handled specially |
 
 ### 2.3 Sessions
@@ -244,7 +244,10 @@ equivalent visualization.
 noise. Madhyamas has `SessionPreset.filter_host_patterns` but no dedicated
 Focus UI affordance.
 
-**Content encodings** — Charles 5.1 added zstd. Madhyamas does not decode zstd.
+**Content encodings** — Charles 5.1 added zstd. Madhyamas supports gzip,
+deflate, brotli, and zstd decompression on demand via the
+`?decompressed=true` query parameter on `GET /api/traffic/{id}`. See
+[docs/ZSTD_SUPPORT.md](ZSTD_SUPPORT.md).
 
 ### 3.3 Sessions
 
@@ -329,20 +332,19 @@ by impact and effort:
 13. **Auto Save** — Periodic session save to avoid memory growth.
 14. **Recording size limits** — Prevent runaway memory usage.
 15. **HAR import** — Import traffic from HAR files (Charles 5.0 supports this).
-16. **zstd decompression** — Add zstd to the content-encoding handlers.
 
 ### Lower Priority (niche / legacy)
 
-17. **Reverse proxy** — Niche; most clients support HTTP proxies.
-18. **Port forwarding** — Niche; SOCKS covers most use cases.
-19. **DNS spoofing** — Niche; can be done via `/etc/hosts`.
-20. **Protocol Buffers full decoder** — Requires `.desc` file fetching.
-21. **Validate (W3C)** — Niche; can use external validators.
-22. **AMF/Flash** — Flash is deprecated; skip.
-23. **NTLM** — Legacy Microsoft auth; low demand.
-24. **Auto browser/OS proxy config** — Platform-specific, fragile.
-25. **Headless mode** — Already effectively headless (web UI); document this.
-26. **Client process tracking** — OS-specific, low value.
+16. **Reverse proxy** — Niche; most clients support HTTP proxies.
+17. **Port forwarding** — Niche; SOCKS covers most use cases.
+18. **DNS spoofing** — Niche; can be done via `/etc/hosts`.
+19. **Protocol Buffers full decoder** — Requires `.desc` file fetching.
+20. **Validate (W3C)** — Niche; can use external validators.
+21. **AMF/Flash** — Flash is deprecated; skip.
+22. **NTLM** — Legacy Microsoft auth; low demand.
+23. **Auto browser/OS proxy config** — Platform-specific, fragile.
+24. **Headless mode** — Already effectively headless (web UI); document this.
+25. **Client process tracking** — OS-specific, low value.
 
 ### Madhyamas-only strengths to preserve
 

@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { TrafficEntry } from "@/types/traffic";
+import { apiGet } from "@/lib/api/client";
 import { useToast } from "@/components/ui/use-toast";
 
 interface TrafficDetailProps {
@@ -259,6 +260,7 @@ export function TrafficDetail({ entry }: TrafficDetailProps) {
                     body={entry.response.body}
                     contentType={entry.response.content_type}
                     headers={entry.response.headers}
+                    entryId={entry.id}
                   />
                 </div>
               </>
@@ -328,6 +330,7 @@ interface BodyViewProps {
   body?: string;
   contentType?: string;
   headers?: Record<string, string>;
+  entryId?: string;
 }
 
 function HeadersTable({ headers }: { headers: Record<string, string> }) {
@@ -376,7 +379,7 @@ function formatBytes(bytes: number): string {
 
 type JsonQueryMode = "none" | "jsonpath" | "jmespath";
 
-function BodyView({ body, contentType, headers }: BodyViewProps) {
+function BodyView({ body, contentType, headers, entryId }: BodyViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [showDecompressed, setShowDecompressed] = useState(true);
   const [showAsImage, setShowAsImage] = useState(true);
@@ -393,6 +396,13 @@ function BodyView({ body, contentType, headers }: BodyViewProps) {
   }, [headers]);
 
   const isCompressed = !!contentEncoding;
+
+  // zstd is not supported by the browser's DecompressionStream API, so it
+  // must be decompressed by the backend via the ?decompressed=true endpoint.
+  const isZstd = useMemo(
+    () => contentEncoding?.toLowerCase().trim() === "zstd",
+    [contentEncoding],
+  );
 
   // Detect image content types
   const isImage = useMemo(() => {
@@ -441,28 +451,73 @@ function BodyView({ body, contentType, headers }: BodyViewProps) {
       }
 
       // Step 2: If compressed and decompression is requested, use
-      // DecompressionStream to decompress the raw bytes.
+      // DecompressionStream to decompress the raw bytes. For zstd (not
+      // supported by the browser), fetch the decompressed body from the
+      // backend via the ?decompressed=true endpoint.
       if (isCompressed && showDecompressed && contentEncoding) {
-        const encoding = contentEncoding.toLowerCase().trim();
-        try {
-          const format = encoding === "x-gzip" ? "gzip" : encoding;
-          const ds = new DecompressionStream(format as CompressionFormat);
-          const blob = new Blob([bytes.buffer as ArrayBuffer]);
-          const stream = blob.stream().pipeThrough(ds);
-          const buffer = await new Response(stream).arrayBuffer();
-          if (cancelled) return;
-          const decompressed = new Uint8Array(buffer);
-          setRawBytes(decompressed);
-          setDecodedBody(
-            new TextDecoder("utf-8", { fatal: false }).decode(decompressed),
-          );
-        } catch {
-          // Decompression failed — fall back to showing raw bytes
-          if (!cancelled) {
-            setRawBytes(bytes);
-            setDecodedBody(
-              `[Decompression failed — showing raw data, ${bytes.length} bytes, encoding: ${contentEncoding}]`,
+        if (isZstd && entryId) {
+          // zstd is not supported by DecompressionStream — fetch the
+          // decompressed body from the backend.
+          try {
+            const decompressedEntry = await apiGet<TrafficEntry>(
+              `/traffic/${entryId}?decompressed=true`,
             );
+            if (cancelled) return;
+            const decompressedBody = decompressedEntry.response?.body;
+            if (decompressedBody) {
+              let decBytes: Uint8Array;
+              if (decompressedBody.startsWith("base64:")) {
+                const b64Data = decompressedBody.slice(7);
+                const binaryStr = atob(b64Data);
+                decBytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                  decBytes[i] = binaryStr.charCodeAt(i);
+                }
+              } else {
+                decBytes = new TextEncoder().encode(decompressedBody);
+              }
+              setRawBytes(decBytes);
+              setDecodedBody(
+                new TextDecoder("utf-8", { fatal: false }).decode(decBytes),
+              );
+            } else {
+              if (!cancelled) {
+                setRawBytes(bytes);
+                setDecodedBody(
+                  `[Decompression returned empty body, encoding: ${contentEncoding}]`,
+                );
+              }
+            }
+          } catch {
+            if (!cancelled) {
+              setRawBytes(bytes);
+              setDecodedBody(
+                `[Decompression failed — showing raw data, ${bytes.length} bytes, encoding: ${contentEncoding}]`,
+              );
+            }
+          }
+        } else {
+          const encoding = contentEncoding.toLowerCase().trim();
+          try {
+            const format = encoding === "x-gzip" ? "gzip" : encoding;
+            const ds = new DecompressionStream(format as CompressionFormat);
+            const blob = new Blob([bytes.buffer as ArrayBuffer]);
+            const stream = blob.stream().pipeThrough(ds);
+            const buffer = await new Response(stream).arrayBuffer();
+            if (cancelled) return;
+            const decompressed = new Uint8Array(buffer);
+            setRawBytes(decompressed);
+            setDecodedBody(
+              new TextDecoder("utf-8", { fatal: false }).decode(decompressed),
+            );
+          } catch {
+            // Decompression failed — fall back to showing raw bytes
+            if (!cancelled) {
+              setRawBytes(bytes);
+              setDecodedBody(
+                `[Decompression failed — showing raw data, ${bytes.length} bytes, encoding: ${contentEncoding}]`,
+              );
+            }
           }
         }
       } else if (isCompressed && !showDecompressed) {
@@ -492,7 +547,7 @@ function BodyView({ body, contentType, headers }: BodyViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [body, isCompressed, showDecompressed, contentEncoding]);
+  }, [body, isCompressed, showDecompressed, contentEncoding, isZstd, entryId]);
 
   // Build a data URL for image display from raw bytes + content type.
   const imageDataUrl = useMemo(() => {
@@ -638,6 +693,11 @@ function BodyView({ body, contentType, headers }: BodyViewProps) {
               ? `Decompressed (${contentEncoding})`
               : `Raw (${contentEncoding})`}
           </Button>
+        )}
+        {isZstd && (
+          <span className="text-xs font-mono px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+            zstd
+          </span>
         )}
         {isImage && imageDataUrl && (
           <Button

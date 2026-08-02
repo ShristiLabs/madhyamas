@@ -170,7 +170,7 @@ Entries persist to SQLite and survive restarts. See
 
 | Category | Endpoints |
 |----------|-----------|
-| Traffic | `GET /traffic`, `GET /traffic/{id}`, `POST /traffic/clear`, `GET /traffic/count` |
+| Traffic | `GET /traffic`, `GET /traffic/{id}` (supports `?decompressed=true` for on-demand gzip/deflate/brotli/zstd decompression), `POST /traffic/clear`, `GET /traffic/count` |
 | Sessions | `GET /sessions`, `POST /sessions`, `GET/DELETE /sessions/{id}`, `GET /sessions/{id}/export`, `POST /sessions/{id}/switch`, `POST /sessions/import` |
 | Export | `GET /export/har`, `GET /export/curl/{id}` |
 | Certificate | `GET /cert/ca` |

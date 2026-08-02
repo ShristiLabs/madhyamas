@@ -75,13 +75,58 @@ pub async fn get_traffic(
     }
 }
 
+/// Query parameters for fetching a single traffic entry
+#[derive(Debug, Deserialize)]
+pub struct TrafficEntryQuery {
+    /// When `true`, decompress the response body on the fly using the
+    /// response's `Content-Encoding` header and return the decompressed
+    /// bytes with the encoding header removed. Useful for encodings the
+    /// browser cannot decompress client-side (e.g. zstd).
+    pub decompressed: Option<String>,
+}
+
 /// Get a single traffic entry
 pub async fn get_traffic_entry(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Query(query): Query<TrafficEntryQuery>,
 ) -> impl IntoResponse {
+    let decompress = query
+        .decompressed
+        .as_deref()
+        .map(|s| s.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
     match state.traffic_store.get_by_id(&id) {
-        Ok(Some(entry)) => Json(entry).into_response(),
+        Ok(Some(mut entry)) => {
+            if decompress {
+                if let Some(response) = entry.response.as_mut() {
+                    if let Some(body) = response.body.take() {
+                        let content_encoding = response
+                            .headers
+                            .iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case("content-encoding"))
+                            .map(|(_, v)| v.clone());
+                        match content_encoding {
+                            Some(encoding) => {
+                                // decompress_body returns the original body on
+                                // failure, so the response body is never lost.
+                                response.body =
+                                    madhyamas_core::proxy::pipeline::Pipeline::decompress_body(
+                                        Some(encoding.as_str()),
+                                        body,
+                                        &mut response.headers,
+                                    );
+                            }
+                            None => {
+                                response.body = Some(body);
+                            }
+                        }
+                    }
+                }
+            }
+            Json(entry).into_response()
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(ErrorResponse {

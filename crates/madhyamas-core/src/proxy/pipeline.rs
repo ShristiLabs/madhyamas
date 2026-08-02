@@ -1055,8 +1055,7 @@ impl<'a> Pipeline<'a> {
     /// Content-Length to match the decompressed body. Returns the
     /// decompressed body, or the original body if decompression fails
     /// or no encoding is present.
-    #[allow(dead_code)]
-    fn decompress_body(
+    pub fn decompress_body(
         content_encoding: Option<&str>,
         body: Vec<u8>,
         out_headers: &mut std::collections::HashMap<String, String>,
@@ -1107,6 +1106,29 @@ impl<'a> Pipeline<'a> {
                         debug!("Failed to decompress brotli body: {}", e);
                         None
                     }
+                }
+            }
+            "zstd" => {
+                let mut decoder = match zstd::stream::read::Decoder::new(&body[..]) {
+                    Ok(d) => Some(d),
+                    Err(e) => {
+                        debug!("Failed to create zstd decoder: {}", e);
+                        None
+                    }
+                };
+                match decoder.as_mut() {
+                    Some(dec) => {
+                        let mut out = Vec::with_capacity(body.len() * 4);
+                        use std::io::Read;
+                        match dec.read_to_end(&mut out) {
+                            Ok(_) => Some(out),
+                            Err(e) => {
+                                debug!("Failed to decompress zstd body: {}", e);
+                                None
+                            }
+                        }
+                    }
+                    None => None,
                 }
             }
             _ => {
@@ -1428,5 +1450,75 @@ fn build_extension_context(
         response,
         data: std::collections::HashMap::new(),
         timestamp: chrono::Utc::now(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Pipeline;
+    use std::collections::HashMap;
+    use std::io::Read;
+
+    #[test]
+    fn test_decompress_body_zstd() {
+        let original = b"Hello, zstd! The quick brown fox jumps over the lazy dog.".to_vec();
+        let compressed = zstd::encode_all(&original[..], 3).expect("zstd encode");
+
+        let mut headers = HashMap::new();
+        headers.insert("Content-Encoding".to_string(), "zstd".to_string());
+        headers.insert("Content-Length".to_string(), compressed.len().to_string());
+
+        let result = Pipeline::decompress_body(Some("zstd"), compressed, &mut headers);
+
+        assert_eq!(result, Some(original.clone()));
+        // Content-Encoding header should be removed after successful decompression
+        assert!(!headers
+            .keys()
+            .any(|k| k.eq_ignore_ascii_case("content-encoding")));
+        // Content-Length should be updated to the decompressed size
+        let cl = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+            .map(|(_, v)| v.as_str())
+            .expect("content-length present");
+        assert_eq!(cl, original.len().to_string());
+    }
+
+    #[test]
+    fn test_decompress_body_zstd_corrupt_falls_back_to_original() {
+        let corrupt = vec![0x28, 0xb5, 0x2f, 0xfd, 0xff, 0x00, 0x01, 0x02];
+        let mut headers = HashMap::new();
+        headers.insert("Content-Encoding".to_string(), "zstd".to_string());
+
+        let result = Pipeline::decompress_body(Some("zstd"), corrupt.clone(), &mut headers);
+
+        // On decompression failure, the original (corrupt) body is returned.
+        assert_eq!(result, Some(corrupt));
+    }
+
+    #[test]
+    fn test_decompress_body_gzip_no_regression() {
+        let original = b"Hello, gzip! Decompression still works.".to_vec();
+        let mut encoder =
+            flate2::read::GzEncoder::new(&original[..], flate2::Compression::default());
+        let mut compressed = Vec::new();
+        encoder.read_to_end(&mut compressed).expect("gzip encode");
+
+        let mut headers = HashMap::new();
+        headers.insert("Content-Encoding".to_string(), "gzip".to_string());
+
+        let result = Pipeline::decompress_body(Some("gzip"), compressed, &mut headers);
+
+        assert_eq!(result, Some(original));
+    }
+
+    #[test]
+    fn test_decompress_body_no_encoding_returns_as_is() {
+        let body = b"plain body".to_vec();
+        let mut headers = HashMap::new();
+
+        let result = Pipeline::decompress_body(None, body.clone(), &mut headers);
+
+        assert_eq!(result, Some(body));
     }
 }

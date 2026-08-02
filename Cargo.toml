@@ -91,11 +91,12 @@ toml = "1.0"
 urlencoding = "2.1"
 dirs = "5.0"
 semver = "1.0"
-reqwest = { version = "0.13", features = ["json", "gzip", "deflate", "brotli", "socks"] }
+reqwest = { version = "0.13", features = ["json", "gzip", "deflate", "brotli", "zstd", "socks"] }
 
-# Decompression (for decoding gzip/deflate/brotli response bodies)
+# Decompression (for decoding gzip/deflate/brotli/zstd response bodies)
 flate2 = "1.0"
 brotli = "6.0"
+zstd = "0.13"
 
 # System information (memory/CPU usage for performance monitoring)
 sysinfo = "0.30"

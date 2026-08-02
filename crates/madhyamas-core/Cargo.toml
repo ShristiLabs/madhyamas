@@ -56,6 +56,7 @@ dirs.workspace = true
 semver.workspace = true
 flate2.workspace = true
 brotli.workspace = true
+zstd.workspace = true
 local-ip-address = "0.6"
 sysinfo.workspace = true
 
