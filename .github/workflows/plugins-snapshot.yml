@@ -27,18 +27,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Detect changed plugins
         id: detect
         run: |
-          # Get list of changed files in the last commit
+          # Get list of changed files in the push
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             # Manual dispatch: build all plugins
             plugin_list=$(ls -d plugins/*/ 2>/dev/null | sed 's|plugins/||;s|/||' | tr '\n' ' ')
             echo "sdk-changed=true" >> "$GITHUB_OUTPUT"
           else
-            changed_files=$(git diff --name-only HEAD~1 HEAD || echo "")
+            # Compare against the before SHA from the push event
+            before_sha="${{ github.event.before }}"
+            if [[ -z "$before_sha" || "$before_sha" == "0000000000000000000000000000000000000000" ]]; then
+              # First push: build all
+              changed_files=$(git diff --name-only HEAD~1 HEAD || echo "")
+            else
+              changed_files=$(git diff --name-only "${before_sha}" HEAD || echo "")
+            fi
 
             # Check if SDK changed
             sdk_changed=false
