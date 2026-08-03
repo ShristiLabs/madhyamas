@@ -1,0 +1,19 @@
+id = "madhyamas.domain-blocker"
+name = "Domain Blocker"
+version = "1.0.0"
+description = "Blocks requests to configurable domains. Demonstrates settings + short-circuit."
+author = "Madhyamas Team"
+license = "MIT"
+main = "plugin.wasm"
+hooks = ["on_request"]
+capabilities = ["intercept_request", "ui_panel"]
+dependencies = {}
+enabled_by_default = false
+network = false
+max_memory_pages = 64
+fuel_limit = 10000000
+tags = ["blocking", "security"]
+panels = []
+
+[settings]
+fields = [{ key = "blocked_domains", label = "Blocked Domains", kind = "string_list", description = "List of domains to block (e.g. ads.example.com, tracker.com)", default = [] }]

@@ -1,0 +1,16 @@
+id = "madhyamas.cors-helper"
+name = "CORS Helper"
+version = "1.0.0"
+description = "Automatically add CORS headers (Access-Control-Allow-Origin: *) to every response"
+author = "Madhyamas Team"
+license = "MIT"
+main = "plugin.wasm"
+hooks = ["on_response"]
+capabilities = ["intercept_response"]
+dependencies = {}
+enabled_by_default = true
+network = false
+max_memory_pages = 64
+fuel_limit = 10000000
+tags = ["cors", "headers", "development"]
+panels = []

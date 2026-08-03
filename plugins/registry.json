@@ -20,8 +20,8 @@
         "tags": ["cors", "headers", "development"],
         "panels": []
       },
-      "download_url": "https://github.com/madhyamas/madhyamas-plugins/releases/download/cors-helper-v1.0.0/cors-helper.zip",
-      "checksum": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_url": "https://raw.githubusercontent.com/shristilabs/madhyamas/main/plugins/cors-helper-1.0.0.zip",
+      "checksum": "sha256:7cdebe8911685f700b738112045548fee01e0d150fcc6fc32bdecebe0b460bdc",
       "downloads": 0,
       "rating": 5.0,
       "rating_count": 1,
@@ -49,8 +49,8 @@
         "tags": ["logging", "debugging"],
         "panels": []
       },
-      "download_url": "https://github.com/madhyamas/madhyamas-plugins/releases/download/request-logger-v1.0.0/request-logger.zip",
-      "checksum": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_url": "https://raw.githubusercontent.com/shristilabs/madhyamas/main/plugins/request-logger-1.0.0.zip",
+      "checksum": "sha256:58111a73553dbedcfe125dde36ea0522365e5e1746322b85c1eca34bd9c10925",
       "downloads": 0,
       "rating": 4.5,
       "rating_count": 2,
@@ -76,10 +76,21 @@
         "max_memory_pages": 64,
         "fuel_limit": 10000000,
         "tags": ["blocking", "security"],
-        "panels": []
+        "panels": [],
+        "settings": {
+          "fields": [
+            {
+              "key": "blocked_domains",
+              "label": "Blocked Domains",
+              "kind": "string_list",
+              "description": "List of domains to block (e.g. ads.example.com, tracker.com)",
+              "default": []
+            }
+          ]
+        }
       },
-      "download_url": "https://github.com/madhyamas/madhyamas-plugins/releases/download/domain-blocker-v1.0.0/domain-blocker.zip",
-      "checksum": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_url": "https://raw.githubusercontent.com/shristilabs/madhyamas/main/plugins/domain-blocker-1.0.0.zip",
+      "checksum": "sha256:551238c0064a049f3daf6f27f55a8c22e89aee93f24b7ccbd3d92f9cd1b83bd8",
       "downloads": 0,
       "rating": 4.0,
       "rating_count": 1,
