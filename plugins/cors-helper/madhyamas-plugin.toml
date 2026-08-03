@@ -1,6 +1,6 @@
 id = "madhyamas.cors-helper"
 name = "CORS Helper"
-version = "1.0.1-SNAPSHOT"
+version = "1.0.1"
 description = "Automatically add CORS headers (Access-Control-Allow-Origin: *) to every response"
 author = "Madhyamas Team"
 license = "MIT"
