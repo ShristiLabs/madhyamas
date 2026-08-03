@@ -12,6 +12,10 @@ Rewrites are evaluated first in the interception pipeline, before mocks and brea
 2. The modified traffic continues through the pipeline normally
 3. The original and modified versions are both visible in the traffic detail
 
+## Quick Templates
+
+For common scenarios, you don't have to configure rewrites by hand. Madhyamas ships **rewrite templates** — pre-built rules you can apply with a single click, including **No Caching** (disable all caching), **Block Cookies** (strip cookies both ways), **Add CORS**, **HTTP to HTTPS**, **Add Auth Header**, and **Remove Security Headers**. See the [Rewrite Templates](./rewrite-templates) guide for details.
+
 ## Creating a Rewrite
 
 1. Navigate to the **Rewrites** view using the left navigation rail

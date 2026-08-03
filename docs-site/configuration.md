@@ -37,6 +37,14 @@ These options are set when starting the proxy and can't be changed at runtime:
 | `--no-https` | — | off | Disable HTTPS interception |
 | `--max-requests` | — | `10000` | Max requests kept in memory |
 | `--rate-limit` | — | off | Enable API rate limiting |
+| `--enable-socks` | `MADHYAMAS_ENABLE_SOCKS` | `false` | Enable the SOCKS5 listener (see [SOCKS5 Proxy](./socks-proxy)) |
+| `--socks-port` | `MADHYAMAS_SOCKS_PORT` | `1080` | SOCKS5 listener port |
+| `--allowed-ip` | `MADHYAMAS_ALLOWED_IPS` | (all) | IP/CIDR allowlist, repeatable (see [Access Control](./access-control)) |
+| `--upstream-proxy-enabled` | `MADHYAMAS_UPSTREAM_PROXY_ENABLED` | `false` | Enable upstream proxy chaining (see [Upstream Proxy](./upstream-proxy)) |
+| `--upstream-proxy` | `MADHYAMAS_UPSTREAM_PROXY` | — | Upstream proxy host:port |
+| `--upstream-protocol` | `MADHYAMAS_UPSTREAM_PROTOCOL` | `http` | Upstream protocol: http/https/socks5 |
+| `--upstream-auth` | `MADHYAMAS_UPSTREAM_AUTH` | — | Upstream proxy auth as `username:password` |
+| `--upstream-no-proxy` | `MADHYAMAS_UPSTREAM_NO_PROXY` | — | Comma-separated bypass list |
 
 ## Runtime Configuration
 
@@ -146,3 +154,15 @@ madhyamas traffic clear
 # Delete old sessions
 # Use the Sessions view in the web UI
 ```
+
+## Related Configuration Guides
+
+Some features have their own dedicated configuration pages:
+
+- [Recording Limits](./recording-limits) — bound how much traffic is recorded (max entries, total size, body capture, ignored domains)
+- [Access Control](./access-control) — restrict which client IPs can connect
+- [SOCKS5 Proxy](./socks-proxy) — enable the SOCKS5 listener
+- [Upstream Proxy](./upstream-proxy) — chain outbound traffic through another proxy
+- [HTTP/2 & gRPC](./http2-grpc) — enable HTTP/2 downstream
+- [Auto Save](./auto-save) — periodic session backup and rotation
+- [Mirror](./mirror) — save response bodies to disk

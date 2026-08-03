@@ -40,13 +40,18 @@ export default defineConfig({
           { text: "HTTPS & Certificates", link: "/https-certificates" },
           { text: "Mobile Setup", link: "/mobile-setup" },
           { text: "Configuration", link: "/configuration" },
+          { text: "Recording Limits", link: "/recording-limits" },
+          { text: "Access Control", link: "/access-control" },
         ],
       },
       {
         text: "Inspecting Traffic",
         items: [
           { text: "Traffic Inspection", link: "/traffic-inspection" },
+          { text: "Timeline View", link: "/timeline-view" },
+          { text: "Focus", link: "/focus" },
           { text: "Sessions", link: "/sessions" },
+          { text: "Importing HAR Files", link: "/har-import" },
         ],
       },
       {
@@ -55,8 +60,32 @@ export default defineConfig({
           { text: "Breakpoints", link: "/breakpoints" },
           { text: "Mocks", link: "/mocks" },
           { text: "Rewrites", link: "/rewrites" },
+          { text: "Rewrite Templates", link: "/rewrite-templates" },
+          { text: "Block List", link: "/block-list" },
           { text: "Throttling", link: "/throttling" },
           { text: "Replay", link: "/replay" },
+        ],
+      },
+      {
+        text: "Proxy & Networking",
+        items: [
+          { text: "SOCKS5 Proxy", link: "/socks-proxy" },
+          { text: "Upstream Proxy", link: "/upstream-proxy" },
+          { text: "HTTP/2 & gRPC", link: "/http2-grpc" },
+        ],
+      },
+      {
+        text: "Automation & Extensibility",
+        items: [
+          { text: "Scripting", link: "/scripting" },
+          { text: "Plugins", link: "/plugins" },
+        ],
+      },
+      {
+        text: "Tools",
+        items: [
+          { text: "Auto Save", link: "/auto-save" },
+          { text: "Mirror", link: "/mirror" },
         ],
       },
     ],

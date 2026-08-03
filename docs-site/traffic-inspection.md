@@ -40,6 +40,20 @@ The detail panel includes tabs for:
 - **Timing**: Connection, TLS, and transfer timing breakdown
 - **Preview**: Rendered preview for HTML, images, and JSON
 
+### Compressed Response Bodies
+
+Madhyamas stores raw compressed response bodies (the `Content-Encoding` header is preserved) and decompresses them **on demand** when you view the decoded content. This preserves the original compressed bytes — useful for debugging compression issues — while still letting you inspect the decoded content.
+
+Supported content encodings: **gzip**, **deflate**, **brotli**, and **zstd** (Zstandard). In the body viewer, a **Decompressed** toggle (enabled by default for compressed responses) switches between the decoded view and the raw compressed data. A **zstd** badge appears when the encoding is zstd, indicating backend decompression is being used.
+
+## Timeline (Waterfall) View
+
+In addition to the list view, the traffic panel has a **Timeline** toggle that switches to a waterfall chart. Each request is shown as a horizontal bar positioned by start time and sized by duration, making it easy to spot slow requests, parallel downloads, and overlapping calls at a glance. See the [Timeline View](./timeline-view) guide for details.
+
+## Focus
+
+The **Focus** feature highlights traffic from specific hosts without hiding the rest. Matching rows get a yellow border and star icon while non-matching rows are dimmed — useful for spotting a specific service in a busy stream. See the [Focus](./focus) guide for details.
+
 ## Filtering Traffic
 
 Madhyamas provides powerful filtering to help you find specific requests among potentially thousands of captured entries.
