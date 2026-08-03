@@ -68,8 +68,8 @@
         ],
         "panels": []
       },
-      "download_url": "https://github.com/shristilabs/madhyamas/releases/download/request-logger-v1.0.0/request-logger-1.0.0.zip",
-      "checksum": "sha256:bcf0ddc34ecdd23cbc11f2d0a8bf647a12eaa345cfc2a02766258f76a4346954",
+      "download_url": "https://github.com/ShristiLabs/madhyamas/releases/download/request-logger-v1.0.0/request-logger-1.0.0.zip",
+      "checksum": "sha256:211017e41cb7546888646e6d437e357672fe1bc5afc1e2ec056fb1f762f3cdcf",
       "downloads": 0,
       "rating": 4.5,
       "rating_count": 2,
@@ -79,7 +79,7 @@
       ],
       "source": "registry",
       "added_at": "2024-01-01T00:00:00Z",
-      "updated_at": "2024-01-01T00:00:00Z"
+      "updated_at": "2026-08-03T13:15:45.992317Z"
     },
     {
       "manifest": {
