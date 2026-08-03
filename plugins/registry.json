@@ -29,7 +29,7 @@
         "panels": []
       },
       "download_url": "https://github.com/shristilabs/madhyamas/releases/download/cors-helper-v1.0.0/cors-helper-1.0.0.zip",
-      "checksum": "sha256:9596f720d071d287ac43572d5e10b505972632b79580740554fea88355cd8032",
+      "checksum": "sha256:d9e7d40d7ffe8a96ed04038128ea3e7055f0f42c76c48370ce1a5775727f8525",
       "downloads": 0,
       "rating": 5.0,
       "rating_count": 1,
@@ -40,7 +40,7 @@
       ],
       "source": "registry",
       "added_at": "2024-01-01T00:00:00Z",
-      "updated_at": "2024-01-01T00:00:00Z"
+      "updated_at": "2026-08-03T13:14:54.775539Z"
     },
     {
       "manifest": {
