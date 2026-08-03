@@ -1,6 +1,6 @@
 id = "madhyamas.domain-blocker"
 name = "Domain Blocker"
-version = "1.0.1-SNAPSHOT"
+version = "1.0.0"
 description = "Blocks requests to configurable domains. Demonstrates settings + short-circuit."
 author = "Madhyamas Team"
 license = "MIT"
