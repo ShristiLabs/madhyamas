@@ -7,4 +7,8 @@
 ignore = [
     "RUSTSEC-2026-0173", # proc-macro-error2 is unmaintained
     "RUSTSEC-2024-0436", # paste is unmaintained (transitive)
+    "RUSTSEC-2024-0384", # instant is unmaintained (transitive)
+    "RUSTSEC-2025-0134", # rustls-pemfile is unmaintained
+    "RUSTSEC-2026-0190", # anyhow unsoundness in Error::downcast_mut (not used)
+    "RUSTSEC-2026-0097", # rand unsound with custom logger (not used)
 ]

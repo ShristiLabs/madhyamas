@@ -94,9 +94,8 @@ impl WasmRuntime {
     /// Create a new runtime with the default engine configuration.
     pub fn new() -> crate::Result<Self> {
         let mut config = Config::new();
-        // Cap static linear memory at 256 MiB as a hard host-side ceiling.
-        config.static_memory_maximum_size(256 * 1024 * 1024);
-        config.cache_config_load_default().map_err(wt_err)?;
+        // Cap linear memory reservation at 256 MiB as a hard host-side ceiling.
+        config.memory_reservation(256 * 1024 * 1024);
         let engine = Engine::new(&config).map_err(wt_err)?;
 
         let mut linker: Linker<HostState> = Linker::new(&engine);

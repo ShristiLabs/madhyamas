@@ -67,7 +67,7 @@ sysinfo.workspace = true
 boa_engine = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 # WASM plugin runtime (sandboxed plugin code execution)
-wasmtime = { version = "26", optional = true, default-features = false, features = [
+wasmtime = { version = "47", optional = true, default-features = false, features = [
     "cranelift",
     "runtime",
     "parallel-compilation",

@@ -402,7 +402,8 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
     }
     let mut out = Vec::with_capacity(s.len() / 2);
     let bytes = s.as_bytes();
-    for chunk in bytes.chunks_exact(2) {
+    let (chunks, _rem) = bytes.as_chunks::<2>();
+    for chunk in chunks {
         let hi = hex_val(chunk[0])?;
         let lo = hex_val(chunk[1])?;
         out.push((hi << 4) | lo);
