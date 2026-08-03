@@ -35,46 +35,49 @@ jobs:
           # Get list of changed files in the last commit
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             # Manual dispatch: build all plugins
-            plugins=$(ls -d plugins/*/ 2>/dev/null | sed 's|plugins/||;s|/||' | jq -R . | jq -s .)
-            echo "plugins=${plugins}" >> $GITHUB_OUTPUT
-            echo "sdk-changed=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          changed_files=$(git diff --name-only HEAD~1 HEAD || echo "")
-
-          # Check if SDK changed
-          sdk_changed=false
-          if echo "$changed_files" | grep -q "^crates/madhyamas-plugin-sdk/"; then
-            sdk_changed=true
-          fi
-          echo "sdk-changed=${sdk_changed}" >> $GITHUB_OUTPUT
-
-          # If SDK changed, build all plugins
-          if [[ "$sdk_changed" == "true" ]]; then
-            plugins=$(ls -d plugins/*/ 2>/dev/null | sed 's|plugins/||;s|/||' | jq -R . | jq -s .)
+            plugin_list=$(ls -d plugins/*/ 2>/dev/null | sed 's|plugins/||;s|/||' | tr '\n' ' ')
+            echo "sdk-changed=true" >> "$GITHUB_OUTPUT"
           else
-            # Find which plugin directories changed
-            plugins=""
-            for dir in plugins/*/; do
-              name=$(basename "$dir")
-              if echo "$changed_files" | grep -q "^plugins/${name}/"; then
-                if [[ -f "${dir}Cargo.toml" ]]; then
-                  plugins="${plugins}${name} "
-                fi
-              fi
-            done
-            # Convert to JSON array
-            if [[ -z "$plugins" ]]; then
-              plugins="[]"
+            changed_files=$(git diff --name-only HEAD~1 HEAD || echo "")
+
+            # Check if SDK changed
+            sdk_changed=false
+            if echo "$changed_files" | grep -q "^crates/madhyamas-plugin-sdk/"; then
+              sdk_changed=true
+            fi
+            echo "sdk-changed=${sdk_changed}" >> "$GITHUB_OUTPUT"
+
+            # If SDK changed, build all plugins
+            if [[ "$sdk_changed" == "true" ]]; then
+              plugin_list=$(ls -d plugins/*/ 2>/dev/null | sed 's|plugins/||;s|/||' | tr '\n' ' ')
             else
-              plugins=$(echo "$plugins" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -s .)
+              # Find which plugin directories changed
+              plugin_list=""
+              for dir in plugins/*/; do
+                name=$(basename "$dir")
+                if echo "$changed_files" | grep -q "^plugins/${name}/"; then
+                  if [[ -f "${dir}Cargo.toml" ]]; then
+                    plugin_list="${plugin_list}${name} "
+                  fi
+                fi
+              done
             fi
           fi
 
-          echo "plugins=${plugins}" >> $GITHUB_OUTPUT
-          echo "Changed plugins: ${plugins}"
-          echo "SDK changed: ${sdk_changed}"
+          # Convert space-separated list to JSON array for matrix
+          if [[ -z "$(echo "$plugin_list" | tr -d ' ')" ]]; then
+            json_array="[]"
+          else
+            json_array=$(echo "$plugin_list" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -c -s .)
+          fi
+
+          # Write to GITHUB_OUTPUT using delimiter for multi-line values
+          echo "plugins<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$json_array" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          echo "Changed plugins: ${json_array}"
+          echo "Plugin list: ${plugin_list}"
 
   build-snapshots:
     name: Build SNAPSHOT
