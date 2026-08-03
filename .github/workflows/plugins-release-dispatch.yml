@@ -1,0 +1,319 @@
+name: Plugin Release Dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_name:
+        description: "Plugin to release"
+        required: true
+        type: choice
+        options:
+          - cors-helper
+          - request-logger
+          - domain-blocker
+      version:
+        description: "Release version (default: strip -SNAPSHOT from current version)"
+        required: false
+        default: ""
+      skip_snapshot_bump:
+        description: "Skip auto-bump to next SNAPSHOT after release"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Release ${{ inputs.plugin_name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate plugin exists
+        run: |
+          plugin_dir="plugins/${{ inputs.plugin_name }}"
+          if [[ ! -d "$plugin_dir" ]]; then
+            echo "::error::Plugin directory not found: $plugin_dir" >&2
+            exit 1
+          fi
+          if [[ ! -f "$plugin_dir/Cargo.toml" ]]; then
+            echo "::error::Plugin Cargo.toml not found" >&2
+            exit 1
+          fi
+          if [[ ! -f "$plugin_dir/madhyamas-plugin.toml" ]]; then
+            echo "::error::Plugin manifest not found" >&2
+            exit 1
+          fi
+          echo "Plugin directory validated: $plugin_dir"
+
+      - name: Determine release version
+        id: version
+        run: |
+          plugin_dir="plugins/${{ inputs.plugin_name }}"
+          cargo_version=$(grep '^version' "$plugin_dir/Cargo.toml" | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+          manifest_version=$(grep '^version' "$plugin_dir/madhyamas-plugin.toml" | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+
+          echo "Current Cargo.toml version: ${cargo_version}"
+          echo "Current manifest version: ${manifest_version}"
+
+          # Verify Cargo.toml and manifest are in sync
+          if [[ "$cargo_version" != "$manifest_version" ]]; then
+            echo "::error::Version mismatch between Cargo.toml (${cargo_version}) and manifest (${manifest_version})" >&2
+            exit 1
+          fi
+
+          # Determine the release version
+          input_version="${{ inputs.version }}"
+          if [[ -n "$input_version" ]]; then
+            # Use the explicitly provided version
+            release_version="$input_version"
+            echo "Using explicitly provided version: ${release_version}"
+          elif [[ "$cargo_version" == *"-SNAPSHOT" ]]; then
+            # Strip -SNAPSHOT suffix
+            release_version="${cargo_version%-SNAPSHOT}"
+            echo "Stripped SNAPSHOT suffix: ${cargo_version} -> ${release_version}"
+          else
+            # Already a release version (no SNAPSHOT) — use as-is
+            release_version="$cargo_version"
+            echo "Version is already a release version (no SNAPSHOT): ${release_version}"
+          fi
+
+          # Validate version format (X.Y.Z)
+          if ! echo "$release_version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid release version format: ${release_version} (expected X.Y.Z)" >&2
+            exit 1
+          fi
+
+          # Check if this release already exists
+          tag="${{ inputs.plugin_name }}-v${release_version}"
+          if gh release view "$tag" --repo "${{ github.repository }}" &>/dev/null; then
+            echo "::error::Release ${tag} already exists. Use a higher version." >&2
+            exit 1
+          fi
+
+          echo "release_version=${release_version}" >> $GITHUB_OUTPUT
+          echo "tag=${tag}" >> $GITHUB_OUTPUT
+          echo "current_version=${cargo_version}" >> $GITHUB_OUTPUT
+          echo ""
+          echo "=== Release Plan ==="
+          echo "  Plugin:      ${{ inputs.plugin_name }}"
+          echo "  Current:     ${cargo_version}"
+          echo "  Release:     ${release_version}"
+          echo "  Tag:         ${tag}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set release version in Cargo.toml and manifest
+        run: |
+          plugin_dir="plugins/${{ inputs.plugin_name }}"
+          release_version="${{ steps.version.outputs.release_version }}"
+
+          sed -i "s/^version = \".*\"/version = \"${release_version}\"/" "$plugin_dir/Cargo.toml"
+          sed -i "s/^version = \".*\"/version = \"${release_version}\"/" "$plugin_dir/madhyamas-plugin.toml"
+
+          # Verify
+          cargo_v=$(grep '^version' "$plugin_dir/Cargo.toml" | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+          manifest_v=$(grep '^version' "$plugin_dir/madhyamas-plugin.toml" | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+
+          if [[ "$cargo_v" != "$release_version" ]] || [[ "$manifest_v" != "$release_version" ]]; then
+            echo "::error::Failed to set release version" >&2
+            echo "  Cargo.toml: ${cargo_v} (expected ${release_version})" >&2
+            echo "  Manifest:   ${manifest_v} (expected ${release_version})" >&2
+            exit 1
+          fi
+
+          echo "Set version to ${release_version} in both Cargo.toml and manifest"
+
+      - name: Commit release version
+        id: commit_release
+        run: |
+          plugin_dir="plugins/${{ inputs.plugin_name }}"
+          release_version="${{ steps.version.outputs.release_version }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "$plugin_dir/Cargo.toml" "$plugin_dir/madhyamas-plugin.toml"
+          git commit -m "release: ${{ inputs.plugin_name }} v${release_version}
+
+          Prepare ${{ inputs.plugin_name }} for release v${release_version}.
+
+          Generated with [Devin](https://devin.ai)
+
+          Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
+          # Push with retry for concurrent releases
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && break
+            echo "Push attempt $i failed, retrying..."
+            sleep 5
+          done
+
+          # Get the commit SHA after push
+          commit_sha=$(git rev-parse HEAD)
+          echo "commit_sha=${commit_sha}" >> $GITHUB_OUTPUT
+          echo "Committed release version at ${commit_sha}"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Build plugin
+        run: ./scripts/build-plugin.sh ${{ inputs.plugin_name }}
+
+      - name: Compute checksum
+        id: checksum
+        run: |
+          zip_file="plugins/${{ inputs.plugin_name }}-${{ steps.version.outputs.release_version }}.zip"
+          if [[ ! -f "$zip_file" ]]; then
+            echo "::error::Built zip not found: $zip_file" >&2
+            exit 1
+          fi
+          echo "zip=${zip_file}" >> $GITHUB_OUTPUT
+          echo "sha256=$(sha256sum ${zip_file} | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Create git tag
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          git tag "$tag"
+          git push origin "$tag"
+          echo "Created and pushed tag: ${tag}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ inputs.plugin_name }} v${{ steps.version.outputs.release_version }}" \
+            --notes "Release ${{ inputs.plugin_name }} v${{ steps.version.outputs.release_version }}
+
+          Built from commit ${{ steps.commit_release.outputs.commit_sha }}
+
+          ## Installation
+
+          Install via the Madhyamas plugin registry or download the zip directly.
+
+          SHA-256: \`${{ steps.checksum.outputs.sha256 }}\`
+          " \
+            "${{ steps.checksum.outputs.zip }}"
+
+      - name: Update registry.json
+        run: |
+          REGISTRY_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}"
+          python3 - "${{ inputs.plugin_name }}" "${{ steps.version.outputs.release_version }}" "${{ steps.checksum.outputs.sha256 }}" "$REGISTRY_URL" plugins/registry.json <<'PYEOF'
+          import json, sys, datetime
+
+          plugin_name = sys.argv[1]
+          version = sys.argv[2]
+          checksum = sys.argv[3]
+          url_base = sys.argv[4]
+          registry_path = sys.argv[5]
+
+          plugin_id = f"madhyamas.{plugin_name}"
+          download_url = f"{url_base}/{plugin_name}-{version}.zip"
+
+          with open(registry_path) as f:
+              data = json.load(f)
+
+          found = False
+          for entry in data["plugins"]:
+              if entry["manifest"]["id"] == plugin_id:
+                  entry["manifest"]["version"] = version
+                  entry["download_url"] = download_url
+                  entry["checksum"] = f"sha256:{checksum}"
+                  entry["updated_at"] = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+                  found = True
+                  break
+
+          if not found:
+              print(f"WARNING: Plugin {plugin_id} not found in registry.json", file=sys.stderr)
+
+          with open(registry_path, "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+
+          print(f"Updated {registry_path}: {plugin_id} v{version}")
+          PYEOF
+
+      - name: Commit updated registry.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add plugins/registry.json
+          if git diff --cached --quiet; then
+            echo "registry.json unchanged, skipping commit"
+          else
+            git commit -m "chore: update registry.json for ${{ inputs.plugin_name }} v${{ steps.version.outputs.release_version }}
+
+          Auto-generated by the Plugin Release Dispatch workflow.
+
+          Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push && break
+              echo "Push attempt $i failed, retrying..."
+              sleep 5
+            done
+          fi
+
+      - name: Bump to next SNAPSHOT version
+        if: ${{ !inputs.skip_snapshot_bump }}
+        run: |
+          plugin_dir="plugins/${{ inputs.plugin_name }}"
+          current="${{ steps.version.outputs.release_version }}"
+
+          # Parse version and bump patch
+          IFS='.' read -r major minor patch <<< "$current"
+          next_patch=$((patch + 1))
+          next_version="${major}.${minor}.${next_patch}-SNAPSHOT"
+
+          echo "Bumping from ${current} to ${next_version}"
+
+          sed -i "s/^version = \".*\"/version = \"${next_version}\"/" "$plugin_dir/Cargo.toml"
+          sed -i "s/^version = \".*\"/version = \"${next_version}\"/" "$plugin_dir/madhyamas-plugin.toml"
+
+          echo "Bumped to ${next_version}"
+
+      - name: Commit SNAPSHOT bump
+        if: ${{ !inputs.skip_snapshot_bump }}
+        run: |
+          plugin_dir="plugins/${{ inputs.plugin_name }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$plugin_dir/Cargo.toml" "$plugin_dir/madhyamas-plugin.toml"
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: bump ${{ inputs.plugin_name }} to next SNAPSHOT
+
+          Auto-bumped after releasing v${{ steps.version.outputs.release_version }}.
+
+          Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push && break
+              echo "Push attempt $i failed, retrying..."
+              sleep 5
+            done
+          fi
+
+      - name: Release summary
+        run: |
+          echo "=== Release Complete ==="
+          echo "  Plugin:  ${{ inputs.plugin_name }}"
+          echo "  Version: ${{ steps.version.outputs.release_version }}"
+          echo "  Tag:     ${{ steps.version.outputs.tag }}"
+          echo "  Release: https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}"
+          echo "  SHA-256: ${{ steps.checksum.outputs.sha256 }}"
+          if [[ "${{ inputs.skip_snapshot_bump }}" == "true" ]]; then
+            echo "  SNAPSHOT bump: skipped"
+          else
+            IFS='.' read -r major minor patch <<< "${{ steps.version.outputs.release_version }}"
+            echo "  Next SNAPSHOT: ${major}.${minor}.$((patch + 1))-SNAPSHOT"
+          fi

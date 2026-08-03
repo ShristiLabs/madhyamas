@@ -87,6 +87,17 @@ jobs:
 
           echo "Version verification passed."
 
+      - name: Check if release already exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.parse.outputs.tag }}"
+          if gh release view "$tag" --repo "${{ github.repository }}" &>/dev/null; then
+            echo "Release ${tag} already exists (likely created by the dispatch workflow). Skipping."
+            exit 0
+          fi
+          echo "Release ${tag} does not exist yet. Proceeding."
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
