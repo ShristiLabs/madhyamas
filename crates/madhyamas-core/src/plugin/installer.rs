@@ -111,7 +111,11 @@ impl PluginInstaller {
         let actual_checksum = hex_sha256(&bytes);
         let checksum_verified = match &checksum {
             Some(expected) => {
-                if expected.eq_ignore_ascii_case(&actual_checksum) {
+                // Strip optional "sha256:" prefix before comparing.
+                let normalized = expected
+                    .strip_prefix("sha256:")
+                    .unwrap_or(expected);
+                if normalized.eq_ignore_ascii_case(&actual_checksum) {
                     true
                 } else {
                     return Err(Error::Config(format!(
