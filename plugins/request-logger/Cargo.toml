@@ -1,6 +1,6 @@
 [package]
 name = "madhyamas-plugin-request-logger"
-version = "1.0.0"
+version = "1.0.1-SNAPSHOT"
 edition = "2021"
 license = "MIT"
 description = "Request Logger plugin for Madhyamas — logs method/host/path of every request"

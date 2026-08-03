@@ -1,6 +1,6 @@
 id = "madhyamas.request-logger"
 name = "Request Logger"
-version = "1.0.0"
+version = "1.0.1-SNAPSHOT"
 description = "Logs the method, host, and path of every request to the plugin console"
 author = "Madhyamas Team"
 license = "MIT"
