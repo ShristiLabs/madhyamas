@@ -62,7 +62,12 @@ impl ScriptPersistence {
 
         // Migration: add on_error column to pre-existing scripts tables.
         // Stores the per-script error policy ('continue' or 'stop_chain').
-        Self::ensure_column(conn, "scripts", "on_error", "TEXT NOT NULL DEFAULT 'stop_chain'")?;
+        Self::ensure_column(
+            conn,
+            "scripts",
+            "on_error",
+            "TEXT NOT NULL DEFAULT 'stop_chain'",
+        )?;
 
         // Migration: add traffic_entry_id and hook columns to
         // pre-existing script_executions tables.

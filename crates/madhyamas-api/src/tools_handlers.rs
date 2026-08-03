@@ -10,6 +10,7 @@ use madhyamas_core::{
     GrpcDirection, GrpcFilter, Script, ScriptErrorPolicy, ScriptMatch, ScriptTemplates,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 // ============== gRPC Handlers ==============
@@ -706,6 +707,364 @@ pub async fn reload_plugins(State(state): State<Arc<AppState>>) -> impl IntoResp
             Json(serde_json::json!({ "reloaded": count })),
         )
             .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Install a plugin from a URL or registry id.
+///
+/// Request body: `{ "source": "url"|"registry", "url"?: "...", "id"?: "...", "checksum"?: "..." }`
+pub async fn install_plugin(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let source = body.get("source").and_then(|v| v.as_str());
+    let url = body.get("url").and_then(|v| v.as_str());
+    let id = body.get("id").and_then(|v| v.as_str());
+    let checksum = body.get("checksum").and_then(|v| v.as_str());
+
+    let install_source = match source {
+        Some("url") => {
+            let url = match url {
+                Some(u) => u.to_string(),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": "missing 'url' field" })),
+                    )
+                        .into_response();
+                }
+            };
+            madhyamas_core::plugin::InstallSource::Url {
+                url,
+                checksum: checksum.map(str::to_string),
+            }
+        }
+        Some("registry") => {
+            let id = match id {
+                Some(i) => i.to_string(),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": "missing 'id' field" })),
+                    )
+                        .into_response();
+                }
+            };
+            // Resolve registry id to a URL + checksum.
+            let mut registry = state.plugin_registry.lock().await;
+            match registry.get(&id).await {
+                Ok(Some(entry)) if !entry.download_url.is_empty() => {
+                    madhyamas_core::plugin::InstallSource::Url {
+                        url: entry.download_url.clone(),
+                        checksum: Some(entry.checksum.clone()),
+                    }
+                }
+                _ => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({ "error": format!("registry entry '{}' not found or has no download URL", id) })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "missing or invalid 'source' field (expected 'url' or 'registry')" })),
+            )
+                .into_response();
+        }
+    };
+
+    match state
+        .plugin_manager
+        .install_plugin(&install_source, checksum)
+        .await
+    {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Uninstall a plugin.
+pub async fn uninstall_plugin(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.plugin_manager.uninstall_plugin(&id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Get a plugin's current settings.
+pub async fn get_plugin_settings(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.plugin_manager.get_settings(&id) {
+        Some(settings) => Json(settings).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Plugin not found" })),
+        )
+            .into_response(),
+    }
+}
+
+/// Update a plugin's settings.
+pub async fn update_plugin_settings(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(settings): Json<HashMap<String, serde_json::Value>>,
+) -> impl IntoResponse {
+    if state.plugin_manager.update_settings(&id, settings) {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Plugin not found" })),
+        )
+            .into_response()
+    }
+}
+
+/// Get a plugin's settings schema (for UI generation).
+pub async fn get_plugin_settings_schema(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.plugin_manager.get_settings_schema(&id) {
+        Some(schema) => Json(schema).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Plugin not found or has no settings schema" })),
+        )
+            .into_response(),
+    }
+}
+
+/// Get a plugin's declarative UI panels.
+pub async fn get_plugin_panels(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.plugin_manager.get_plugin(&id) {
+        Some(plugin) => Json(plugin.manifest.panels).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Plugin not found" })),
+        )
+            .into_response(),
+    }
+}
+
+/// Get a plugin's recent invocation logs.
+pub async fn get_plugin_logs(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let limit = params
+        .get("limit")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(50);
+    let logs = state.plugin_manager.get_invocations(&id, limit);
+    Json(logs).into_response()
+}
+
+/// List all registry entries (refreshes cache if stale).
+pub async fn list_registry(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let mut registry = state.plugin_registry.lock().await;
+    match registry.list().await {
+        Ok(entries) => Json(entries).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Search the registry.
+pub async fn search_registry(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let query = params.get("q").cloned().unwrap_or_default();
+    let mut registry = state.plugin_registry.lock().await;
+    match registry.search(&query).await {
+        Ok(results) => Json(results).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Get a single registry entry by id.
+pub async fn get_registry_entry(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let mut registry = state.plugin_registry.lock().await;
+    match registry.get(&id).await {
+        Ok(Some(entry)) => Json(entry).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Registry entry not found" })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Get the current registry configuration (repo, catalog URL).
+pub async fn get_registry_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let registry = state.plugin_registry.lock().await;
+    Json(serde_json::json!({
+        "repo": registry.repo(),
+        "catalog_url": registry.catalog_url(),
+        "entry_count": registry.len(),
+    }))
+}
+
+/// Update the registry repo (e.g. "owner/repo" or "owner/repo@branch").
+pub async fn set_registry_config(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let repo = body.get("repo").and_then(|v| v.as_str());
+    let Some(repo) = repo else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "missing 'repo' field" })),
+        )
+            .into_response();
+    };
+
+    let mut registry = state.plugin_registry.lock().await;
+    registry.set_repo(repo.to_string());
+    // Force a refresh with the new repo.
+    if let Err(e) = registry.refresh().await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("registry set but refresh failed: {}", e),
+                "repo": registry.repo(),
+                "catalog_url": registry.catalog_url(),
+            })),
+        )
+            .into_response();
+    }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "repo": registry.repo(),
+            "catalog_url": registry.catalog_url(),
+            "entry_count": registry.len(),
+        })),
+    )
+        .into_response()
+}
+
+/// Force-refresh the registry cache.
+pub async fn refresh_registry(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let mut registry = state.plugin_registry.lock().await;
+    match registry.refresh().await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "refreshed": true,
+                "entry_count": registry.len(),
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// List available plugin templates.
+pub async fn list_plugin_templates() -> impl IntoResponse {
+    use madhyamas_core::PluginTemplates;
+    let templates: Vec<serde_json::Value> = PluginTemplates::all()
+        .into_iter()
+        .map(|t| {
+            serde_json::json!({
+                "id": t.id.as_str(),
+                "name": t.name,
+                "description": t.description,
+                "hooks": t.hooks,
+            })
+        })
+        .collect();
+    Json(templates).into_response()
+}
+
+/// Scaffold a new plugin project from a template.
+pub async fn scaffold_plugin(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+    use madhyamas_core::{PluginTemplates, TemplateId};
+    let template = body.get("template").and_then(|v| v.as_str());
+    let name = body.get("name").and_then(|v| v.as_str());
+    let output = body.get("output").and_then(|v| v.as_str()).unwrap_or(".");
+
+    let (template_id, name, output_dir) = match (template, name) {
+        (Some(t), Some(n)) => match TemplateId::from_id(t) {
+            Some(id) => (id, n.to_string(), std::path::PathBuf::from(output)),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": format!("unknown template: {}", t) })),
+                )
+                    .into_response();
+            }
+        },
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "missing 'template' or 'name' field" })),
+            )
+                .into_response();
+        }
+    };
+
+    match PluginTemplates::scaffold(&template_id, &name, &output_dir) {
+        Ok(()) => {
+            let plugin_dir = output_dir.join(&name);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "scaffolded": true,
+                    "path": plugin_dir.to_string_lossy(),
+                    "template": template_id.as_str(),
+                    "name": name,
+                })),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),

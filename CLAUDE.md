@@ -15,11 +15,12 @@ HTTP/HTTPS debugging proxy in Rust with React web UI. Alternative to Charles Pro
 ```
 madhyamas/
 ├── crates/
-│   ├── madhyamas/          # Unified binary (subcommands: serve/mcp/cli)
-│   ├── madhyamas-core/     # Core proxy engine, TLS, traffic storage
-│   ├── madhyamas-api/      # REST/WebSocket API + embedded web assets (axum)
-│   ├── madhyamas-cli/      # CLI library (re-exported by main binary)
-│   └── madhyamas-mcp/      # MCP server library (re-exported by main binary)
+│   ├── madhyamas/             # Unified binary (subcommands: serve/mcp/cli)
+│   ├── madhyamas-core/        # Core proxy engine, TLS, traffic storage, plugins
+│   ├── madhyamas-api/         # REST/WebSocket API + embedded web assets (axum)
+│   ├── madhyamas-cli/         # CLI library (re-exported by main binary)
+│   ├── madhyamas-mcp/         # MCP server library (re-exported by main binary)
+│   └── madhyamas-plugin-sdk/  # Guest SDK for writing WASM plugins
 ├── web/                    # React + TypeScript frontend (Vite)
 ├── docs/                   # Documentation
 ├── docker/                 # Docker setup
@@ -82,6 +83,23 @@ madhyamas --help  # See all commands
   - `persistence.rs` - `ScriptPersistence`: SQLite storage for scripts and execution history
   - `api.rs` - `ScriptApi` documentation, `URLComponents` helper
   - See [docs/SCRIPTING.md](docs/SCRIPTING.md), [docs/SCRIPTING_API.md](docs/SCRIPTING_API.md), [docs/SCRIPTING_SECURITY.md](docs/SCRIPTING_SECURITY.md)
+- `plugin/` - WASM plugin system (wasmtime runtime)
+  - `wasm_runtime.rs` - `WasmRuntime`: wasmtime engine, host ABI, fuel metering, module cache
+  - `manager.rs` - `PluginManager`: lifecycle, hook dispatch, invocation logging, timers
+  - `persistence.rs` - `PluginPersistence`: SQLite storage for plugin state + invocation logs
+  - `installer.rs` - `PluginInstaller`: download, checksum verify, Ed25519 signature verify, zip extract, install/uninstall
+  - `registry.rs` - `PluginRegistry`: local + remote plugin catalog with search
+  - `signing.rs` - Ed25519 key generation, signing, and verification utilities
+  - `hot_reload.rs` - `HotReloader`: filesystem watcher (notify) for auto-reload on .wasm/manifest changes
+  - `event_bus.rs` - `PluginEventBus`: in-process pub/sub for inter-plugin communication
+  - `templates.rs` - `PluginTemplates`: built-in project scaffolding (basic, cors, request-logger, domain-blocker, response-modifier)
+  - `types.rs` - `PluginManifest`, `PluginCapability`, `PluginPanel`, `PluginPanelKind`, `PluginSettingsSchema`
+  - `hooks.rs` - `PluginHook` enum, `PluginContext`, `PluginResult`
+  - See [docs/PLUGINS.md](docs/PLUGINS.md), [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md), [docs/PLUGIN_API.md](docs/PLUGIN_API.md), [docs/PLUGIN_SECURITY.md](docs/PLUGIN_SECURITY.md)
+
+### Plugin SDK Crate (`madhyamas-plugin-sdk`)
+- `lib.rs` - Guest SDK: `Plugin` trait, `register_plugin!` macro, `Context`/`Outcome` types, bump allocator, WASM entry points
+- `examples/` - Example plugins: `cors_helper`, `request_logger`, `domain_blocker`
 
 ### API Crate (`madhyamas-api`)
 - `lib.rs` - API server setup
@@ -280,7 +298,36 @@ MCP tools (`madhyamas_list_scripts`, `madhyamas_create_script`,
 [docs/SCRIPTING.md](docs/SCRIPTING.md), [docs/SCRIPTING_API.md](docs/SCRIPTING_API.md),
 [docs/SCRIPTING_SECURITY.md](docs/SCRIPTING_SECURITY.md).
 
-**Data Directory**: `~/.madhyamas/` (certs, logs, traffic.db)
+**Plugin System**: WASM-based plugins via `wasmtime` runtime. Plugins run in
+a sandboxed WASM instance with fuel-metered CPU limits (default 10M
+instructions) and capped linear memory (256 MiB host ceiling). No
+filesystem, network, or host memory access unless explicitly linked. The
+`madhyamas-plugin-sdk` crate provides the guest SDK (`Plugin` trait,
+`register_plugin!` macro, `Context`/`Outcome` types) for writing plugins in
+Rust that compile to `plugin.wasm` via `cargo build --target
+wasm32-unknown-unknown`. Features: lifecycle hooks (on_load/enable/disable/
+unload), request/response interception and modification, short-circuit
+responses, settings (with schema for UI generation), timer hooks, SQLite
+persistence (state + invocation audit logs), install/uninstall with SHA-256
+checksum verification, Ed25519 signature verification (publisher keypairs
+via `madhyamas plugins gen-key`/`sign`), remote registry fetch, hot-reload
+via filesystem watcher (`HotReloader` with `notify`), in-process event bus
+for inter-plugin pub/sub (`PluginEventBus`), 5 built-in project templates
+(basic, cors, request-logger, domain-blocker, response-modifier) via
+`madhyamas plugins new`/`templates`, declarative UI panels (markdown,
+settings, logs, stats, widget kinds) in the manifest, and 3 example plugins
+(CORS helper, request logger, domain blocker). Configured via the Plugins
+panel in the tools sidebar (with Registry browser, install dialog, settings
+form, and logs viewer), `GET/POST/PUT/DELETE /api/plugins/*`, the
+`madhyamas plugins` CLI subcommand, or MCP tools
+(`madhyamas_list_plugins`, `madhyamas_install_plugin`,
+`madhyamas_search_registry`, `madhyamas_get_plugin_settings`, etc.). See
+[docs/PLUGINS.md](docs/PLUGINS.md),
+[docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md),
+[docs/PLUGIN_API.md](docs/PLUGIN_API.md),
+[docs/PLUGIN_SECURITY.md](docs/PLUGIN_SECURITY.md).
+
+**Data Directory**: `~/.madhyamas/` (certs, logs, traffic.db, plugins/)
 
 **API Endpoints** (all under `/api` prefix):
 
@@ -304,7 +351,7 @@ MCP tools (`madhyamas_list_scripts`, `madhyamas_create_script`,
 | Mirror | `GET /mirror`, `POST /mirror/toggle`, `PATCH /mirror/config` |
 | gRPC | `GET /grpc/connections`, `GET /grpc/streams`, `GET /grpc/frames`, `GET /grpc/stats` |
 | Scripts | `GET/POST /scripts`, `GET/PUT/DELETE /scripts/{id}`, `POST /scripts/{id}/toggle`, `GET /scripts/templates`, `GET/PUT /scripts/config`, `GET /scripts/history`, `POST /scripts/test`, `POST /scripts/validate`, `GET/DELETE /scripts/{id}/history` |
-| Plugins | `GET /plugins`, `POST /plugins/{id}/enable`, `POST /plugins/{id}/disable`, `POST /plugins/reload` |
+| Plugins | `GET /plugins`, `GET /plugins/{id}`, `POST /plugins/{id}/enable`, `POST /plugins/{id}/disable`, `GET /plugins/{id}/stats`, `POST /plugins/reload`, `POST /plugins/install`, `DELETE /plugins/{id}/uninstall`, `GET/PUT /plugins/{id}/settings`, `GET /plugins/{id}/schema`, `GET /plugins/{id}/logs`, `GET /plugins/registry`, `GET /plugins/registry/search?q=`, `GET /plugins/registry/{id}` |
 | Health | `GET /health` |
 
 > **Phase 4 (Enterprise, conditionally enabled):** `/metrics`, `/auth/*`, `/users`, `/rbac/*`, `/audit/*`, `/onboarding/*`

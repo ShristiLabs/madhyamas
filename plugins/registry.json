@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "manifest": {
+        "id": "madhyamas.cors-helper",
+        "name": "CORS Helper",
+        "version": "1.0.0",
+        "description": "Automatically add CORS headers (Access-Control-Allow-Origin: *) to every response",
+        "author": "Madhyamas Team",
+        "license": "MIT",
+        "main": "plugin.wasm",
+        "hooks": ["on_response"],
+        "capabilities": ["intercept_response"],
+        "dependencies": {},
+        "enabled_by_default": true,
+        "network": false,
+        "max_memory_pages": 64,
+        "fuel_limit": 10000000,
+        "tags": ["cors", "headers", "development"],
+        "panels": []
+      },
+      "download_url": "https://github.com/madhyamas/madhyamas-plugins/releases/download/cors-helper-v1.0.0/cors-helper.zip",
+      "checksum": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "downloads": 0,
+      "rating": 5.0,
+      "rating_count": 1,
+      "tags": ["cors", "headers", "development"],
+      "source": "registry",
+      "added_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-01T00:00:00Z"
+    },
+    {
+      "manifest": {
+        "id": "madhyamas.request-logger",
+        "name": "Request Logger",
+        "version": "1.0.0",
+        "description": "Logs the method, host, and path of every request to the plugin console",
+        "author": "Madhyamas Team",
+        "license": "MIT",
+        "main": "plugin.wasm",
+        "hooks": ["on_request"],
+        "capabilities": ["intercept_request"],
+        "dependencies": {},
+        "enabled_by_default": false,
+        "network": false,
+        "max_memory_pages": 64,
+        "fuel_limit": 10000000,
+        "tags": ["logging", "debugging"],
+        "panels": []
+      },
+      "download_url": "https://github.com/madhyamas/madhyamas-plugins/releases/download/request-logger-v1.0.0/request-logger.zip",
+      "checksum": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "downloads": 0,
+      "rating": 4.5,
+      "rating_count": 2,
+      "tags": ["logging", "debugging"],
+      "source": "registry",
+      "added_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-01T00:00:00Z"
+    },
+    {
+      "manifest": {
+        "id": "madhyamas.domain-blocker",
+        "name": "Domain Blocker",
+        "version": "1.0.0",
+        "description": "Blocks requests to configurable domains. Demonstrates settings + short-circuit.",
+        "author": "Madhyamas Team",
+        "license": "MIT",
+        "main": "plugin.wasm",
+        "hooks": ["on_request"],
+        "capabilities": ["intercept_request", "ui_panel"],
+        "dependencies": {},
+        "enabled_by_default": false,
+        "network": false,
+        "max_memory_pages": 64,
+        "fuel_limit": 10000000,
+        "tags": ["blocking", "security"],
+        "panels": []
+      },
+      "download_url": "https://github.com/madhyamas/madhyamas-plugins/releases/download/domain-blocker-v1.0.0/domain-blocker.zip",
+      "checksum": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "downloads": 0,
+      "rating": 4.0,
+      "rating_count": 1,
+      "tags": ["blocking", "security"],
+      "source": "registry",
+      "added_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-01T00:00:00Z"
+    }
+  ]
+}

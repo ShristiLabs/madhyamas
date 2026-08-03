@@ -6,6 +6,7 @@ members = [
     "crates/madhyamas",
     "crates/madhyamas-cli",
     "crates/madhyamas-mcp",
+    "crates/madhyamas-plugin-sdk",
 ]
 
 [workspace.package]

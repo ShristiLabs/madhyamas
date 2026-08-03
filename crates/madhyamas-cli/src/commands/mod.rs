@@ -139,6 +139,34 @@ impl ApiClient {
             .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))
     }
 
+    /// Execute a PUT request with a JSON body.
+    pub async fn put(&self, path: &str, body: serde_json::Value) -> Result<serde_json::Value> {
+        let url = format!("{}/api/{}", self.base_url, path);
+        let response = self
+            .client
+            .put(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("API error: HTTP {} - {}", status, body);
+        }
+
+        // Handle 204 No Content gracefully.
+        if response.status() == reqwest::StatusCode::NO_CONTENT {
+            return Ok(serde_json::Value::Null);
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))
+    }
+
     /// Execute a POST request without parsing the response body (for 204
     /// No Content responses).
     pub async fn post_void(&self, path: &str, body: serde_json::Value) -> Result<()> {

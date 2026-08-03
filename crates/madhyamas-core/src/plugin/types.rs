@@ -28,13 +28,58 @@ pub struct PluginManifest {
     /// Plugin license
     pub license: Option<String>,
     /// Plugin dependencies (other plugins)
+    #[serde(default)]
     pub dependencies: HashMap<String, String>,
     /// Hooks the plugin subscribes to
+    #[serde(default)]
     pub hooks: Vec<String>,
     /// Plugin settings schema
     pub settings: Option<PluginSettingsSchema>,
     /// Whether the plugin is enabled by default
+    #[serde(default)]
     pub enabled_by_default: bool,
+    /// Capability flags declared by the plugin. The host enforces these at
+    /// link time (e.g. only `Network` plugins get the `http_fetch` host
+    /// function). Defaults to an empty list.
+    #[serde(default)]
+    pub capabilities: Vec<PluginCapability>,
+    /// Whether the plugin requires network access (host `http_fetch`).
+    /// Convenience shortcut for the `Network` capability. Defaults to false.
+    #[serde(default)]
+    pub network: bool,
+    /// Maximum WASM linear memory pages (1 page = 64 KiB). Defaults to 64
+    /// (4 MiB). Only honored when the `wasm-runtime` feature is enabled.
+    #[serde(default = "default_memory_pages")]
+    pub max_memory_pages: u32,
+    /// WASM fuel limit (approximate instruction budget) per hook invocation.
+    /// Defaults to 10_000_000. Only honored with `wasm-runtime`.
+    #[serde(default = "default_fuel_limit")]
+    pub fuel_limit: u64,
+    /// Interval in seconds for the `on_timer` hook. `None` (default) means
+    /// the timer hook is not scheduled.
+    #[serde(default)]
+    pub timer_interval_seconds: Option<u64>,
+    /// Optional Ed25519 public key (hex) of the trusted publisher. When
+    /// present, installed plugin packages must be signed with the
+    /// corresponding private key. See `docs/PLUGIN_SECURITY.md`.
+    #[serde(default)]
+    pub publisher_public_key: Option<String>,
+    /// Optional list of tags used by the registry for search/discovery.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Optional declarative UI panels. Each panel is rendered in the web UI's
+    /// plugin detail view. Panels can display static content, settings forms,
+    /// live data, or custom widgets.
+    #[serde(default)]
+    pub panels: Vec<PluginPanel>,
+}
+
+fn default_memory_pages() -> u32 {
+    64
+}
+
+fn default_fuel_limit() -> u64 {
+    10_000_000
 }
 
 /// Plugin settings schema for UI generation
@@ -68,6 +113,63 @@ pub enum PluginSettingType {
     Url,
     Path,
     Json,
+}
+
+/// A declarative UI panel that a plugin can render in the web UI.
+///
+/// Panels are defined in the plugin manifest and rendered by the frontend
+/// based on the `kind` field. This allows plugins to provide custom UI
+/// without shipping JavaScript.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginPanel {
+    /// Panel identifier (unique within the plugin).
+    pub id: String,
+    /// Display title shown in the panel header.
+    pub title: String,
+    /// Panel kind — determines how the frontend renders it.
+    pub kind: PluginPanelKind,
+    /// Panel contents (depends on `kind`).
+    #[serde(default)]
+    pub content: PluginPanelContent,
+    /// Optional icon name (Lucide icon identifier, e.g. "shield", "globe").
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Display order (lower = first). Defaults to 0.
+    #[serde(default)]
+    pub order: i32,
+}
+
+/// The kind of a plugin panel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginPanelKind {
+    /// Static markdown content (rendered as read-only documentation).
+    Markdown,
+    /// A settings form generated from the plugin's settings schema.
+    Settings,
+    /// A live data table showing invocation logs.
+    Logs,
+    /// A custom HTML/JS widget (rendered in a sandboxed iframe).
+    Widget,
+    /// A stats/metrics dashboard (shows plugin statistics).
+    Stats,
+}
+
+/// The content of a plugin panel, depending on its kind.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginPanelContent {
+    /// Markdown text (for `Markdown` kind).
+    #[serde(default)]
+    pub markdown: Option<String>,
+    /// Widget HTML (for `Widget` kind). Rendered in a sandboxed iframe.
+    #[serde(default)]
+    pub html: Option<String>,
+    /// Widget JavaScript (for `Widget` kind). Injected into the iframe.
+    #[serde(default)]
+    pub script: Option<String>,
+    /// Additional data passed to the panel (key-value).
+    #[serde(default)]
+    pub data: HashMap<String, serde_json::Value>,
 }
 
 /// Loaded plugin
@@ -213,4 +315,24 @@ pub enum PluginCapability {
     ExportFormat,
     /// Plugin provides import formats
     ImportFormat,
+    /// Plugin requires network access (host `http_fetch`)
+    Network,
+}
+
+impl PluginCapability {
+    /// Parse a capability from its snake_case string name.
+    pub fn from_str_lossy(s: &str) -> Option<Self> {
+        Some(match s {
+            "intercept_request" => Self::InterceptRequest,
+            "intercept_response" => Self::InterceptResponse,
+            "intercept_websocket" => Self::InterceptWebSocket,
+            "intercept_grpc" => Self::InterceptGrpc,
+            "ui_panel" => Self::UiPanel,
+            "theme" => Self::Theme,
+            "export_format" => Self::ExportFormat,
+            "import_format" => Self::ImportFormat,
+            "network" => Self::Network,
+            _ => return None,
+        })
+    }
 }

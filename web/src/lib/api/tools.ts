@@ -191,6 +191,30 @@ export interface PluginManifest {
   hooks: string[];
   capabilities: string[];
   dependencies?: Record<string, string>;
+  enabled_by_default?: boolean;
+  network?: boolean;
+  max_memory_pages?: number;
+  fuel_limit?: number;
+  timer_interval_seconds?: number | null;
+  publisher_public_key?: string | null;
+  tags?: string[];
+  panels?: PluginPanel[];
+}
+
+export interface PluginPanel {
+  id: string;
+  title: string;
+  kind: 'markdown' | 'settings' | 'logs' | 'widget' | 'stats';
+  content: PluginPanelContent;
+  icon?: string;
+  order?: number;
+}
+
+export interface PluginPanelContent {
+  markdown?: string;
+  html?: string;
+  script?: string;
+  data?: Record<string, unknown>;
 }
 
 export interface PluginStats {
@@ -199,6 +223,58 @@ export interface PluginStats {
   errors: number;
   avg_duration_ms: number;
   last_executed_at?: string;
+  invocations?: number;
+  total_time_ms?: number;
+  last_invoked?: string;
+}
+
+export interface PluginSettingField {
+  key: string;
+  label: string;
+  field_type: 'text' | 'number' | 'boolean' | 'select' | 'textarea' | 'json';
+  default?: unknown;
+  description?: string;
+  options?: string[];
+  required?: boolean;
+}
+
+export interface PluginSettingsSchema {
+  fields: PluginSettingField[];
+}
+
+export interface PluginInvocationLog {
+  id: string;
+  plugin_id: string;
+  hook: string;
+  duration_ms: number;
+  fuel_consumed?: number | null;
+  success: boolean;
+  error?: string | null;
+  logs: string[];
+  modified: boolean;
+  timestamp: string;
+}
+
+export interface RegistryEntry {
+  manifest: PluginManifest;
+  download_url: string;
+  checksum: string;
+  downloads: number;
+  rating: number;
+  rating_count: number;
+  capabilities: string[];
+  tags: string[];
+  source: string;
+  added_at: string;
+  updated_at: string;
+}
+
+export interface InstallResult {
+  plugin_id: string;
+  version: string;
+  path: string;
+  checksum_verified: boolean;
+  signature_verified: boolean;
 }
 
 // ==================== gRPC API ====================
@@ -521,6 +597,202 @@ export function useReloadPlugins() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['plugins'] });
+    },
+  });
+}
+
+export function useInstallPlugin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: {
+      source: 'url' | 'registry';
+      target: string;
+      checksum?: string;
+    }): Promise<InstallResult> => {
+      const body: Record<string, unknown> = { source: params.source };
+      if (params.source === 'url') {
+        body.url = params.target;
+        if (params.checksum) body.checksum = params.checksum;
+      } else {
+        body.id = params.target;
+      }
+      return apiPost<InstallResult>('/plugins/install', body);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['plugin-registry'] });
+    },
+  });
+}
+
+export function useUninstallPlugin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      return apiDeleteVoid(`/plugins/${id}/uninstall`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plugins'] });
+    },
+  });
+}
+
+export function usePluginSettings(id: string) {
+  return useQuery({
+    queryKey: ['plugin-settings', id],
+    queryFn: async (): Promise<Record<string, unknown>> => {
+      return apiGet<Record<string, unknown>>(`/plugins/${id}/settings`);
+    },
+    enabled: !!id,
+  });
+}
+
+export function usePluginSettingsSchema(id: string) {
+  return useQuery({
+    queryKey: ['plugin-schema', id],
+    queryFn: async (): Promise<PluginSettingsSchema> => {
+      return apiGet<PluginSettingsSchema>(`/plugins/${id}/schema`);
+    },
+    enabled: !!id,
+  });
+}
+
+export function usePluginPanels(id: string) {
+  return useQuery({
+    queryKey: ['plugin-panels', id],
+    queryFn: async (): Promise<PluginPanel[]> => {
+      return apiGet<PluginPanel[]>(`/plugins/${id}/panels`);
+    },
+    enabled: !!id,
+  });
+}
+
+export interface PluginTemplateInfo {
+  id: string;
+  name: string;
+  description: string;
+  hooks: string[];
+}
+
+export function usePluginTemplates() {
+  return useQuery({
+    queryKey: ['plugin-templates'],
+    queryFn: async (): Promise<PluginTemplateInfo[]> => {
+      return apiGet<PluginTemplateInfo[]>('/plugins/templates');
+    },
+  });
+}
+
+export function useScaffoldPlugin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: {
+      template: string;
+      name: string;
+      output?: string;
+    }): Promise<{ scaffolded: boolean; path: string; template: string; name: string }> => {
+      const body: Record<string, unknown> = {
+        template: params.template,
+        name: params.name,
+      };
+      if (params.output) body.output = params.output;
+      return apiPost<{ scaffolded: boolean; path: string; template: string; name: string }>(
+        '/plugins/scaffold',
+        body
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plugins'] });
+    },
+  });
+}
+
+export function useUpdatePluginSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: {
+      id: string;
+      settings: Record<string, unknown>;
+    }): Promise<void> => {
+      return apiPut(`/plugins/${params.id}/settings`, params.settings);
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['plugin-settings', variables.id] });
+      queryClient.invalidateQueries({ queryKey: ['plugins'] });
+    },
+  });
+}
+
+export function usePluginLogs(id: string, limit = 50) {
+  return useQuery({
+    queryKey: ['plugin-logs', id, limit],
+    queryFn: async (): Promise<PluginInvocationLog[]> => {
+      return apiGet<PluginInvocationLog[]>(`/plugins/${id}/logs?limit=${limit}`);
+    },
+    enabled: !!id,
+    refetchInterval: 5000,
+  });
+}
+
+export function usePluginRegistry() {
+  return useQuery({
+    queryKey: ['plugin-registry'],
+    queryFn: async (): Promise<RegistryEntry[]> => {
+      return apiGet<RegistryEntry[]>('/plugins/registry');
+    },
+  });
+}
+
+export function useSearchPluginRegistry(query: string) {
+  return useQuery({
+    queryKey: ['plugin-registry-search', query],
+    queryFn: async (): Promise<RegistryEntry[]> => {
+      return apiGet<RegistryEntry[]>(
+        `/plugins/registry/search?q=${encodeURIComponent(query)}`
+      );
+    },
+    enabled: query.length > 0,
+  });
+}
+
+export interface RegistryConfig {
+  repo: string;
+  catalog_url: string;
+  entry_count: number;
+}
+
+export function useRegistryConfig() {
+  return useQuery({
+    queryKey: ['plugin-registry-config'],
+    queryFn: async (): Promise<RegistryConfig> => {
+      return apiGet<RegistryConfig>('/plugins/registry/config');
+    },
+  });
+}
+
+export function useSetRegistryConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (repo: string): Promise<RegistryConfig> => {
+      return apiPut<RegistryConfig>('/plugins/registry/config', { repo });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plugin-registry'] });
+      queryClient.invalidateQueries({ queryKey: ['plugin-registry-config'] });
+    },
+  });
+}
+
+export function useRefreshRegistry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<{ refreshed: boolean; entry_count: number }> => {
+      return apiPost<{ refreshed: boolean; entry_count: number }>(
+        '/plugins/registry/refresh'
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plugin-registry'] });
     },
   });
 }

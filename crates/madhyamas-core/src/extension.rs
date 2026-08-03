@@ -471,9 +471,19 @@ mod plugin_adapter {
             let mut modified = false;
             let mut logs = Vec::new();
             let mut errors = Vec::new();
+            let mut handled = false;
             for (_id, r) in results {
                 if r.modified {
                     modified = true;
+                    if let Some(req) = r.request {
+                        apply_request_modifications(ctx, &req);
+                    }
+                }
+                if r.handled {
+                    handled = true;
+                    if let Some(resp) = r.custom_response {
+                        ctx.response = Some(plugin_response_to_extension(resp));
+                    }
                 }
                 if let Some(e) = r.error {
                     errors.push(e);
@@ -484,8 +494,8 @@ mod plugin_adapter {
                 modified,
                 logs,
                 error: errors.into_iter().next(),
-                continue_chain: true,
-                handled: false,
+                continue_chain: !handled,
+                handled,
             }
         }
 
@@ -495,9 +505,19 @@ mod plugin_adapter {
             let mut modified = false;
             let mut logs = Vec::new();
             let mut errors = Vec::new();
+            let mut handled = false;
             for (_id, r) in results {
                 if r.modified {
                     modified = true;
+                    if let Some(resp) = r.response {
+                        apply_response_modifications(ctx, &resp);
+                    }
+                }
+                if r.handled {
+                    handled = true;
+                    if let Some(resp) = r.custom_response {
+                        ctx.response = Some(plugin_response_to_extension(resp));
+                    }
                 }
                 if let Some(e) = r.error {
                     errors.push(e);
@@ -508,9 +528,51 @@ mod plugin_adapter {
                 modified,
                 logs,
                 error: errors.into_iter().next(),
-                continue_chain: true,
-                handled: false,
+                continue_chain: !handled,
+                handled,
             }
+        }
+    }
+
+    /// Apply a plugin's modified request back to the [`ExtensionContext`].
+    fn apply_request_modifications(ctx: &mut ExtensionContext, req: &PluginRequest) {
+        if let Some(ext_req) = ctx.request.as_mut() {
+            ext_req.method = req.method.clone();
+            ext_req.url = req.url.clone();
+            ext_req.host = req.host.clone();
+            ext_req.path = req.path.clone();
+            ext_req.headers = req.headers.clone();
+            if let Some(ref body) = req.body {
+                ext_req.body = Some(body.clone());
+            }
+            ext_req.content_type = req.content_type.clone();
+        }
+    }
+
+    /// Apply a plugin's modified response back to the [`ExtensionContext`].
+    fn apply_response_modifications(ctx: &mut ExtensionContext, resp: &PluginResponse) {
+        if let Some(ext_resp) = ctx.response.as_mut() {
+            ext_resp.status_code = resp.status_code;
+            ext_resp.status_message = resp.status_message.clone();
+            ext_resp.headers = resp.headers.clone();
+            if let Some(ref body) = resp.body {
+                ext_resp.body = Some(body.clone());
+            }
+            ext_resp.content_type = resp.content_type.clone();
+            ext_resp.duration_ms = resp.duration_ms;
+        }
+    }
+
+    /// Convert a [`PluginResponse`] (e.g. a custom short-circuit response)
+    /// into an [`ExtensionResponse`].
+    fn plugin_response_to_extension(resp: PluginResponse) -> ExtensionResponse {
+        ExtensionResponse {
+            status_code: resp.status_code,
+            status_message: resp.status_message,
+            headers: resp.headers,
+            body: resp.body,
+            content_type: resp.content_type,
+            duration_ms: resp.duration_ms,
         }
     }
 

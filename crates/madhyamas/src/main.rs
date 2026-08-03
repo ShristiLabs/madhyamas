@@ -14,6 +14,8 @@ use std::sync::Arc;
 use madhyamas_api::{create_router, RateLimitConfig};
 #[cfg(feature = "grpc")]
 use madhyamas_core::GrpcManager;
+#[cfg(all(feature = "plugins", feature = "wasm-runtime"))]
+use madhyamas_core::WasmRuntime;
 use madhyamas_core::{
     AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, ExtensionManager,
     InterceptStore, MemoryManager, MetricsCollector, MirrorWriter, MockManager, PerformanceMonitor,
@@ -21,7 +23,7 @@ use madhyamas_core::{
     TrafficStore, UpstreamProxyConfig,
 };
 #[cfg(feature = "plugins")]
-use madhyamas_core::{PluginExtension, PluginManager};
+use madhyamas_core::{PluginExtension, PluginInstaller, PluginManager, PluginPersistence};
 #[cfg(feature = "scripting")]
 use madhyamas_core::{ScriptExtension, ScriptRuntime};
 
@@ -666,7 +668,59 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         Arc::new(runtime)
     };
     #[cfg(feature = "plugins")]
-    let plugin_manager = Arc::new(PluginManager::default());
+    let plugin_manager = {
+        // Derive the plugin install + persistence paths from the data
+        // directory (same folder as traffic.db).
+        let data_dir = std::path::Path::new(&config.db_path)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let plugins_dir = data_dir.join("plugins");
+        std::fs::create_dir_all(&plugins_dir).ok();
+        let plugins_db = data_dir.join("plugins.db");
+
+        let mut mgr = PluginManager::new();
+
+        // Attach SQLite persistence (state, settings, invocation logs).
+        match PluginPersistence::open(&plugins_db) {
+            Ok(p) => {
+                info!("Plugin persistence opened at {:?}", plugins_db);
+                mgr = mgr.with_persistence(p);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to open plugin persistence database at {:?}: {}",
+                    plugins_db,
+                    e
+                );
+            }
+        }
+
+        // Attach the installer (download, checksum verify, zip extract).
+        let installer = Arc::new(PluginInstaller::new(plugins_dir.clone()));
+        mgr = mgr.with_installer(installer);
+
+        // Attach the WASM runtime (enables plugin code execution).
+        #[cfg(feature = "wasm-runtime")]
+        {
+            match WasmRuntime::new() {
+                Ok(rt) => {
+                    info!("WASM runtime initialized for plugins");
+                    mgr = mgr.with_wasm_runtime(Arc::new(rt));
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to initialize WASM runtime: {}", e);
+                }
+            }
+        }
+
+        // Discover and load any plugins already on disk.
+        if let Err(e) = mgr.refresh() {
+            tracing::warn!("Initial plugin discovery failed: {}", e);
+        }
+
+        Arc::new(mgr)
+    };
 
     // Build the unified extension manager. Script and plugin runtimes are
     // registered as adapters so the pipeline can invoke them through a

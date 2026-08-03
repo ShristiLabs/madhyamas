@@ -45,6 +45,63 @@ impl PluginHook {
             Self::OnTimer => "on_timer",
         }
     }
+
+    /// The WASM export name the host looks up when dispatching this hook.
+    pub fn export_name(&self) -> &'static str {
+        self.as_str()
+    }
+
+    /// Stable numeric id used by the WASM ABI (`__madhyamas_hook`'s `hook_id`
+    /// argument). Do not renumber existing variants — guest SDKs depend on
+    /// these values.
+    pub fn export_id(&self) -> i32 {
+        match self {
+            Self::OnLoad => 0,
+            Self::OnEnable => 1,
+            Self::OnDisable => 2,
+            Self::OnUnload => 3,
+            Self::OnRequest => 4,
+            Self::OnResponse => 5,
+            Self::OnWebSocket => 6,
+            Self::OnGrpc => 7,
+            Self::OnSettingsChange => 8,
+            Self::OnTimer => 9,
+        }
+    }
+
+    /// Parse a hook from its numeric export id (inverse of [`export_id`]).
+    pub fn from_export_id(id: i32) -> Option<Self> {
+        Some(match id {
+            0 => Self::OnLoad,
+            1 => Self::OnEnable,
+            2 => Self::OnDisable,
+            3 => Self::OnUnload,
+            4 => Self::OnRequest,
+            5 => Self::OnResponse,
+            6 => Self::OnWebSocket,
+            7 => Self::OnGrpc,
+            8 => Self::OnSettingsChange,
+            9 => Self::OnTimer,
+            _ => return None,
+        })
+    }
+
+    /// Parse a hook from its snake_case string name.
+    pub fn from_str_lossy(s: &str) -> Option<Self> {
+        Some(match s {
+            "on_load" => Self::OnLoad,
+            "on_enable" => Self::OnEnable,
+            "on_disable" => Self::OnDisable,
+            "on_unload" => Self::OnUnload,
+            "on_request" => Self::OnRequest,
+            "on_response" => Self::OnResponse,
+            "on_websocket" => Self::OnWebSocket,
+            "on_grpc" => Self::OnGrpc,
+            "on_settings_change" => Self::OnSettingsChange,
+            "on_timer" => Self::OnTimer,
+            _ => return None,
+        })
+    }
 }
 
 impl std::fmt::Display for PluginHook {

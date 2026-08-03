@@ -24,3 +24,6 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
+madhyamas-core = { path = "../madhyamas-core", version = "0.1.6", default-features = false, features = [
+    "plugins",
+] }

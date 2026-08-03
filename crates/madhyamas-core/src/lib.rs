@@ -101,8 +101,17 @@ pub use replay::{
 };
 
 // Re-exports from plugin
+#[cfg(all(feature = "plugins", feature = "wasm-runtime"))]
+pub use plugin::HotReloader;
+#[cfg(all(feature = "plugins", feature = "wasm-runtime"))]
+pub use plugin::WasmRuntime;
 #[cfg(feature = "plugins")]
-pub use plugin::PluginManager;
+pub use plugin::{
+    bytes_to_hex, generate_keypair, hex_to_bytes, sign_package, verify_package, PluginCapability,
+    PluginError, PluginEventBus, PluginInstaller, PluginKeypair, PluginManager, PluginManifest,
+    PluginPersistence, PluginRegistry, PluginSettingField, PluginSettingType, PluginSettingsSchema,
+    PluginState, PluginStats, PluginTemplate, PluginTemplates, TemplateId,
+};
 
 // Re-exports from performance
 pub use performance::{

@@ -863,6 +863,93 @@ impl ToolExecutor {
                     text: serde_json::to_string_pretty(&result).unwrap_or_default(),
                 }])
             }
+            "madhyamas_install_plugin" => {
+                let args = self.parse_args::<InstallPluginArgs>(&arguments)?;
+                let result = plugins::install_plugin(
+                    &self.client,
+                    &self.api_url,
+                    &args.source,
+                    &args.target,
+                    args.checksum.as_deref(),
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_uninstall_plugin" => {
+                let args = self.parse_args::<PluginIdArgs>(&arguments)?;
+                let result =
+                    plugins::uninstall_plugin(&self.client, &self.api_url, &sanitize_id(&args.id)?)
+                        .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_search_registry" => {
+                let args = self.parse_args::<SearchArgs>(&arguments)?;
+                let result =
+                    plugins::search_registry(&self.client, &self.api_url, &args.query).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_list_registry" => {
+                let result = plugins::list_registry(&self.client, &self.api_url).await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_plugin_schema" => {
+                let args = self.parse_args::<PluginIdArgs>(&arguments)?;
+                let result = plugins::get_plugin_schema(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_plugin_settings" => {
+                let args = self.parse_args::<PluginIdArgs>(&arguments)?;
+                let result = plugins::get_plugin_settings(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_update_plugin_settings" => {
+                let args = self.parse_args::<UpdatePluginSettingsArgs>(&arguments)?;
+                let result = plugins::update_plugin_settings(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.settings,
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
+            "madhyamas_get_plugin_logs" => {
+                let args = self.parse_args::<PluginLogsArgs>(&arguments)?;
+                let result = plugins::get_plugin_logs(
+                    &self.client,
+                    &self.api_url,
+                    &sanitize_id(&args.id)?,
+                    args.limit.unwrap_or(50),
+                )
+                .await?;
+                Ok(vec![ContentBlock::Text {
+                    text: serde_json::to_string_pretty(&result).unwrap_or_default(),
+                }])
+            }
 
             _ => Err(McpError::NotFound(format!("Unknown tool: {}", tool_name))),
         }
@@ -1040,6 +1127,37 @@ struct EntryArgs {
 #[derive(Debug, Clone, Deserialize)]
 struct SearchArgs {
     query: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PluginIdArgs {
+    id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct InstallPluginArgs {
+    #[serde(default = "default_source")]
+    source: String,
+    target: String,
+    #[serde(default)]
+    checksum: Option<String>,
+}
+
+fn default_source() -> String {
+    "url".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdatePluginSettingsArgs {
+    id: String,
+    settings: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PluginLogsArgs {
+    id: String,
+    #[serde(default)]
+    limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

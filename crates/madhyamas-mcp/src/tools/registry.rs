@@ -1306,6 +1306,129 @@ impl ToolRegistry {
                     "properties": {}
                 }),
             },
+            Tool {
+                name: "madhyamas_install_plugin".to_string(),
+                description: "Install a plugin from a URL or registry id.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "source": {
+                            "type": "string",
+                            "description": "Install source: \"url\" or \"registry\"",
+                            "default": "url"
+                        },
+                        "target": {
+                            "type": "string",
+                            "description": "Plugin URL (source=url) or registry id (source=registry)"
+                        },
+                        "checksum": {
+                            "type": "string",
+                            "description": "Expected SHA-256 checksum (optional for URL source)"
+                        }
+                    },
+                    "required": ["target"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_uninstall_plugin".to_string(),
+                description: "Uninstall a plugin (removes from disk and persistence).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the plugin to uninstall"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_search_registry".to_string(),
+                description: "Search the plugin registry by name, description, or tags.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query"
+                        }
+                    },
+                    "required": ["query"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_list_registry".to_string(),
+                description: "List all available plugins in the registry.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_plugin_schema".to_string(),
+                description: "Get a plugin's settings schema (for UI generation).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the plugin"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_plugin_settings".to_string(),
+                description: "Get a plugin's current settings.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the plugin"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_update_plugin_settings".to_string(),
+                description: "Update a plugin's settings.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the plugin"
+                        },
+                        "settings": {
+                            "type": "object",
+                            "description": "Settings as a JSON object"
+                        }
+                    },
+                    "required": ["id", "settings"]
+                }),
+            },
+            Tool {
+                name: "madhyamas_get_plugin_logs".to_string(),
+                description: "Get a plugin's recent invocation logs.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the plugin"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of log entries (default 50)"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
         ];
 
         Self { tools }

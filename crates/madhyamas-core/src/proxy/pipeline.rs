@@ -385,9 +385,10 @@ impl<'a> Pipeline<'a> {
                         status_message: ext_resp.status_message.clone(),
                         headers: ext_resp.headers.clone(),
                         body: ext_resp.body.clone(),
-                        content_type: ext_resp.content_type.clone().or_else(|| {
-                            ext_resp.headers.get("Content-Type").cloned()
-                        }),
+                        content_type: ext_resp
+                            .content_type
+                            .clone()
+                            .or_else(|| ext_resp.headers.get("Content-Type").cloned()),
                         duration_ms: 0,
                         http_version: request_data.http_version.clone(),
                     };
@@ -541,7 +542,8 @@ impl<'a> Pipeline<'a> {
                 // Run script and plugin response hooks
                 #[cfg(any(feature = "scripting", feature = "plugins"))]
                 {
-                    let hook_ctx = self.run_response_hooks(request_data, &response, &request_id, &session_id);
+                    let hook_ctx =
+                        self.run_response_hooks(request_data, &response, &request_id, &session_id);
                     if let Some(ctx) = hook_ctx {
                         if let Some(ref ext_resp) = ctx.response {
                             response.status_code = ext_resp.status_code;
@@ -549,9 +551,10 @@ impl<'a> Pipeline<'a> {
                             if let Some(ref body) = ext_resp.body {
                                 response.body = Some(body.clone());
                             }
-                            response.content_type = ext_resp.content_type.clone().or_else(|| {
-                                response.headers.get("Content-Type").cloned()
-                            });
+                            response.content_type = ext_resp
+                                .content_type
+                                .clone()
+                                .or_else(|| response.headers.get("Content-Type").cloned());
                             if let Some(ref msg) = ext_resp.status_message {
                                 response.status_message = Some(msg.clone());
                             }
@@ -626,7 +629,10 @@ impl<'a> Pipeline<'a> {
                 // This is done AFTER all intercept hooks (scripts, rewrites,
                 // breakpoints) have run so that response modifications are
                 // visible to the client.
-                if let Err(e) = self.write_response_to_client(&response, client_stream).await {
+                if let Err(e) = self
+                    .write_response_to_client(&response, client_stream)
+                    .await
+                {
                     warn!("Failed to write response to client: {}", e);
                     return Ok(RequestOutcome::Aborted);
                 }
@@ -1364,7 +1370,10 @@ impl<'a> Pipeline<'a> {
                 build_extension_context(request_data, None, "on_request", request_id, session_id);
             let handled = ext_mgr.on_request(&mut ctx);
             if handled {
-                debug!("Script/plugin short-circuited request: {}", request_data.url);
+                debug!(
+                    "Script/plugin short-circuited request: {}",
+                    request_data.url
+                );
             }
             return Some(ctx);
         }
@@ -1426,8 +1435,13 @@ impl<'a> Pipeline<'a> {
     ) -> Option<ExtensionContext> {
         // Unified extension manager path.
         if let Some(ext_mgr) = self.extension_manager {
-            let mut ctx =
-                build_extension_context(request_data, Some(response), "on_response", request_id, session_id);
+            let mut ctx = build_extension_context(
+                request_data,
+                Some(response),
+                "on_response",
+                request_id,
+                session_id,
+            );
             ext_mgr.on_response(&mut ctx);
             return Some(ctx);
         }

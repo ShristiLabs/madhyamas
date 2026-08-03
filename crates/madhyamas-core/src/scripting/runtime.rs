@@ -596,7 +596,12 @@ impl ScriptRuntime {
                         .request
                         .as_ref()
                         .map(|r| {
-                            (r.method.as_str(), r.host.as_str(), r.path.as_str(), r.url.as_str())
+                            (
+                                r.method.as_str(),
+                                r.host.as_str(),
+                                r.path.as_str(),
+                                r.url.as_str(),
+                            )
                         })
                         .unwrap_or(("", "", "", ""));
                     if !filter.matches(method, host, path, url) {
@@ -609,8 +614,8 @@ impl ScriptRuntime {
             // policy is StopChain, skip all subsequent scripts for this
             // hook.  The request itself still flows through the proxy
             // pipeline normally — only script processing stops.
-            let stop_chain = result.error.is_some()
-                && script.on_error == ScriptErrorPolicy::StopChain;
+            let stop_chain =
+                result.error.is_some() && script.on_error == ScriptErrorPolicy::StopChain;
             results.push(result);
             if stop_chain {
                 break;
@@ -726,8 +731,7 @@ impl ScriptRuntime {
     pub fn clear_script_history(&self, script_id: &str) {
         if let Some(ref db) = *self.db.read() {
             let conn = db.lock();
-            let _ =
-                super::persistence::ScriptPersistence::clear_executions(&conn, Some(script_id));
+            let _ = super::persistence::ScriptPersistence::clear_executions(&conn, Some(script_id));
         }
         let mut history = self.history.write();
         history.retain(|e| e.script_id != script_id);
@@ -1058,8 +1062,7 @@ function onRequest(request, context) {
             .to_string(),
         );
         s.hooks = vec!["on_request".to_string()];
-        s.description =
-            Some("Adds an Authorization: Bearer header to every request.".to_string());
+        s.description = Some("Adds an Authorization: Bearer header to every request.".to_string());
         s
     }
 
@@ -1097,8 +1100,7 @@ function onResponse(request, response, context) {
         );
         s.hooks = vec!["on_response".to_string()];
         s.description = Some(
-            "Patches a field (price) in JSON response bodies to a fixed value (0.0)."
-                .to_string(),
+            "Patches a field (price) in JSON response bodies to a fixed value (0.0).".to_string(),
         );
         s
     }

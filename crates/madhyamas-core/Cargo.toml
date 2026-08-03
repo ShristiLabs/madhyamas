@@ -8,13 +8,18 @@ repository.workspace = true
 authors.workspace = true
 
 [features]
-default = ["grpc", "scripting", "plugins", "enterprise"]
+default = ["grpc", "scripting", "plugins", "wasm-runtime", "enterprise"]
 ## gRPC traffic interception and decoding module
 grpc = []
 ## JavaScript scripting runtime for custom traffic manipulation
 scripting = ["dep:boa_engine", "dep:sha2"]
 ## Plugin system for extending Madhyamas with custom code
-plugins = []
+## (manifest discovery, registry, settings, install/uninstall — no code execution)
+plugins = ["dep:sha2"]
+## Sandboxed WASM plugin code execution via `wasmtime`.
+## Implies `plugins`. Adds a heavy build dependency (~10MB); disable for
+## manifest-only plugin management.
+wasm-runtime = ["plugins", "dep:wasmtime", "dep:notify"]
 ## Enterprise features: auth, RBAC, audit logs, onboarding
 enterprise = ["dep:jsonwebtoken"]
 
@@ -61,6 +66,28 @@ local-ip-address = "0.6"
 sysinfo.workspace = true
 boa_engine = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
+# WASM plugin runtime (sandboxed plugin code execution)
+wasmtime = { version = "26", optional = true, default-features = false, features = [
+    "cranelift",
+    "runtime",
+    "parallel-compilation",
+    "cache",
+] }
+# Plugin hot-reload (filesystem watcher)
+notify = { version = "7", optional = true, default-features = false, features = [
+    "macos_fsevent",
+] }
+# Ed25519 plugin signature verification (Phase 3 signing)
+ed25519-dalek = { version = "2", default-features = false, features = [
+    "std",
+    "rand_core",
+] }
+# OS RNG for Ed25519 key generation
+rand_core = { version = "0.6", default-features = false, features = ["std"] }
+# Plugin package (de)compression for install/uninstall
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Temp dirs for install extraction (also used in tests)
+tempfile = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

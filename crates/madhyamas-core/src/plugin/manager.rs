@@ -1,5 +1,22 @@
-//! Plugin manager for loading, managing, and executing plugins
+//! Plugin manager for loading, managing, and executing plugins.
+//!
+//! The manager ties together manifest discovery, the sandboxed WASM runtime
+//! (when the `wasm-runtime` feature is enabled), SQLite persistence, the
+//! installer, and lifecycle hook dispatch.
+//!
+//! # Execution model
+//!
+//! [`PluginManager::execute_hook`] iterates the enabled plugins subscribed to
+//! a hook and dispatches each via [`PluginManager::execute_plugin_hook`].
+//! That method records invocation statistics and (when a [`WasmRuntime`] is
+//! attached) runs the plugin's `plugin.wasm` module. Manifest-only plugins
+//! (no `.wasm`) are no-ops. Every invocation is recorded in the persistence
+//! layer's audit log.
 
+use super::installer::{InstallResult, InstallSource, PluginInstaller};
+use super::persistence::{PluginInvocationRow, PluginPersistence};
+#[cfg(feature = "wasm-runtime")]
+use super::WasmRuntime;
 use super::{
     Plugin, PluginContext, PluginError, PluginHook, PluginManifest, PluginResult, PluginState,
     PluginStats,
@@ -9,6 +26,7 @@ use parking_lot::RwLock;
 use semver::{Version, VersionReq};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// Plugin manager
@@ -21,6 +39,16 @@ pub struct PluginManager {
     plugin_dirs: Vec<PathBuf>,
     /// Whether plugins are enabled globally
     enabled: RwLock<bool>,
+    /// Sandboxed WASM runtime (present when the `wasm-runtime` feature is on).
+    #[cfg(feature = "wasm-runtime")]
+    wasm_runtime: Option<Arc<WasmRuntime>>,
+    /// SQLite persistence for plugin state, settings, and invocation logs.
+    persistence: Option<Arc<PluginPersistence>>,
+    /// Installer used for download/uninstall.
+    installer: Option<Arc<PluginInstaller>>,
+    /// Active timer task handles (plugin_id -> JoinHandle), so timers can be
+    /// cancelled when a plugin is disabled/unloaded.
+    timer_tasks: RwLock<HashMap<String, tokio::task::JoinHandle<()>>>,
 }
 
 impl PluginManager {
@@ -40,7 +68,31 @@ impl PluginManager {
             stats: RwLock::new(HashMap::new()),
             plugin_dirs: vec![PathBuf::from("./plugins"), home_plugin_dir],
             enabled: RwLock::new(true),
+            #[cfg(feature = "wasm-runtime")]
+            wasm_runtime: None,
+            persistence: None,
+            installer: None,
+            timer_tasks: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Attach a sandboxed WASM runtime (enables plugin code execution).
+    #[cfg(feature = "wasm-runtime")]
+    pub fn with_wasm_runtime(mut self, rt: Arc<WasmRuntime>) -> Self {
+        self.wasm_runtime = Some(rt);
+        self
+    }
+
+    /// Attach SQLite persistence (enables state/settings/invocation logging).
+    pub fn with_persistence(mut self, p: Arc<PluginPersistence>) -> Self {
+        self.persistence = Some(p);
+        self
+    }
+
+    /// Attach a plugin installer (enables install/uninstall).
+    pub fn with_installer(mut self, i: Arc<PluginInstaller>) -> Self {
+        self.installer = Some(i);
+        self
     }
 
     /// Expand a leading `~` in a path to the user's home directory.
@@ -78,6 +130,11 @@ impl PluginManager {
         self.plugin_dirs.push(expanded);
     }
 
+    /// Returns the list of plugin search directories.
+    pub fn plugin_dirs(&self) -> Vec<PathBuf> {
+        self.plugin_dirs.clone()
+    }
+
     /// Discover plugins in all plugin directories
     pub fn discover_plugins(&self) -> crate::Result<Vec<PathBuf>> {
         let mut discovered = Vec::new();
@@ -104,7 +161,7 @@ impl PluginManager {
         Ok(discovered)
     }
 
-    /// Load a plugin from a directory
+    /// Load a plugin from a directory.
     pub fn load_plugin(&self, path: &Path) -> crate::Result<String> {
         // Try TOML first, then JSON
         let manifest_path = path.join("madhyamas-plugin.toml");
@@ -137,7 +194,30 @@ impl PluginManager {
             )));
         }
 
-        let plugin = Plugin::from_manifest(manifest, &path.to_string_lossy());
+        // Restore persisted state (enabled flag + settings) if available.
+        let (initial_state, restored_settings) = match &self.persistence {
+            Some(p) => match p.load_state(&plugin_id)? {
+                Some(row) => {
+                    let state = if row.enabled {
+                        PluginState::Enabled
+                    } else {
+                        PluginState::Disabled
+                    };
+                    (state, row.settings)
+                }
+                None => (PluginState::Loaded, HashMap::new()),
+            },
+            None => (PluginState::Loaded, HashMap::new()),
+        };
+
+        let mut plugin = Plugin::from_manifest(manifest, &path.to_string_lossy());
+        if !restored_settings.is_empty() {
+            plugin.settings = restored_settings;
+        }
+        // Override state from persistence (or enabled_by_default from manifest).
+        if self.persistence.is_some() {
+            plugin.state = initial_state;
+        }
 
         // Initialize stats
         self.stats
@@ -145,7 +225,18 @@ impl PluginManager {
             .insert(plugin_id.clone(), PluginStats::default());
 
         // Store plugin
-        self.plugins.write().insert(plugin_id.clone(), plugin);
+        self.plugins
+            .write()
+            .insert(plugin_id.clone(), plugin.clone());
+
+        // Fire on_load lifecycle hook (best-effort; errors are logged, not fatal).
+        self.dispatch_lifecycle(&plugin_id, PluginHook::OnLoad);
+
+        // If the plugin ended up enabled, fire on_enable and start its timer.
+        if plugin.is_enabled() {
+            self.dispatch_lifecycle(&plugin_id, PluginHook::OnEnable);
+            self.maybe_start_timer(&plugin_id);
+        }
 
         info!("Loaded plugin: {} from {:?}", plugin_id, path);
         Ok(plugin_id)
@@ -183,7 +274,7 @@ impl PluginManager {
             match self.load_plugin(&path) {
                 Ok(id) => {
                     if let Some(settings) = previous.get(&id) {
-                        if !settings.is_empty() {
+                        if !settings.is_empty() && self.persistence.is_none() {
                             self.update_settings(&id, settings.clone());
                         }
                     }
@@ -199,8 +290,15 @@ impl PluginManager {
 
     /// Unload a plugin
     pub fn unload_plugin(&self, id: &str) -> bool {
-        let mut plugins = self.plugins.write();
+        // Cancel any timer and fire on_unload.
+        self.stop_timer(id);
+        self.dispatch_lifecycle(id, PluginHook::OnUnload);
+        #[cfg(feature = "wasm-runtime")]
+        if let Some(rt) = &self.wasm_runtime_opt() {
+            rt.drop_module(id);
+        }
 
+        let mut plugins = self.plugins.write();
         if let Some(mut plugin) = plugins.remove(id) {
             plugin.state = PluginState::Unloading;
             info!("Unloaded plugin: {}", id);
@@ -212,35 +310,37 @@ impl PluginManager {
 
     /// Enable a plugin
     pub fn enable_plugin(&self, id: &str) -> Result<(), PluginError> {
-        let mut plugins = self.plugins.write();
-
-        if let Some(plugin) = plugins.get_mut(id) {
+        {
+            let mut plugins = self.plugins.write();
+            let plugin = plugins.get_mut(id).ok_or_else(|| PluginError::NotFound {
+                plugin_id: id.to_string(),
+            })?;
             // Check dependencies
             self.check_dependencies(&plugin.manifest.dependencies)?;
-
             plugin.state = PluginState::Enabled;
-            info!("Enabled plugin: {}", id);
-            Ok(())
-        } else {
-            Err(PluginError::NotFound {
-                plugin_id: id.to_string(),
-            })
         }
+        // Persist + lifecycle.
+        self.persist_state(id, true);
+        self.dispatch_lifecycle(id, PluginHook::OnEnable);
+        self.maybe_start_timer(id);
+        info!("Enabled plugin: {}", id);
+        Ok(())
     }
 
     /// Disable a plugin
     pub fn disable_plugin(&self, id: &str) -> Result<(), PluginError> {
-        let mut plugins = self.plugins.write();
-
-        if let Some(plugin) = plugins.get_mut(id) {
-            plugin.state = PluginState::Disabled;
-            info!("Disabled plugin: {}", id);
-            Ok(())
-        } else {
-            Err(PluginError::NotFound {
+        self.stop_timer(id);
+        {
+            let mut plugins = self.plugins.write();
+            let plugin = plugins.get_mut(id).ok_or_else(|| PluginError::NotFound {
                 plugin_id: id.to_string(),
-            })
+            })?;
+            plugin.state = PluginState::Disabled;
         }
+        self.persist_state(id, false);
+        self.dispatch_lifecycle(id, PluginHook::OnDisable);
+        info!("Disabled plugin: {}", id);
+        Ok(())
     }
 
     /// Check plugin dependencies, including semver version constraints.
@@ -319,6 +419,27 @@ impl PluginManager {
             .collect()
     }
 
+    /// Get the settings schema for a plugin (for UI generation).
+    pub fn get_settings_schema(&self, id: &str) -> Option<super::PluginSettingsSchema> {
+        self.plugins
+            .read()
+            .get(id)
+            .and_then(|p| p.manifest.settings.clone())
+    }
+
+    /// Get the current settings for a plugin.
+    pub fn get_settings(&self, id: &str) -> Option<HashMap<String, serde_json::Value>> {
+        self.plugins.read().get(id).map(|p| p.settings.clone())
+    }
+
+    /// Get recent invocation logs for a plugin.
+    pub fn get_invocations(&self, id: &str, limit: u32) -> Vec<PluginInvocationRow> {
+        self.persistence
+            .as_ref()
+            .and_then(|p| p.list_invocations(id, limit).ok())
+            .unwrap_or_default()
+    }
+
     /// Execute a hook for all relevant plugins
     pub fn execute_hook(
         &self,
@@ -341,71 +462,177 @@ impl PluginManager {
 
     /// Execute a hook for a specific plugin.
     ///
-    /// # Not yet implemented: actual plugin code execution
-    ///
-    /// Discovering and parsing plugin manifests works (see [`Self::load_plugin`]
-    /// and [`Self::refresh`]), but **invoking plugin code is not implemented**.
-    /// There is no runtime (WASM via `wasmtime`, dynamic library via
-    /// `libloading`, or embedded script engine) to execute plugin logic yet.
-    ///
-    /// This method currently records invocation statistics and returns a
-    /// no-op [`PluginResult::cont`] for every hook, so the proxy pipeline is
-    /// unaffected. When a runtime is added, replace the placeholder below with
-    /// a dispatch into the loaded plugin's entry point.
+    /// When a [`WasmRuntime`] is attached (the `wasm-runtime` feature is on),
+    /// this dispatches into the plugin's `plugin.wasm` module. Otherwise (or
+    /// for manifest-only plugins with no `.wasm`), it records invocation
+    /// statistics and returns a no-op [`PluginResult::cont`].
     fn execute_plugin_hook(
         &self,
         plugin_id: &str,
         hook: PluginHook,
-        _context: &PluginContext,
+        context: &PluginContext,
     ) -> PluginResult {
         let start = std::time::Instant::now();
+        let plugin = self.plugins.read().get(plugin_id).cloned();
 
-        // Update stats
+        let result = match plugin {
+            Some(plugin) => self.run_plugin_code(&plugin, hook, context),
+            None => PluginResult::error(&format!("plugin not found: {}", plugin_id)),
+        };
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        // Update stats.
         {
             let mut stats = self.stats.write();
             if let Some(s) = stats.get_mut(plugin_id) {
                 s.invocations += 1;
                 s.last_invoked = Some(chrono::Utc::now());
-            }
-        }
-
-        // TODO(plugin-runtime): Execute the plugin's hook handler.
-        //
-        // Candidate approaches (pick one; do NOT pull in `wasmtime` until the
-        // design is settled):
-        //   * WASM modules via `wasmtime` (sandboxed, portable, heavy dep).
-        //   * Dynamic libraries via `libloading` (fast, unsafe, platform-specific).
-        //   * Embedded scripting (e.g. `rune`, `mlua`, `boa`) for Lua/JS plugins.
-        //
-        // Until then, return a continue result so the proxy pipeline is a no-op.
-        let _ = hook; // hook kind would select the plugin entry point
-        let result = PluginResult::cont();
-
-        // Update stats with execution time
-        {
-            let mut stats = self.stats.write();
-            if let Some(s) = stats.get_mut(plugin_id) {
-                s.total_time_ms += start.elapsed().as_millis() as u64;
+                s.total_time_ms += duration_ms;
                 if result.error.is_some() {
                     s.errors += 1;
                 }
             }
         }
 
+        // Record invocation in the audit log.
+        if let Some(p) = &self.persistence {
+            let row = PluginInvocationRow {
+                id: uuid::Uuid::new_v4().to_string(),
+                plugin_id: plugin_id.to_string(),
+                hook: hook.as_str().to_string(),
+                duration_ms,
+                fuel_consumed: None,
+                success: result.error.is_none(),
+                error: result.error.clone(),
+                logs: result.logs.clone(),
+                modified: result.modified,
+                timestamp: chrono::Utc::now(),
+            };
+            if let Err(e) = p.record_invocation(&row) {
+                warn!("failed to record plugin invocation: {}", e);
+            }
+        }
+
         result
     }
 
-    /// Update plugin settings
-    pub fn update_settings(&self, id: &str, settings: HashMap<String, serde_json::Value>) -> bool {
-        let mut plugins = self.plugins.write();
-
-        if let Some(plugin) = plugins.get_mut(id) {
-            plugin.settings = settings;
-            debug!("Updated settings for plugin: {}", id);
-            true
-        } else {
-            false
+    /// Manifest-only / no-runtime result: a continue with a log line.
+    fn noop_result(&self, plugin_id: &str, hook: PluginHook) -> PluginResult {
+        PluginResult {
+            logs: vec![format!(
+                "plugin {} has no runtime (wasm-runtime feature disabled); skipping {}",
+                plugin_id, hook
+            )],
+            ..PluginResult::cont()
         }
+    }
+
+    /// Dispatch a hook into the plugin's executable code.
+    ///
+    /// When the `wasm-runtime` feature is enabled and a [`WasmRuntime`] is
+    /// attached, this runs the plugin's `plugin.wasm` module. Otherwise it
+    /// returns a no-op continue result.
+    fn run_plugin_code(
+        &self,
+        plugin: &Plugin,
+        hook: PluginHook,
+        context: &PluginContext,
+    ) -> PluginResult {
+        #[cfg(feature = "wasm-runtime")]
+        {
+            if let Some(rt) = self.wasm_runtime_opt() {
+                return rt.execute_hook(plugin, hook, context);
+            }
+        }
+        let _ = (hook, context);
+        self.noop_result(&plugin.manifest.id, hook)
+    }
+
+    /// Dispatch a lifecycle hook (on_load/on_enable/on_disable/on_unload) for
+    /// a plugin. Errors are logged and do not propagate.
+    fn dispatch_lifecycle(&self, plugin_id: &str, hook: PluginHook) {
+        // Only dispatch if the plugin subscribes to this hook.
+        let subscribed = self
+            .plugins
+            .read()
+            .get(plugin_id)
+            .map(|p| p.manifest.hooks.iter().any(|h| h == hook.as_str()))
+            .unwrap_or(false);
+        if !subscribed {
+            return;
+        }
+        let ctx = PluginContext::new(plugin_id, hook);
+        let _ = self.execute_plugin_hook(plugin_id, hook, &ctx);
+    }
+
+    /// Persist the enabled flag (and current settings) for a plugin.
+    fn persist_state(&self, id: &str, enabled: bool) {
+        if let Some(p) = &self.persistence {
+            let settings = self.get_settings(id).unwrap_or_default();
+            if let Err(e) = p.save_state(id, enabled, &settings) {
+                warn!("failed to persist plugin state for {}: {}", id, e);
+            }
+        }
+    }
+
+    /// Update plugin settings.
+    pub fn update_settings(&self, id: &str, settings: HashMap<String, serde_json::Value>) -> bool {
+        {
+            let mut plugins = self.plugins.write();
+            if let Some(plugin) = plugins.get_mut(id) {
+                plugin.settings = settings.clone();
+                debug!("Updated settings for plugin: {}", id);
+            } else {
+                return false;
+            }
+        }
+        // Persist + fire on_settings_change.
+        if let Some(p) = &self.persistence {
+            let enabled = self
+                .plugins
+                .read()
+                .get(id)
+                .map(|pl| pl.is_enabled())
+                .unwrap_or(false);
+            let _ = p.save_state(id, enabled, &settings);
+        }
+        self.dispatch_lifecycle(id, PluginHook::OnSettingsChange);
+        true
+    }
+
+    /// Install a plugin from a source (download + verify + extract + load).
+    pub async fn install_plugin(
+        &self,
+        source: &InstallSource,
+        expected_checksum: Option<&str>,
+    ) -> crate::Result<InstallResult> {
+        let installer = self
+            .installer
+            .as_ref()
+            .ok_or_else(|| Error::Config("no plugin installer configured".into()))?;
+        let result = installer.install(source, expected_checksum).await?;
+        // Load the newly installed plugin.
+        let path = PathBuf::from(&result.path);
+        if let Err(e) = self.load_plugin(&path) {
+            warn!("plugin installed but failed to load: {}", e);
+        }
+        Ok(result)
+    }
+
+    /// Uninstall a plugin (remove from disk + persistence + unload).
+    pub fn uninstall_plugin(&self, id: &str) -> crate::Result<()> {
+        self.stop_timer(id);
+        self.unload_plugin(id);
+        if let Some(installer) = &self.installer {
+            installer.uninstall(id)?;
+        } else {
+            // Fallback: remove from the first plugin dir that contains it.
+            if let Some(plugin) = self.get_plugin(id) {
+                let _ = std::fs::remove_dir_all(&plugin.path);
+            }
+        }
+        Ok(())
     }
 
     /// Get plugin stats
@@ -429,6 +656,88 @@ impl PluginManager {
     /// directories and reloads all discovered plugins.
     pub fn reload_all(&self) -> crate::Result<usize> {
         self.refresh()
+    }
+
+    /// Start timer tasks for all enabled plugins that declare a timer interval.
+    /// Call this once at startup (within a tokio runtime).
+    ///
+    /// This is a no-op stub on a non-`Arc` reference; use
+    /// [`Self::start_timers_arc`] (which requires `Arc<PluginManager>`) for
+    /// real timer dispatch.
+    pub fn start_all_timers(&self) {
+        let _ = self;
+    }
+
+    /// Start the timer for a single plugin if it declares an interval.
+    ///
+    /// This is a no-op when called on a non-`Arc` reference: real timer
+    /// dispatch requires `Arc<PluginManager>` (see [`Self::start_timers_arc`])
+    /// because the spawned task must own a reference to the manager. We keep
+    /// this method so that `enable_plugin` does not error when timers cannot
+    /// be started inline; the caller is expected to call `start_timers_arc`
+    /// once at startup.
+    fn maybe_start_timer(&self, id: &str) {
+        let _ = id;
+    }
+
+    /// Fully-wired timer start: requires the manager to be wrapped in an
+    /// `Arc`. Spawns per-plugin `on_timer` dispatch loops.
+    pub fn start_timers_arc(self: &Arc<Self>) {
+        let ids: Vec<(String, u64)> = self
+            .plugins
+            .read()
+            .iter()
+            .filter(|(_, p)| p.is_enabled())
+            .filter_map(|(id, p)| p.manifest.timer_interval_seconds.map(|s| (id.clone(), s)))
+            .collect();
+        for (id, secs) in ids {
+            self.spawn_timer_arc(id, secs);
+        }
+    }
+
+    fn spawn_timer_arc(self: &Arc<Self>, id: String, secs: u64) {
+        if self.timer_tasks.read().contains_key(&id) {
+            return;
+        }
+        let mgr = self.clone();
+        let id_for_task = id.clone();
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(secs.max(1)));
+            loop {
+                interval.tick().await;
+                if !mgr.is_enabled()
+                    || !mgr
+                        .get_plugin(&id_for_task)
+                        .map(|p| p.is_enabled())
+                        .unwrap_or(false)
+                {
+                    continue;
+                }
+                let ctx = PluginContext::new(&id_for_task, PluginHook::OnTimer);
+                mgr.execute_plugin_hook(&id_for_task, PluginHook::OnTimer, &ctx);
+            }
+        });
+        self.timer_tasks.write().insert(id, handle);
+    }
+
+    /// Stop the timer task for a plugin (if any).
+    fn stop_timer(&self, id: &str) {
+        if let Some(handle) = self.timer_tasks.write().remove(id) {
+            handle.abort();
+        }
+    }
+
+    /// Shut down all timers (called on application shutdown).
+    pub fn shutdown_timers(&self) {
+        let tasks: Vec<_> = self.timer_tasks.write().drain().map(|(_, h)| h).collect();
+        for h in tasks {
+            h.abort();
+        }
+    }
+
+    #[cfg(feature = "wasm-runtime")]
+    fn wasm_runtime_opt(&self) -> Option<Arc<WasmRuntime>> {
+        self.wasm_runtime.clone()
     }
 }
 

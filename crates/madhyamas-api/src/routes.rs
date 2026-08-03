@@ -10,14 +10,14 @@ use axum::{
 use madhyamas_core::enterprise::AuthManager;
 use std::sync::Arc;
 
+#[cfg(feature = "enterprise")]
+use super::enterprise_handlers;
 use super::handlers;
 use super::intercept_handlers;
 #[cfg(feature = "enterprise")]
 use super::middleware;
 #[cfg(any(feature = "grpc", feature = "scripting", feature = "plugins"))]
 use super::tools_handlers;
-#[cfg(feature = "enterprise")]
-use super::enterprise_handlers;
 use super::AppState;
 
 /// Create API routes
@@ -362,14 +362,8 @@ fn create_routes_inner(
             get(tools_handlers::get_script_templates),
         )
         .route("/scripts/config", get(tools_handlers::get_script_config))
-        .route(
-            "/scripts/config",
-            put(tools_handlers::update_script_config),
-        )
-        .route(
-            "/scripts/history",
-            get(tools_handlers::get_scripts_history),
-        )
+        .route("/scripts/config", put(tools_handlers::update_script_config))
+        .route("/scripts/history", get(tools_handlers::get_scripts_history))
         .route("/scripts/test", post(tools_handlers::test_script))
         .route("/scripts/validate", post(tools_handlers::validate_script))
         .route(
@@ -403,11 +397,56 @@ fn create_routes_inner(
             "/plugins/{id}/disable",
             post(tools_handlers::disable_plugin),
         )
+        .route("/plugins/{id}/stats", get(tools_handlers::get_plugin_stats))
+        .route("/plugins/reload", post(tools_handlers::reload_plugins))
+        .route("/plugins/install", post(tools_handlers::install_plugin))
         .route(
-            "/plugins/{id}/stats",
-            get(tools_handlers::get_plugin_stats),
+            "/plugins/{id}/uninstall",
+            delete(tools_handlers::uninstall_plugin),
         )
-        .route("/plugins/reload", post(tools_handlers::reload_plugins));
+        .route(
+            "/plugins/{id}/settings",
+            get(tools_handlers::get_plugin_settings),
+        )
+        .route(
+            "/plugins/{id}/settings",
+            put(tools_handlers::update_plugin_settings),
+        )
+        .route(
+            "/plugins/{id}/schema",
+            get(tools_handlers::get_plugin_settings_schema),
+        )
+        .route(
+            "/plugins/{id}/panels",
+            get(tools_handlers::get_plugin_panels),
+        )
+        .route("/plugins/{id}/logs", get(tools_handlers::get_plugin_logs))
+        .route("/plugins/registry", get(tools_handlers::list_registry))
+        .route(
+            "/plugins/registry/search",
+            get(tools_handlers::search_registry),
+        )
+        .route(
+            "/plugins/registry/{id}",
+            get(tools_handlers::get_registry_entry),
+        )
+        .route(
+            "/plugins/registry/config",
+            get(tools_handlers::get_registry_config),
+        )
+        .route(
+            "/plugins/registry/config",
+            put(tools_handlers::set_registry_config),
+        )
+        .route(
+            "/plugins/registry/refresh",
+            post(tools_handlers::refresh_registry),
+        )
+        .route(
+            "/plugins/templates",
+            get(tools_handlers::list_plugin_templates),
+        )
+        .route("/plugins/scaffold", post(tools_handlers::scaffold_plugin));
 
     // === Enterprise features (conditionally enabled) ===
     #[cfg(feature = "enterprise")]
@@ -416,8 +455,14 @@ fn create_routes_inner(
             let enterprise_router = router
                 // Performance & Monitoring
                 .route("/metrics", get(enterprise_handlers::get_metrics))
-                .route("/health/detailed", get(enterprise_handlers::get_health_check))
-                .route("/performance", get(enterprise_handlers::get_performance_stats))
+                .route(
+                    "/health/detailed",
+                    get(enterprise_handlers::get_health_check),
+                )
+                .route(
+                    "/performance",
+                    get(enterprise_handlers::get_performance_stats),
+                )
                 // Authentication
                 .route("/auth/login", post(enterprise_handlers::login))
                 .route("/auth/logout", post(enterprise_handlers::logout))
@@ -437,20 +482,35 @@ fn create_routes_inner(
                 .route("/users/{id}", delete(enterprise_handlers::delete_user))
                 // RBAC
                 .route("/rbac/roles", get(enterprise_handlers::get_roles))
-                .route("/rbac/permissions", get(enterprise_handlers::get_permissions))
+                .route(
+                    "/rbac/permissions",
+                    get(enterprise_handlers::get_permissions),
+                )
                 .route("/rbac/check", post(enterprise_handlers::check_permission))
                 // Audit Logs
                 .route("/audit", get(enterprise_handlers::get_audit_events))
                 .route("/audit/stats", get(enterprise_handlers::get_audit_stats))
-                .route("/audit/export", get(enterprise_handlers::export_audit_events))
-                .route("/audit/clear", delete(enterprise_handlers::clear_audit_events))
+                .route(
+                    "/audit/export",
+                    get(enterprise_handlers::export_audit_events),
+                )
+                .route(
+                    "/audit/clear",
+                    delete(enterprise_handlers::clear_audit_events),
+                )
                 // Onboarding
-                .route("/onboarding", get(enterprise_handlers::get_onboarding_status))
+                .route(
+                    "/onboarding",
+                    get(enterprise_handlers::get_onboarding_status),
+                )
                 .route(
                     "/onboarding/complete",
                     post(enterprise_handlers::complete_onboarding_step),
                 )
-                .route("/onboarding/skip", post(enterprise_handlers::skip_onboarding))
+                .route(
+                    "/onboarding/skip",
+                    post(enterprise_handlers::skip_onboarding),
+                )
                 // Configuration
                 .route("/config/export", get(enterprise_handlers::export_config))
                 .route("/config/import", post(enterprise_handlers::import_config));
@@ -460,7 +520,8 @@ fn create_routes_inner(
             // static assets bypass the check inside the middleware (see
             // `is_public_path`).
             if let Some(auth) = auth_service {
-                return enterprise_router.layer(from_fn_with_state(auth, middleware::auth_middleware));
+                return enterprise_router
+                    .layer(from_fn_with_state(auth, middleware::auth_middleware));
             } else {
                 return enterprise_router;
             }

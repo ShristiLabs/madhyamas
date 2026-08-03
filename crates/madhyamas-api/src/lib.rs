@@ -1,22 +1,24 @@
 //! Madhyamas API - REST and WebSocket API for the web UI
 
 pub mod embedded_assets;
+#[cfg(feature = "enterprise")]
+pub mod enterprise_handlers;
 pub mod error;
 pub mod handlers;
 pub mod intercept_handlers;
 #[cfg(feature = "enterprise")]
 pub mod middleware;
+pub mod routes;
 #[cfg(any(feature = "grpc", feature = "scripting", feature = "plugins"))]
 pub mod tools_handlers;
-#[cfg(feature = "enterprise")]
-pub mod enterprise_handlers;
-pub mod routes;
 pub mod validation;
 pub mod ws;
 
 use axum::Router;
 #[cfg(feature = "enterprise")]
 use madhyamas_core::enterprise::AuthManager;
+#[cfg(feature = "plugins")]
+use madhyamas_core::plugin::PluginRegistry;
 #[cfg(feature = "grpc")]
 use madhyamas_core::GrpcManager;
 #[cfg(feature = "plugins")]
@@ -78,6 +80,8 @@ pub struct AppState {
     pub script_runtime: Arc<ScriptRuntime>,
     #[cfg(feature = "plugins")]
     pub plugin_manager: Arc<PluginManager>,
+    #[cfg(feature = "plugins")]
+    pub plugin_registry: Arc<tokio::sync::Mutex<PluginRegistry>>,
     pub ws_manager: Arc<WsManager>,
     pub session_manager: Arc<SessionManager>,
     pub intercept_store: Option<Arc<InterceptStore>>,
@@ -113,6 +117,8 @@ impl AppState {
             script_runtime: Arc::new(ScriptRuntime::default()),
             #[cfg(feature = "plugins")]
             plugin_manager: Arc::new(PluginManager::default()),
+            #[cfg(feature = "plugins")]
+            plugin_registry: Arc::new(tokio::sync::Mutex::new(PluginRegistry::new())),
             ws_manager: Arc::new(WsManager::new()),
             session_manager,
             intercept_store: None,
