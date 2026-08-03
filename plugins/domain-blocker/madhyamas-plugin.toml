@@ -16,4 +16,4 @@ tags = ["blocking", "security"]
 panels = []
 
 [settings]
-fields = [{ key = "blocked_domains", label = "Blocked Domains", kind = "string_list", description = "List of domains to block (e.g. ads.example.com, tracker.com)", default = [] }]
+fields = [{ key = "blocked_domains", label = "Blocked Domains", description = "List of domains to block (e.g. ads.example.com, tracker.com)", field_type = "multi_select", default = [], required = false, options = [] }]

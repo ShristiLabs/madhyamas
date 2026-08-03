@@ -82,15 +82,17 @@
             {
               "key": "blocked_domains",
               "label": "Blocked Domains",
-              "kind": "string_list",
               "description": "List of domains to block (e.g. ads.example.com, tracker.com)",
-              "default": []
+              "field_type": "multi_select",
+              "default": [],
+              "required": false,
+              "options": []
             }
           ]
         }
       },
       "download_url": "https://raw.githubusercontent.com/shristilabs/madhyamas/main/plugins/domain-blocker-1.0.0.zip",
-      "checksum": "sha256:551238c0064a049f3daf6f27f55a8c22e89aee93f24b7ccbd3d92f9cd1b83bd8",
+      "checksum": "sha256:7eebcbd7ea2913d056ee24c472ea57357422c15a76b16b3ede9e259c0122dfaa",
       "downloads": 0,
       "rating": 4.0,
       "rating_count": 1,

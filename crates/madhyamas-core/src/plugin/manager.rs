@@ -310,13 +310,23 @@ impl PluginManager {
 
     /// Enable a plugin
     pub fn enable_plugin(&self, id: &str) -> Result<(), PluginError> {
+        // Check dependencies and set state in a single write lock.
+        let deps = {
+            let mut plugins = self.plugins.write();
+            let plugin = plugins.get_mut(id).ok_or_else(|| PluginError::NotFound {
+                plugin_id: id.to_string(),
+            })?;
+            // Collect dependencies to check after releasing the lock.
+            plugin.manifest.dependencies.clone()
+        };
+        // Check dependencies (needs a read lock, so must be outside the write lock).
+        self.check_dependencies(&deps)?;
+        // Now set the enabled state.
         {
             let mut plugins = self.plugins.write();
             let plugin = plugins.get_mut(id).ok_or_else(|| PluginError::NotFound {
                 plugin_id: id.to_string(),
             })?;
-            // Check dependencies
-            self.check_dependencies(&plugin.manifest.dependencies)?;
             plugin.state = PluginState::Enabled;
         }
         // Persist + lifecycle.

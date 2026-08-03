@@ -270,9 +270,14 @@ impl PluginRegistry {
             )));
         }
 
-        let catalog: Catalog = resp
-            .json()
+        // Read body as text first, then parse — gives better error messages
+        // and avoids HTTP/2 framing issues with .json().
+        let body = resp
+            .text()
             .await
+            .map_err(|e| crate::Error::Config(format!("registry body read: {}", e)))?;
+
+        let catalog: Catalog = serde_json::from_str(&body)
             .map_err(|e| crate::Error::Config(format!("registry catalog parse: {}", e)))?;
 
         info!(
@@ -282,8 +287,20 @@ impl PluginRegistry {
         );
 
         for entry in catalog.plugins {
-            // Don't overwrite local entries (installed plugins take priority).
-            self.cache.entry(entry.manifest.id.clone()).or_insert(entry);
+            // If a local entry with the same id already exists (installed
+            // plugin), merge the download_url + checksum from the remote
+            // entry so the plugin can be reinstalled from the registry.
+            if let Some(existing) = self.cache.get_mut(&entry.manifest.id) {
+                if existing.source == "local" && existing.download_url.is_empty() {
+                    existing.download_url = entry.download_url;
+                    existing.checksum = entry.checksum;
+                    existing.rating = entry.rating;
+                    existing.rating_count = entry.rating_count;
+                    existing.downloads = entry.downloads;
+                }
+            } else {
+                self.cache.insert(entry.manifest.id.clone(), entry);
+            }
         }
 
         Ok(())
