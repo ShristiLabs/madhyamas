@@ -1,0 +1,137 @@
+name: Plugin SNAPSHOT Builds
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/*/Cargo.toml"
+      - "plugins/*/src/**"
+      - "plugins/*/madhyamas-plugin.toml"
+      - "crates/madhyamas-plugin-sdk/src/**"
+      - "crates/madhyamas-plugin-sdk/Cargo.toml"
+      - "scripts/build-plugin.sh"
+      - "scripts/build-all-plugins.sh"
+      - ".github/workflows/plugins-snapshot.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  detect-changes:
+    name: Detect changed plugins
+    runs-on: ubuntu-latest
+    outputs:
+      plugins: ${{ steps.detect.outputs.plugins }}
+      sdk-changed: ${{ steps.detect.outputs.sdk-changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed plugins
+        id: detect
+        run: |
+          # Get list of changed files in the last commit
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Manual dispatch: build all plugins
+            plugins=$(ls -d plugins/*/ 2>/dev/null | sed 's|plugins/||;s|/||' | jq -R . | jq -s .)
+            echo "plugins=${plugins}" >> $GITHUB_OUTPUT
+            echo "sdk-changed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          changed_files=$(git diff --name-only HEAD~1 HEAD || echo "")
+
+          # Check if SDK changed
+          sdk_changed=false
+          if echo "$changed_files" | grep -q "^crates/madhyamas-plugin-sdk/"; then
+            sdk_changed=true
+          fi
+          echo "sdk-changed=${sdk_changed}" >> $GITHUB_OUTPUT
+
+          # If SDK changed, build all plugins
+          if [[ "$sdk_changed" == "true" ]]; then
+            plugins=$(ls -d plugins/*/ 2>/dev/null | sed 's|plugins/||;s|/||' | jq -R . | jq -s .)
+          else
+            # Find which plugin directories changed
+            plugins=""
+            for dir in plugins/*/; do
+              name=$(basename "$dir")
+              if echo "$changed_files" | grep -q "^plugins/${name}/"; then
+                if [[ -f "${dir}Cargo.toml" ]]; then
+                  plugins="${plugins}${name} "
+                fi
+              fi
+            done
+            # Convert to JSON array
+            if [[ -z "$plugins" ]]; then
+              plugins="[]"
+            else
+              plugins=$(echo "$plugins" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -s .)
+            fi
+          fi
+
+          echo "plugins=${plugins}" >> $GITHUB_OUTPUT
+          echo "Changed plugins: ${plugins}"
+          echo "SDK changed: ${sdk_changed}"
+
+  build-snapshots:
+    name: Build SNAPSHOT
+    needs: detect-changes
+    if: needs.detect-changes.outputs.plugins != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        plugin: ${{ fromJson(needs.detect-changes.outputs.plugins) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Build plugin
+        run: ./scripts/build-plugin.sh ${{ matrix.plugin }}
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(grep '^version' plugins/${{ matrix.plugin }}/Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+          echo "version=${version}" >> $GITHUB_OUTPUT
+          echo "zip=plugins/${{ matrix.plugin }}-${version}.zip" >> $GITHUB_OUTPUT
+
+      - name: Compute checksum
+        id: checksum
+        run: |
+          echo "sha256=$(sha256sum ${{ steps.version.outputs.zip }} | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Delete existing snapshot release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "${{ matrix.plugin }}-snapshot" --yes --cleanup-tag 2>/dev/null || true
+
+      - name: Create snapshot release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ matrix.plugin }}-snapshot" \
+            --title "${{ matrix.plugin }} SNAPSHOT" \
+            --notes "Rolling SNAPSHOT build for ${{ matrix.plugin }} v${{ steps.version.outputs.version }}
+
+          Built from commit ${{ github.sha }}
+
+          SHA-256: \`${{ steps.checksum.outputs.sha256 }}\`
+          " \
+            --prerelease \
+            "${{ steps.version.outputs.zip }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plugin }}-snapshot
+          path: ${{ steps.version.outputs.zip }}
+          retention-days: 7

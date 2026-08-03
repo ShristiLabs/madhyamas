@@ -22,19 +22,5 @@ default = []
 # the host). WASM plugins build without this feature.
 std = ["serde/std", "serde_json/std"]
 
-# Example plugins are built as cdylibs (no `main`); the resulting `.wasm`
-# artifact is a loadable Madhyamas plugin.
-[[example]]
-name = "cors_helper"
-crate-type = ["cdylib"]
-
-[[example]]
-name = "request_logger"
-crate-type = ["cdylib"]
-
-[[example]]
-name = "domain_blocker"
-crate-type = ["cdylib"]
-
 [package.metadata.docs.rs]
 targets = ["wasm32-unknown-unknown"]

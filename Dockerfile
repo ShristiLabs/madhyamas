@@ -30,7 +30,7 @@ COPY crates/madhyamas-mcp/Cargo.toml ./crates/madhyamas-mcp/
 COPY crates/madhyamas-plugin-sdk/Cargo.toml ./crates/madhyamas-plugin-sdk/
 
 # Create dummy files to build dependencies
-RUN mkdir -p crates/madhyamas/src crates/madhyamas-core/src crates/madhyamas-api/src crates/madhyamas-cli/src crates/madhyamas-mcp/src crates/madhyamas-plugin-sdk/src crates/madhyamas-plugin-sdk/examples
+RUN mkdir -p crates/madhyamas/src crates/madhyamas-core/src crates/madhyamas-api/src crates/madhyamas-cli/src crates/madhyamas-mcp/src crates/madhyamas-plugin-sdk/src
 RUN echo "fn main() {}" > crates/madhyamas/src/main.rs
 RUN echo "fn main() {}" > crates/madhyamas-core/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-api/src/lib.rs
@@ -39,9 +39,6 @@ RUN echo "pub fn dummy() {}" > crates/madhyamas-cli/src/lib.rs
 RUN echo "pub fn dummy() {}" > crates/madhyamas-mcp/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-mcp/src/main.rs
 RUN echo "pub fn dummy() {}" > crates/madhyamas-plugin-sdk/src/lib.rs
-RUN echo "fn main() {}" > crates/madhyamas-plugin-sdk/examples/cors_helper.rs
-RUN echo "fn main() {}" > crates/madhyamas-plugin-sdk/examples/domain_blocker.rs
-RUN echo "fn main() {}" > crates/madhyamas-plugin-sdk/examples/request_logger.rs
 
 # Copy web dist for rust-embed (needed at compile time)
 COPY --from=frontend-builder /app/web/dist ./web/dist

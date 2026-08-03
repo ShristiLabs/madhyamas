@@ -1,0 +1,18 @@
+[package]
+name = "madhyamas-plugin-request-logger"
+version = "1.0.1-SNAPSHOT"
+edition = "2021"
+license = "MIT"
+description = "Request Logger plugin for Madhyamas — logs method/host/path of every request"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+madhyamas-plugin-sdk = { path = "../../crates/madhyamas-plugin-sdk" }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+# Exclude from the main workspace — plugins have independent versioning
+[workspace]

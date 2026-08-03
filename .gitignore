@@ -59,6 +59,7 @@ build/
 # Plugin build artifacts (built & released via CI, not committed)
 plugins/*.zip
 plugins/*/plugin.wasm
+plugins/*/target/
 
 # Test coverage
 coverage/

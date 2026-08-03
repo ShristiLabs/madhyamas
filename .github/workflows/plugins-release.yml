@@ -1,0 +1,173 @@
+name: Plugin Release
+
+on:
+  push:
+    tags:
+      # Pattern: <plugin-name>-vX.Y.Z  (e.g. cors-helper-v1.0.1)
+      - "*-v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      plugin_name:
+        description: "Plugin name (e.g. cors-helper)"
+        required: true
+      version:
+        description: "Version to release (e.g. 1.0.1)"
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Release plugin
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse tag
+        id: parse
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            plugin_name="${{ github.event.inputs.plugin_name }}"
+            version="${{ github.event.inputs.version }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+            # Extract version (everything after the last -v)
+            version="${tag##*-v}"
+            # Extract plugin name (everything before the last -v)
+            plugin_name="${tag%-v*}"
+          fi
+
+          echo "plugin=${plugin_name}" >> $GITHUB_OUTPUT
+          echo "version=${version}" >> $GITHUB_OUTPUT
+          echo "tag=${plugin_name}-v${version}" >> $GITHUB_OUTPUT
+          echo "Parsed: plugin=${plugin_name}, version=${version}, tag=${plugin_name}-v${version}"
+
+      - name: Validate plugin exists
+        run: |
+          if [[ ! -d "plugins/${{ steps.parse.outputs.plugin }}" ]]; then
+            echo "ERROR: Plugin directory not found: plugins/${{ steps.parse.outputs.plugin }}" >&2
+            exit 1
+          fi
+          if [[ ! -f "plugins/${{ steps.parse.outputs.plugin }}/Cargo.toml" ]]; then
+            echo "ERROR: Plugin Cargo.toml not found" >&2
+            exit 1
+          fi
+
+      - name: Verify version matches (no SNAPSHOT)
+        run: |
+          cargo_version=$(grep '^version' plugins/${{ steps.parse.outputs.plugin }}/Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+          manifest_version=$(grep '^version' plugins/${{ steps.parse.outputs.plugin }}/madhyamas-plugin.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+
+          echo "Cargo.toml version: ${cargo_version}"
+          echo "Manifest version: ${manifest_version}"
+          echo "Expected version: ${{ steps.parse.outputs.version }}"
+
+          if [[ "$cargo_version" == *"SNAPSHOT"* ]]; then
+            echo "ERROR: Cargo.toml version is a SNAPSHOT (${cargo_version}). Remove -SNAPSHOT suffix before releasing." >&2
+            echo "  Edit plugins/${{ steps.parse.outputs.plugin }}/Cargo.toml and madhyamas-plugin.toml" >&2
+            echo "  Change version from '${cargo_version}' to '${{ steps.parse.outputs.version }}'" >&2
+            exit 1
+          fi
+
+          if [[ "$cargo_version" != "${{ steps.parse.outputs.version }}" ]]; then
+            echo "ERROR: Cargo.toml version (${cargo_version}) does not match tag version (${{ steps.parse.outputs.version }})" >&2
+            exit 1
+          fi
+
+          if [[ "$manifest_version" != "${{ steps.parse.outputs.version }}" ]]; then
+            echo "ERROR: Manifest version (${manifest_version}) does not match tag version (${{ steps.parse.outputs.version }})" >&2
+            exit 1
+          fi
+
+          echo "Version verification passed."
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Build plugin
+        run: ./scripts/build-plugin.sh ${{ steps.parse.outputs.plugin }}
+
+      - name: Compute checksum
+        id: checksum
+        run: |
+          zip_file="plugins/${{ steps.parse.outputs.plugin }}-${{ steps.parse.outputs.version }}.zip"
+          echo "zip=${zip_file}" >> $GITHUB_OUTPUT
+          echo "sha256=$(sha256sum ${zip_file} | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.parse.outputs.tag }}" \
+            --title "${{ steps.parse.outputs.plugin }} v${{ steps.parse.outputs.version }}" \
+            --notes "Release ${{ steps.parse.outputs.plugin }} v${{ steps.parse.outputs.version }}
+
+          Built from commit ${{ github.sha }}
+
+          SHA-256: \`${{ steps.checksum.outputs.sha256 }}\`
+          " \
+            "${{ steps.checksum.outputs.zip }}"
+
+      - name: Update registry.json
+        run: |
+          REGISTRY_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.parse.outputs.tag }}"
+          ./scripts/build-plugin.sh ${{ steps.parse.outputs.plugin }} \
+            --update-registry --registry-url "$REGISTRY_URL" || true
+
+      - name: Commit updated registry.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add plugins/registry.json
+          if git diff --cached --quiet; then
+            echo "registry.json unchanged, skipping commit"
+          else
+            git commit -m "chore: update registry.json for ${{ steps.parse.outputs.plugin }} v${{ steps.parse.outputs.version }}
+
+          Auto-generated by the Plugin Release workflow.
+
+          Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+            git push
+          fi
+
+      - name: Bump to next SNAPSHOT version
+        run: |
+          plugin_dir="plugins/${{ steps.parse.outputs.plugin }}"
+          current="${{ steps.parse.outputs.version }}"
+
+          # Parse version and bump patch
+          IFS='.' read -r major minor patch <<< "$current"
+          next_patch=$((patch + 1))
+          next_version="${major}.${minor}.${next_patch}-SNAPSHOT"
+
+          echo "Bumping from ${current} to ${next_version}"
+
+          # Update Cargo.toml
+          sed -i "s/^version = \".*\"/version = \"${next_version}\"/" "${plugin_dir}/Cargo.toml"
+
+          # Update manifest
+          sed -i "s/^version = \".*\"/version = \"${next_version}\"/" "${plugin_dir}/madhyamas-plugin.toml"
+
+          echo "Bumped to ${next_version}"
+
+      - name: Commit SNAPSHOT bump
+        run: |
+          plugin_dir="plugins/${{ steps.parse.outputs.plugin }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${plugin_dir}/Cargo.toml" "${plugin_dir}/madhyamas-plugin.toml"
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: bump ${{ steps.parse.outputs.plugin }} to next SNAPSHOT
+
+          Auto-bumped after releasing v${{ steps.parse.outputs.version }}.
+
+          Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+            git push
+          fi

@@ -28,7 +28,7 @@
         ],
         "panels": []
       },
-      "download_url": "https://github.com/ShristiLabs/madhyamas/releases/download/plugins-latest/cors-helper-1.0.0.zip",
+      "download_url": "https://github.com/shristilabs/madhyamas/releases/download/cors-helper-v1.0.0/cors-helper-1.0.0.zip",
       "checksum": "sha256:9596f720d071d287ac43572d5e10b505972632b79580740554fea88355cd8032",
       "downloads": 0,
       "rating": 5.0,
@@ -68,7 +68,7 @@
         ],
         "panels": []
       },
-      "download_url": "https://github.com/ShristiLabs/madhyamas/releases/download/plugins-latest/request-logger-1.0.0.zip",
+      "download_url": "https://github.com/shristilabs/madhyamas/releases/download/request-logger-v1.0.0/request-logger-1.0.0.zip",
       "checksum": "sha256:bcf0ddc34ecdd23cbc11f2d0a8bf647a12eaa345cfc2a02766258f76a4346954",
       "downloads": 0,
       "rating": 4.5,
@@ -121,7 +121,7 @@
           ]
         }
       },
-      "download_url": "https://github.com/ShristiLabs/madhyamas/releases/download/plugins-latest/domain-blocker-1.0.0.zip",
+      "download_url": "https://github.com/shristilabs/madhyamas/releases/download/domain-blocker-v1.0.0/domain-blocker-1.0.0.zip",
       "checksum": "sha256:9809465ba6786eb84159bf4daf27511b6b2e46cab423d912a71862bb4ceed3b5",
       "downloads": 0,
       "rating": 4.0,
