@@ -116,8 +116,40 @@ jobs:
       - name: Update registry.json
         run: |
           REGISTRY_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.parse.outputs.tag }}"
-          ./scripts/build-plugin.sh ${{ steps.parse.outputs.plugin }} \
-            --update-registry --registry-url "$REGISTRY_URL" || true
+          python3 - "${{ steps.parse.outputs.plugin }}" "${{ steps.parse.outputs.version }}" "${{ steps.checksum.outputs.sha256 }}" "$REGISTRY_URL" plugins/registry.json <<'PYEOF'
+          import json, sys, datetime
+
+          plugin_name = sys.argv[1]
+          version = sys.argv[2]
+          checksum = sys.argv[3]
+          url_base = sys.argv[4]
+          registry_path = sys.argv[5]
+
+          plugin_id = f"madhyamas.{plugin_name}"
+          download_url = f"{url_base}/{plugin_name}-{version}.zip"
+
+          with open(registry_path) as f:
+              data = json.load(f)
+
+          found = False
+          for entry in data["plugins"]:
+              if entry["manifest"]["id"] == plugin_id:
+                  entry["manifest"]["version"] = version
+                  entry["download_url"] = download_url
+                  entry["checksum"] = f"sha256:{checksum}"
+                  entry["updated_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+                  found = True
+                  break
+
+          if not found:
+              print(f"WARNING: Plugin {plugin_id} not found in registry.json", file=sys.stderr)
+
+          with open(registry_path, "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+
+          print(f"Updated {registry_path}: {plugin_id} v{version}")
+          PYEOF
 
       - name: Commit updated registry.json
         run: |
