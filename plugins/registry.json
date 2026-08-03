@@ -122,7 +122,7 @@
         }
       },
       "download_url": "https://github.com/shristilabs/madhyamas/releases/download/domain-blocker-v1.0.0/domain-blocker-1.0.0.zip",
-      "checksum": "sha256:9809465ba6786eb84159bf4daf27511b6b2e46cab423d912a71862bb4ceed3b5",
+      "checksum": "sha256:f7aa68fa935c4666936f3ccd718769e34d45062d0a888152570a8a2eeba6a3b7",
       "downloads": 0,
       "rating": 4.0,
       "rating_count": 1,
@@ -132,7 +132,7 @@
       ],
       "source": "registry",
       "added_at": "2024-01-01T00:00:00Z",
-      "updated_at": "2024-01-01T00:00:00Z"
+      "updated_at": "2026-08-03T13:16:24.581570Z"
     }
   ]
 }

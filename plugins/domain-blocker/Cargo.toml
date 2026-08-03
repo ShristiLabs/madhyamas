@@ -1,6 +1,6 @@
 [package]
 name = "madhyamas-plugin-domain-blocker"
-version = "1.0.0"
+version = "1.0.1-SNAPSHOT"
 edition = "2021"
 license = "MIT"
 description = "Domain Blocker plugin for Madhyamas — blocks configurable domains"
