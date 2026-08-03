@@ -10,22 +10,34 @@
         "author": "Madhyamas Team",
         "license": "MIT",
         "main": "plugin.wasm",
-        "hooks": ["on_response"],
-        "capabilities": ["intercept_response"],
+        "hooks": [
+          "on_response"
+        ],
+        "capabilities": [
+          "intercept_response"
+        ],
         "dependencies": {},
         "enabled_by_default": true,
         "network": false,
         "max_memory_pages": 64,
         "fuel_limit": 10000000,
-        "tags": ["cors", "headers", "development"],
+        "tags": [
+          "cors",
+          "headers",
+          "development"
+        ],
         "panels": []
       },
-      "download_url": "https://raw.githubusercontent.com/shristilabs/madhyamas/main/plugins/cors-helper-1.0.0.zip",
-      "checksum": "sha256:7cdebe8911685f700b738112045548fee01e0d150fcc6fc32bdecebe0b460bdc",
+      "download_url": "https://github.com/shristilabs/madhyamas/releases/download/plugins-latest/cors-helper-1.0.0.zip",
+      "checksum": "sha256:71562386155a82b74aef0dbe91a0b1114d405717cd04cd9f5185650d910a0f43",
       "downloads": 0,
       "rating": 5.0,
       "rating_count": 1,
-      "tags": ["cors", "headers", "development"],
+      "tags": [
+        "cors",
+        "headers",
+        "development"
+      ],
       "source": "registry",
       "added_at": "2024-01-01T00:00:00Z",
       "updated_at": "2024-01-01T00:00:00Z"
@@ -39,22 +51,32 @@
         "author": "Madhyamas Team",
         "license": "MIT",
         "main": "plugin.wasm",
-        "hooks": ["on_request"],
-        "capabilities": ["intercept_request"],
+        "hooks": [
+          "on_request"
+        ],
+        "capabilities": [
+          "intercept_request"
+        ],
         "dependencies": {},
         "enabled_by_default": false,
         "network": false,
         "max_memory_pages": 64,
         "fuel_limit": 10000000,
-        "tags": ["logging", "debugging"],
+        "tags": [
+          "logging",
+          "debugging"
+        ],
         "panels": []
       },
-      "download_url": "https://raw.githubusercontent.com/shristilabs/madhyamas/main/plugins/request-logger-1.0.0.zip",
-      "checksum": "sha256:58111a73553dbedcfe125dde36ea0522365e5e1746322b85c1eca34bd9c10925",
+      "download_url": "https://github.com/shristilabs/madhyamas/releases/download/plugins-latest/request-logger-1.0.0.zip",
+      "checksum": "sha256:d2fbfb3f2a0fd3274abefb523593e482c66a4439d136b8a3b1aa88b6470e07c2",
       "downloads": 0,
       "rating": 4.5,
       "rating_count": 2,
-      "tags": ["logging", "debugging"],
+      "tags": [
+        "logging",
+        "debugging"
+      ],
       "source": "registry",
       "added_at": "2024-01-01T00:00:00Z",
       "updated_at": "2024-01-01T00:00:00Z"
@@ -68,14 +90,22 @@
         "author": "Madhyamas Team",
         "license": "MIT",
         "main": "plugin.wasm",
-        "hooks": ["on_request"],
-        "capabilities": ["intercept_request", "ui_panel"],
+        "hooks": [
+          "on_request"
+        ],
+        "capabilities": [
+          "intercept_request",
+          "ui_panel"
+        ],
         "dependencies": {},
         "enabled_by_default": false,
         "network": false,
         "max_memory_pages": 64,
         "fuel_limit": 10000000,
-        "tags": ["blocking", "security"],
+        "tags": [
+          "blocking",
+          "security"
+        ],
         "panels": [],
         "settings": {
           "fields": [
@@ -91,12 +121,15 @@
           ]
         }
       },
-      "download_url": "https://raw.githubusercontent.com/shristilabs/madhyamas/main/plugins/domain-blocker-1.0.0.zip",
-      "checksum": "sha256:7eebcbd7ea2913d056ee24c472ea57357422c15a76b16b3ede9e259c0122dfaa",
+      "download_url": "https://github.com/shristilabs/madhyamas/releases/download/plugins-latest/domain-blocker-1.0.0.zip",
+      "checksum": "sha256:dfd69b7827383d7ed8c1b160e13b356145920c30197f4b93b7b5a0b556361fd4",
       "downloads": 0,
       "rating": 4.0,
       "rating_count": 1,
-      "tags": ["blocking", "security"],
+      "tags": [
+        "blocking",
+        "security"
+      ],
       "source": "registry",
       "added_at": "2024-01-01T00:00:00Z",
       "updated_at": "2024-01-01T00:00:00Z"

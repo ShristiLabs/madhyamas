@@ -56,6 +56,10 @@ build/
 *.so
 *.dylib
 
+# Plugin build artifacts (built & released via CI, not committed)
+plugins/*.zip
+plugins/*/plugin.wasm
+
 # Test coverage
 coverage/
 .nyc_output/
