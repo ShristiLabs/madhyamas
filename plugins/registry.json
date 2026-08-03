@@ -85,7 +85,7 @@
       "manifest": {
         "id": "madhyamas.domain-blocker",
         "name": "Domain Blocker",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "description": "Blocks requests to configurable domains. Demonstrates settings + short-circuit.",
         "author": "Madhyamas Team",
         "license": "MIT",
@@ -121,8 +121,8 @@
           ]
         }
       },
-      "download_url": "https://github.com/shristilabs/madhyamas/releases/download/domain-blocker-v1.0.0/domain-blocker-1.0.0.zip",
-      "checksum": "sha256:f7aa68fa935c4666936f3ccd718769e34d45062d0a888152570a8a2eeba6a3b7",
+      "download_url": "https://github.com/ShristiLabs/madhyamas/releases/download/domain-blocker-v1.0.1/domain-blocker-1.0.1.zip",
+      "checksum": "sha256:dc06adb5d04548d5303f208f74f4ba04c054bc3f3b0c81df04f17635810b94c0",
       "downloads": 0,
       "rating": 4.0,
       "rating_count": 1,
@@ -132,7 +132,7 @@
       ],
       "source": "registry",
       "added_at": "2024-01-01T00:00:00Z",
-      "updated_at": "2026-08-03T13:16:24.581570Z"
+      "updated_at": "2026-08-03T13:39:08.773788Z"
     }
   ]
 }
