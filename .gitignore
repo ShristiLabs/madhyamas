@@ -60,6 +60,7 @@ build/
 plugins/*.zip
 plugins/*/plugin.wasm
 plugins/*/target/
+plugins/*/Cargo.lock
 
 # Test coverage
 coverage/

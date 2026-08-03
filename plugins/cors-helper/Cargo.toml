@@ -1,6 +1,6 @@
 [package]
 name = "madhyamas-plugin-cors-helper"
-version = "1.0.1"
+version = "1.0.2-SNAPSHOT"
 edition = "2021"
 license = "MIT"
 description = "CORS Helper plugin for Madhyamas — adds CORS headers to every response"

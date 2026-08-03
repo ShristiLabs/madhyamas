@@ -5,7 +5,7 @@
       "manifest": {
         "id": "madhyamas.cors-helper",
         "name": "CORS Helper",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "description": "Automatically add CORS headers (Access-Control-Allow-Origin: *) to every response",
         "author": "Madhyamas Team",
         "license": "MIT",
@@ -28,8 +28,8 @@
         ],
         "panels": []
       },
-      "download_url": "https://github.com/shristilabs/madhyamas/releases/download/cors-helper-v1.0.0/cors-helper-1.0.0.zip",
-      "checksum": "sha256:d9e7d40d7ffe8a96ed04038128ea3e7055f0f42c76c48370ce1a5775727f8525",
+      "download_url": "https://github.com/shristilabs/madhyamas/releases/download/cors-helper-v1.0.1/cors-helper-1.0.1.zip",
+      "checksum": "sha256:9feed17d03ff0dd22733c20efa3f1abe3be977b01dd21f1ca9998ad7ffbb1263",
       "downloads": 0,
       "rating": 5.0,
       "rating_count": 1,
@@ -40,7 +40,7 @@
       ],
       "source": "registry",
       "added_at": "2024-01-01T00:00:00Z",
-      "updated_at": "2026-08-03T13:14:54.775539Z"
+      "updated_at": "2026-08-03T13:36:00.674102Z"
     },
     {
       "manifest": {
