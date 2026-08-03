@@ -116,9 +116,36 @@ jobs:
       - name: Update registry.json with release URLs and checksums
         run: |
           REGISTRY_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}"
-          ./scripts/build-plugins.sh --update-registry --registry-url "$REGISTRY_URL" || true
-          # build-plugins.sh rebuilds the zips, but we only need the registry update.
-          # The checksums should match since the source code is the same.
+          python3 - "$REGISTRY_URL" plugins/registry.json <<PYEOF
+          import json, sys
+
+          url_base = sys.argv[1]
+          path = sys.argv[2]
+
+          # Checksums from the actual release assets (computed above)
+          checksums = {
+              "cors-helper": "${{ steps.checksums.outputs.cors_helper }}",
+              "request-logger": "${{ steps.checksums.outputs.request_logger }}",
+              "domain-blocker": "${{ steps.checksums.outputs.domain_blocker }}",
+          }
+
+          with open(path) as f:
+              data = json.load(f)
+
+          for plugin in data["plugins"]:
+              pid = plugin["manifest"]["id"]
+              short = pid.split(".", 1)[-1] if "." in pid else pid
+              version = plugin["manifest"]["version"]
+              plugin["download_url"] = f"{url_base}/{short}-{version}.zip"
+              if short in checksums:
+                  plugin["checksum"] = f"sha256:{checksums[short]}"
+
+          with open(path, "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+
+          print(f"Updated {path}")
+          PYEOF
 
       - name: Commit updated registry.json
         run: |
