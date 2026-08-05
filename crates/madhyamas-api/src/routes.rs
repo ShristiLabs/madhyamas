@@ -334,6 +334,10 @@ fn create_routes_inner(
         .route("/mirror", get(handlers::get_mirror_status))
         .route("/mirror/toggle", post(handlers::toggle_mirror))
         .route("/mirror/config", patch(handlers::update_mirror_config))
+        // Log rotation endpoints
+        .route("/logs", get(handlers::get_log_status))
+        .route("/logs", patch(handlers::update_log_config))
+        .route("/logs/rotate", post(handlers::rotate_logs))
         // === Persistence endpoints ===
         .route("/persistence/export", get(handlers::export_all_rules))
         .route("/persistence/import", post(handlers::import_all_rules))

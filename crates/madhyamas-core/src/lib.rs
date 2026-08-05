@@ -10,6 +10,7 @@ pub mod extension;
 #[cfg(feature = "grpc")]
 pub mod grpc;
 pub mod intercept;
+pub mod log_rotation;
 pub mod mirror;
 pub mod performance;
 pub mod persistence;
@@ -31,7 +32,12 @@ pub use access_control::AccessControlList;
 pub use auto_save::AutoSaveManager;
 
 // Re-exports from config
-pub use config::{AutoSaveConfig, MirrorConfig, ProxyConfig, UpstreamProxyConfig};
+pub use config::{
+    AutoSaveConfig, LogConfig, LogRotation, MirrorConfig, ProxyConfig, UpstreamProxyConfig,
+};
+
+// Re-exports from log_rotation
+pub use log_rotation::{ArchivedLog, LogHandle, RotatingFileWriter};
 
 // Re-exports from mirror
 pub use mirror::{MirrorStats, MirrorWriter};

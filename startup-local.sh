@@ -140,9 +140,13 @@ fi
 echo -e "${BLUE}Command: $CMD${NC}"
 echo ""
 
-# Run in background and save PID
-# Web UI assets are embedded in the binary — no MADHYAMAS_WEB_DIR needed.
-nohup $CMD > ~/.madhyamas/logs/madhyamas.log 2>&1 &
+# Run in background and save PID.
+# The binary manages its own rotating log files in ~/.madhyamas/logs/
+# (see docs/LOGGING.md), so we only capture stderr here for crash
+# diagnostics. Stdout is sent to /dev/null to avoid an unbounded
+# duplicate log file (the previous `> madhyamas.log 2>&1` redirect grew
+# without bound because the shell does not rotate).
+nohup $CMD > /dev/null 2> ~/.madhyamas/logs/madhyamas.stderr.log &
 PID=$!
 echo $PID > ~/.madhyamas/madhyamas.pid
 
@@ -160,11 +164,13 @@ if ps -p $PID > /dev/null; then
     echo ""
     echo "Process:"
     echo "  • PID:           $PID"
-    echo "  • Log file:      ~/.madhyamas/logs/madhyamas.log"
+    echo "  • Log file:      ~/.madhyamas/logs/madhyamas.log (rotated automatically)"
+    echo "  • Stderr:        ~/.madhyamas/logs/madhyamas.stderr.log (crash diagnostics)"
     echo ""
     echo "Commands:"
     echo "  • Stop:          ./stop-local.sh"
     echo "  • View logs:     tail -f ~/.madhyamas/logs/madhyamas.log"
+    echo "  • Rotate logs:   ./target/release/madhyamas logs rotate"
     echo "  • Clean rebuild: ./startup-local.sh --clean"
     echo ""
     echo "Environment variables:"
@@ -177,7 +183,7 @@ if ps -p $PID > /dev/null; then
     fi
 else
     echo -e "${RED}Error: Madhyamas failed to start${NC}"
-    echo "Check logs at: ~/.madhyamas/logs/madhyamas.log"
-    cat ~/.madhyamas/logs/madhyamas.log
+    echo "Check stderr at: ~/.madhyamas/logs/madhyamas.stderr.log"
+    cat ~/.madhyamas/logs/madhyamas.stderr.log 2>/dev/null || true
     exit 1
 fi

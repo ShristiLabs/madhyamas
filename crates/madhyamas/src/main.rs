@@ -18,9 +18,9 @@ use madhyamas_core::GrpcManager;
 use madhyamas_core::WasmRuntime;
 use madhyamas_core::{
     AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, ExtensionManager,
-    InterceptStore, MemoryManager, MetricsCollector, MirrorWriter, MockManager, PerformanceMonitor,
-    Persistable, ProxyConfig, ProxyEngine, RewriteManager, SessionManager, ThrottleManager,
-    TrafficStore, UpstreamProxyConfig,
+    InterceptStore, LogHandle, MemoryManager, MetricsCollector, MirrorWriter, MockManager,
+    PerformanceMonitor, Persistable, ProxyConfig, ProxyEngine, RewriteManager, RotatingFileWriter,
+    SessionManager, ThrottleManager, TrafficStore, UpstreamProxyConfig,
 };
 #[cfg(feature = "plugins")]
 use madhyamas_core::{PluginExtension, PluginInstaller, PluginManager, PluginPersistence};
@@ -28,7 +28,7 @@ use madhyamas_core::{PluginExtension, PluginInstaller, PluginManager, PluginPers
 use madhyamas_core::{ScriptExtension, ScriptRuntime};
 
 use tracing::{debug, info, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 // Re-export CLI commands from the madhyamas-cli library
 use madhyamas_cli::Commands as CliCommands;
@@ -263,7 +263,7 @@ async fn main() -> Result<()> {
             timeout_secs,
         }) => {
             // MCP mode: log to stderr to avoid corrupting stdio JSON-RPC
-            let subscriber = FmtSubscriber::builder()
+            let subscriber = fmt::Subscriber::builder()
                 .with_max_level(level)
                 .with_target(false)
                 .with_thread_ids(false)
@@ -288,7 +288,7 @@ async fn main() -> Result<()> {
 
         Some(Command::Cli(cli_cmd)) => {
             // CLI mode: standard logging
-            let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
+            let subscriber = fmt::Subscriber::builder().with_max_level(level).finish();
             let _ = tracing::subscriber::set_global_default(subscriber);
 
             let api_url = std::env::var("MADHYAMAS_API_URL")
@@ -297,11 +297,28 @@ async fn main() -> Result<()> {
         }
 
         Some(Command::Serve) | None => {
-            // Proxy server mode (default)
-            let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
-            let _ = tracing::subscriber::set_global_default(subscriber);
+            // Proxy server mode (default).
+            //
+            // Initialize logging early so the proxy server startup messages
+            // are captured. The log directory and rotation config are
+            // resolved from CLI args / saved config / defaults (same
+            // precedence as the full ProxyConfig built inside
+            // run_proxy_server).
+            let saved = ProxyConfig::load_saved();
+            let defaults = ProxyConfig::default();
+            let log_path = args.log_path.clone().unwrap_or_else(|| {
+                saved
+                    .as_ref()
+                    .map(|s| s.log_path.clone())
+                    .unwrap_or(defaults.log_path.clone())
+            });
+            let log_config = saved
+                .as_ref()
+                .map(|s| s.log_config.clone())
+                .unwrap_or_default();
+            let log_handle = init_logging(log_path, log_config, args.verbose);
 
-            run_proxy_server(args).await
+            run_proxy_server(args, log_handle).await
         }
     }
 }
@@ -418,7 +435,7 @@ fn parse_auth_credentials(s: &str) -> (Option<String>, Option<String>) {
     }
 }
 
-async fn run_proxy_server(args: Args) -> Result<()> {
+async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     info!("Starting Madhyamas...");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
 
@@ -539,6 +556,13 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         // persist across restarts. Defaults to disabled when no saved config
         // exists.
         mirror: saved.as_ref().map(|s| s.mirror.clone()).unwrap_or_default(),
+        // Log rotation: preserve the saved config (if any) so runtime API
+        // changes persist across restarts. Defaults to enabled with daily
+        // rotation when no saved config exists.
+        log_config: saved
+            .as_ref()
+            .map(|s| s.log_config.clone())
+            .unwrap_or_default(),
     };
 
     if saved.is_some() {
@@ -796,6 +820,7 @@ async fn run_proxy_server(args: Args) -> Result<()> {
         .with_session_manager(session_manager)
         .with_autosave_manager(autosave_manager)
         .with_mirror_writer(mirror_writer)
+        .with_log_handle(log_handle)
         .with_mock_manager(mock_manager)
         .with_rewrite_manager(rewrite_manager)
         .with_breakpoint_manager(breakpoint_manager)
@@ -908,6 +933,131 @@ async fn run_proxy_server(args: Args) -> Result<()> {
 
     info!("Madhyamas stopped. Goodbye!");
     Ok(())
+}
+
+/// Initialize the global tracing subscriber with stdout + rotating file
+/// layers.
+///
+/// - **Stdout layer**: always on, ANSI-formatted (or JSON when
+///   `log_config.json_format` is true), so `tail`/`docker logs` work.
+/// - **File layer**: on when `log_config.enabled`, writing to
+///   `<log_dir>/madhyamas.log` via [`RotatingFileWriter`] (time/size-based
+///   rotation + on-demand rotation).
+///
+/// A background `tokio` task wakes every 60 seconds to perform time-based
+/// rotation (hourly/daily) and prune archived files to `max_files`.
+///
+/// Returns a [`LogHandle`] that must be held for the program lifetime (the
+/// file appender is dropped if the handle is dropped) and is also stored in
+/// the API `AppState` for on-demand rotation.
+fn init_logging(
+    log_dir: String,
+    log_config: madhyamas_core::LogConfig,
+    verbose: bool,
+) -> LogHandle {
+    // Build the EnvFilter: honor RUST_LOG if set, otherwise use a global
+    // level (matching the previous `with_max_level` behavior — all targets
+    // at the configured level, not just the `madhyamas` target).
+    let level = if verbose || cfg!(debug_assertions) {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
+    let filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new(level.as_str().to_lowercase()))
+        .unwrap_or_else(|_| EnvFilter::new(level.as_str().to_lowercase()));
+
+    // Stdout fmt layer (always on).
+    let stdout_layer = fmt::layer().with_target(false).with_filter(filter.clone());
+
+    let mut layers = vec![stdout_layer.boxed()];
+
+    // Optional file layer.
+    let mut handle: Option<LogHandle> = None;
+    if log_config.enabled {
+        match RotatingFileWriter::new(&log_dir, log_config.clone()) {
+            Ok(writer) => {
+                // Print the file path to stderr directly — the global
+                // subscriber is not installed yet, so tracing macros would
+                // be dropped.
+                let current = writer.current_path();
+                eprintln!(
+                    "Log file: {} (rotation: {}, max_files: {}, max_size: {} MB)",
+                    current.display(),
+                    log_config.rotation.label(),
+                    log_config.max_files,
+                    log_config
+                        .rotation
+                        .effective_size_cap_mb(log_config.max_file_size_mb),
+                );
+
+                // Spawn the background rotation/prune task. Holds a clone of
+                // the writer (Arc-backed) so it keeps running for the
+                // program lifetime.
+                let bg_writer = writer.clone();
+                tokio::spawn(async move {
+                    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+                    // The first tick fires immediately; skip it so we don't
+                    // rotate right after startup.
+                    ticker.tick().await;
+                    loop {
+                        ticker.tick().await;
+                        if let Err(e) = bg_writer.check_time_rotation() {
+                            eprintln!("log time-rotation check failed: {}", e);
+                        }
+                        if let Err(e) = bg_writer.prune() {
+                            eprintln!("log prune failed: {}", e);
+                        }
+                    }
+                });
+
+                let file_layer = if log_config.json_format {
+                    fmt::layer()
+                        .json()
+                        .with_target(true)
+                        .with_writer(writer.clone())
+                        .with_filter(filter.clone())
+                        .boxed()
+                } else {
+                    fmt::layer()
+                        .with_target(false)
+                        .with_writer(writer.clone())
+                        .with_filter(filter.clone())
+                        .boxed()
+                };
+                layers.push(file_layer);
+                handle = Some(LogHandle::new(writer));
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: failed to open log file in {}: {} — logging to stdout only",
+                    log_dir, e
+                );
+            }
+        }
+    } else {
+        eprintln!("File logging disabled (log_config.enabled = false) — stdout only");
+    }
+
+    // Install the global subscriber.
+    tracing_subscriber::registry().with(layers).init();
+
+    // Return the handle, or a no-op handle backed by a fresh writer pointing
+    // at a throwaway temp dir if file logging was disabled. The no-op handle
+    // still satisfies the AppState contract (handlers can call rotate_now()
+    // without crashing; it just rotates a file nobody writes to).
+    handle.unwrap_or_else(|| {
+        // Create a handle backed by a disabled writer so the API surface
+        // remains functional even when file logging is off.
+        let disabled_cfg = madhyamas_core::LogConfig {
+            enabled: false,
+            ..log_config
+        };
+        let dir = std::env::temp_dir().join("madhyamas-logs-disabled");
+        let writer = RotatingFileWriter::new(&dir, disabled_cfg)
+            .expect("failed to create disabled log writer in temp dir");
+        LogHandle::new(writer)
+    })
 }
 
 #[cfg(test)]

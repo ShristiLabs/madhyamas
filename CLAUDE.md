@@ -55,6 +55,9 @@ madhyamas focus add "*.example.com"
 madhyamas mirror status
 madhyamas mirror start
 madhyamas mirror config --output-dir /tmp/mirror --host-filter "*.example.com"
+madhyamas logs status
+madhyamas logs rotate
+madhyamas logs config --rotation size --size-mb 50 --max-files 3
 madhyamas --help  # See all commands
 ```
 
@@ -250,6 +253,23 @@ support exact hostnames, wildcard subdomains (`*.example.com`), and globs
 or the `madhyamas mirror` CLI subcommand. See
 [docs/MIRROR.md](docs/MIRROR.md).
 
+**Log File Rotation**: The proxy writes log events to both stdout and a
+rotating file at `<log_path>/madhyamas.log` (default
+`~/.madhyamas/logs/madhyamas.log`). Rotation supports time-based (hourly/
+daily), size-based (`SizeMB`), and on-demand modes. Archived files are named
+`madhyamas.log.<timestamp>` and pruned to `max_files` (default 7). A hard
+per-file size cap (`max_file_size_mb`, default 100 MB) prevents unbounded
+growth even with time-based rotation. Config fields: `log_config.enabled`
+(default `true`), `log_config.rotation` (`{"mode": "never"|"hourly"|"daily"}`,
+or `{"mode": "size", "size_mb": <n>}`; default `daily`),
+`log_config.max_files` (default 7), `log_config.max_file_size_mb` (default
+100), `log_config.json_format` (default `false`). Configured via
+`GET/PATCH /api/logs`, `POST /api/logs/rotate` (on-demand rotation), the
+`madhyamas logs` CLI subcommand (`status`/`rotate`/`config`), or the
+`madhyamas_logs_*` MCP tools. The `LogHandle` and `RotatingFileWriter` live
+in `madhyamas-core/src/log_rotation.rs`. See
+[docs/LOGGING.md](docs/LOGGING.md).
+
 **Timeline View (Waterfall)**: The web UI traffic panel has a toggle to switch
 between the list (table) view and a waterfall timeline view. The timeline shows
 each request as a horizontal bar positioned by start time and sized by duration,
@@ -349,6 +369,7 @@ form, and logs viewer), `GET/POST/PUT/DELETE /api/plugins/*`, the
 | Block List | `GET/POST /blocklist`, `GET /blocklist/stats`, `GET/PUT/DELETE /blocklist/{id}`, `POST /blocklist/{id}/toggle` |
 | Focus | `GET/POST /focus`, `DELETE /focus/{id}`, `DELETE /focus` (clear all) |
 | Mirror | `GET /mirror`, `POST /mirror/toggle`, `PATCH /mirror/config` |
+| Log Rotation | `GET /logs`, `PATCH /logs`, `POST /logs/rotate` |
 | gRPC | `GET /grpc/connections`, `GET /grpc/streams`, `GET /grpc/frames`, `GET /grpc/stats` |
 | Scripts | `GET/POST /scripts`, `GET/PUT/DELETE /scripts/{id}`, `POST /scripts/{id}/toggle`, `GET /scripts/templates`, `GET/PUT /scripts/config`, `GET /scripts/history`, `POST /scripts/test`, `POST /scripts/validate`, `GET/DELETE /scripts/{id}/history` |
 | Plugins | `GET /plugins`, `GET /plugins/{id}`, `POST /plugins/{id}/enable`, `POST /plugins/{id}/disable`, `GET /plugins/{id}/stats`, `POST /plugins/reload`, `POST /plugins/install`, `DELETE /plugins/{id}/uninstall`, `GET/PUT /plugins/{id}/settings`, `GET /plugins/{id}/schema`, `GET /plugins/{id}/logs`, `GET /plugins/registry`, `GET /plugins/registry/search?q=`, `GET /plugins/registry/{id}` |

@@ -1839,3 +1839,176 @@ pub async fn update_mirror_config(
 
     (StatusCode::OK, Json(resp)).into_response()
 }
+
+// =============================================================================
+// Log rotation
+// =============================================================================
+
+/// Get the current log rotation status: config, current file path/size, and
+/// the list of archived (rotated) log files.
+pub async fn get_log_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let Some(handle) = state.log_handle.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "Log rotation not available (proxy server mode required)"
+            })),
+        )
+            .into_response();
+    };
+    Json(handle.status_json()).into_response()
+}
+
+/// Trigger an immediate (on-demand) log file rotation.
+///
+/// The current `madhyamas.log` is renamed to `madhyamas.log.<timestamp>` and a
+/// fresh file is opened. Archived files are pruned to `max_files`. Returns the
+/// new archived file path and the updated status.
+pub async fn rotate_logs(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let Some(handle) = state.log_handle.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "Log rotation not available (proxy server mode required)"
+            })),
+        )
+            .into_response();
+    };
+    match handle.rotate_now() {
+        Ok(archive_path) => {
+            let mut status = handle.status_json();
+            if let Some(obj) = status.as_object_mut() {
+                obj.insert(
+                    "rotated_to".to_string(),
+                    serde_json::Value::String(archive_path.to_string_lossy().to_string()),
+                );
+            }
+            (StatusCode::OK, Json(status)).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("Failed to rotate log file: {}", e),
+            })),
+        )
+            .into_response(),
+    }
+}
+
+/// Partial update payload for `PATCH /api/logs`.
+#[derive(Debug, Deserialize)]
+pub struct PatchLogConfigRequest {
+    pub enabled: Option<bool>,
+    /// Rotation mode. Accepts `{"mode": "never"|"hourly"|"daily"}` or
+    /// `{"mode": "size", "size_mb": <n>}`.
+    pub rotation: Option<serde_json::Value>,
+    pub max_files: Option<usize>,
+    pub max_file_size_mb: Option<u64>,
+    pub json_format: Option<bool>,
+}
+
+/// Update the log rotation configuration at runtime.
+///
+/// Changes are applied to the live [`LogHandle`] and persisted to the proxy
+/// config so they survive restarts. Note: changing `rotation` mode or
+/// `json_format` takes effect on the next restart (the active subscriber
+/// layer is installed once at startup); `max_files` and `max_file_size_mb`
+/// take effect immediately.
+pub async fn update_log_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PatchLogConfigRequest>,
+) -> impl IntoResponse {
+    let Some(handle) = state.log_handle.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "Log rotation not available (proxy server mode required)"
+            })),
+        )
+            .into_response();
+    };
+
+    // Start from the current live config.
+    let mut cfg = handle.config();
+
+    if let Some(v) = req.enabled {
+        cfg.enabled = v;
+    }
+    if let Some(v) = req.max_files {
+        cfg.max_files = v;
+    }
+    if let Some(v) = req.max_file_size_mb {
+        cfg.max_file_size_mb = v;
+    }
+    if let Some(v) = req.json_format {
+        cfg.json_format = v;
+    }
+    if let Some(rotation_val) = req.rotation {
+        match parse_rotation(&rotation_val) {
+            Ok(r) => cfg.rotation = r,
+            Err(msg) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": msg, "value": rotation_val })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // Apply to the live handle.
+    handle.update_config(cfg.clone());
+
+    // Persist to the proxy config so changes survive restarts.
+    if let Some(pc) = state.proxy_config.as_ref() {
+        let snapshot = {
+            let mut config = pc.write();
+            config.log_config = cfg.clone();
+            config.clone()
+        };
+        if let Err(e) = snapshot.save() {
+            tracing::warn!("Failed to persist log config to disk: {}", e);
+        }
+    }
+
+    let resp = serde_json::json!({
+        "enabled": cfg.enabled,
+        "rotation": cfg.rotation.label(),
+        "max_files": cfg.max_files,
+        "max_file_size_mb": cfg.max_file_size_mb,
+        "json_format": cfg.json_format,
+        "message": "Log configuration updated (rotation mode/json_format changes take effect on next restart; size/max_files take effect immediately)",
+    });
+    (StatusCode::OK, Json(resp)).into_response()
+}
+
+/// Parse a rotation JSON value into a [`madhyamas_core::LogRotation`].
+///
+/// Accepts:
+/// - `{"mode": "never"}` / `{"mode": "hourly"}` / `{"mode": "daily"}`
+/// - `{"mode": "size", "size_mb": <n>}`
+fn parse_rotation(val: &serde_json::Value) -> Result<madhyamas_core::LogRotation, String> {
+    let obj = val
+        .as_object()
+        .ok_or_else(|| "rotation must be an object with a \"mode\" field".to_string())?;
+    let mode = obj
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "rotation.mode is required (never|hourly|daily|size)".to_string())?;
+    match mode {
+        "never" => Ok(madhyamas_core::LogRotation::Never),
+        "hourly" => Ok(madhyamas_core::LogRotation::Hourly),
+        "daily" => Ok(madhyamas_core::LogRotation::Daily),
+        "size" => {
+            let size_mb = obj
+                .get("size_mb")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "rotation.size_mb is required when mode=size".to_string())?;
+            if size_mb == 0 {
+                return Err("rotation.size_mb must be > 0".to_string());
+            }
+            Ok(madhyamas_core::LogRotation::SizeMB { size_mb })
+        }
+        other => Err(format!("unknown rotation mode: {}", other)),
+    }
+}

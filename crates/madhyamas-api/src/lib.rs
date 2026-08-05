@@ -27,8 +27,8 @@ use madhyamas_core::PluginManager;
 use madhyamas_core::ScriptRuntime;
 use madhyamas_core::{
     AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, InterceptStore,
-    MirrorWriter, MockManager, ProxyConfig, ReplayManager, RewriteManager, SessionManager,
-    ThrottleManager, TrafficStore, WsManager,
+    LogHandle, MirrorWriter, MockManager, ProxyConfig, ReplayManager, RewriteManager,
+    SessionManager, ThrottleManager, TrafficStore, WsManager,
 };
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -92,6 +92,10 @@ pub struct AppState {
     /// Mirror writer (saves response bodies to disk). Optional — only set
     /// when the proxy engine is running with mirroring enabled.
     pub mirror_writer: Option<Arc<MirrorWriter>>,
+    /// Log rotation handle. Optional — only set when the proxy server is
+    /// running (not in CLI/MCP modes). Enables `GET /api/logs`,
+    /// `POST /api/logs/rotate`, and `PATCH /api/logs`.
+    pub log_handle: Option<Arc<LogHandle>>,
     /// Optional enterprise auth manager. When present and enterprise
     /// features are enabled, JWT authentication is enforced on protected
     /// routes.
@@ -125,6 +129,7 @@ impl AppState {
             proxy_config: None,
             autosave_manager: None,
             mirror_writer: None,
+            log_handle: None,
             #[cfg(feature = "enterprise")]
             auth_service: None,
         }
@@ -214,6 +219,13 @@ impl AppState {
     /// mirror configuration and statistics.
     pub fn with_mirror_writer(mut self, writer: Arc<MirrorWriter>) -> Self {
         self.mirror_writer = Some(writer);
+        self
+    }
+
+    /// Attach the log rotation handle so the API layer can query log status,
+    /// trigger on-demand rotation, and update the rotation config at runtime.
+    pub fn with_log_handle(mut self, handle: LogHandle) -> Self {
+        self.log_handle = Some(Arc::new(handle));
         self
     }
 

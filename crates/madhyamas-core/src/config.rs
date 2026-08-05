@@ -193,6 +193,18 @@ pub struct ProxyConfig {
     /// [`docs/MIRROR.md`](../../docs/MIRROR.md) for the end-user guide.
     #[serde(default)]
     pub mirror: MirrorConfig,
+
+    /// Log file rotation configuration.
+    ///
+    /// Controls how the proxy's log file (`<log_path>/madhyamas.log`) is
+    /// rotated to prevent unbounded growth. Supports time-based rotation
+    /// (hourly/daily), size-based rotation, automatic pruning of old files,
+    /// and on-demand rotation via the API/CLI/MCP.
+    ///
+    /// See [`LogConfig`] for field details and
+    /// [`docs/LOGGING.md`](../../docs/LOGGING.md) for the end-user guide.
+    #[serde(default)]
+    pub log_config: LogConfig,
 }
 
 /// Upstream (external) proxy chaining configuration.
@@ -432,6 +444,131 @@ impl Default for MirrorConfig {
     }
 }
 
+/// Default value provider for [`LogConfig::max_files`].
+fn default_log_max_files() -> usize {
+    7
+}
+
+/// Default value provider for [`LogConfig::max_file_size_mb`].
+fn default_log_max_file_size_mb() -> u64 {
+    100
+}
+
+/// Default value provider for [`LogConfig::rotation`].
+fn default_log_rotation() -> LogRotation {
+    LogRotation::Daily
+}
+
+/// Log file rotation strategy.
+///
+/// Controls when the current log file is rotated (renamed with a timestamp
+/// suffix and a fresh file opened). Archived files are pruned to
+/// [`LogConfig::max_files`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "mode")]
+pub enum LogRotation {
+    /// Never rotate based on time or size. The log file grows without bound
+    /// (not recommended for long-running deployments).
+    #[serde(rename = "never")]
+    Never,
+    /// Rotate once per hour. A new file is opened at the top of each hour.
+    #[serde(rename = "hourly")]
+    Hourly,
+    /// Rotate once per day (at midnight local time). This is the default.
+    #[serde(rename = "daily")]
+    Daily,
+    /// Rotate when the current file exceeds `size_mb` megabytes. No
+    /// time-based rotation is performed.
+    #[serde(rename = "size")]
+    SizeMB {
+        /// Maximum size in megabytes before the file is rotated.
+        size_mb: u64,
+    },
+}
+
+impl Default for LogRotation {
+    fn default() -> Self {
+        default_log_rotation()
+    }
+}
+
+impl LogRotation {
+    /// Returns a human-readable label for the rotation mode.
+    pub fn label(&self) -> String {
+        match self {
+            LogRotation::Never => "never".to_string(),
+            LogRotation::Hourly => "hourly".to_string(),
+            LogRotation::Daily => "daily".to_string(),
+            LogRotation::SizeMB { size_mb } => format!("size ({} MB)", size_mb),
+        }
+    }
+
+    /// Effective per-file size cap in megabytes. Time-based rotation modes
+    /// use [`LogConfig::max_file_size_mb`] as a safety cap so a single file
+    /// can never grow unbounded between scheduled rotations. `Never` uses
+    /// the same cap. `SizeMB` uses its own `size_mb`.
+    pub fn effective_size_cap_mb(&self, fallback_mb: u64) -> u64 {
+        match self {
+            LogRotation::Never | LogRotation::Hourly | LogRotation::Daily => fallback_mb,
+            LogRotation::SizeMB { size_mb } => *size_mb,
+        }
+    }
+}
+
+/// Log file rotation configuration.
+///
+/// When `enabled` is `true` (the default), the proxy writes log events to
+/// `<log_path>/madhyamas.log` and rotates the file according to
+/// [`LogConfig::rotation`]. Archived files are named
+/// `madhyamas.log.<timestamp>` and pruned to [`LogConfig::max_files`].
+///
+/// On-demand rotation is always available via `POST /api/logs/rotate`
+/// (and the `madhyamas logs rotate` CLI / `madhyamas_logs_rotate` MCP tool)
+/// regardless of the configured rotation mode.
+///
+/// See [`docs/LOGGING.md`](../../docs/LOGGING.md) for the end-user guide.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LogConfig {
+    /// Master switch. When `false`, logs are written to stdout only and no
+    /// log files are created. Default: `true`.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Rotation strategy. Default: [`LogRotation::Daily`].
+    #[serde(default = "default_log_rotation")]
+    pub rotation: LogRotation,
+
+    /// Maximum number of archived log files to keep. When the count is
+    /// exceeded, the oldest archived file is deleted. Default: 7.
+    #[serde(default = "default_log_max_files")]
+    pub max_files: usize,
+
+    /// Hard per-file size cap in megabytes. Even with time-based rotation
+    /// (hourly/daily), a single file that exceeds this size is rotated
+    /// immediately. This is a safety net to prevent unbounded growth.
+    /// Default: 100 MB. Ignored when `rotation` is [`LogRotation::SizeMB`]
+    /// (which has its own `size_mb`).
+    #[serde(default = "default_log_max_file_size_mb")]
+    pub max_file_size_mb: u64,
+
+    /// Write log events as structured JSON instead of the default
+    /// human-readable text format. Default: `false`.
+    #[serde(default)]
+    pub json_format: bool,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            rotation: default_log_rotation(),
+            max_files: default_log_max_files(),
+            max_file_size_mb: default_log_max_file_size_mb(),
+            json_format: false,
+        }
+    }
+}
+
 impl UpstreamProxyConfig {
     /// Build the reqwest-compatible proxy URL string.
     ///
@@ -620,6 +757,7 @@ impl Default for ProxyConfig {
             allowed_ips: Vec::new(),
             auto_save: AutoSaveConfig::default(),
             mirror: MirrorConfig::default(),
+            log_config: LogConfig::default(),
         }
     }
 }

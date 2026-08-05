@@ -112,9 +112,7 @@ impl PluginInstaller {
         let checksum_verified = match &checksum {
             Some(expected) => {
                 // Strip optional "sha256:" prefix before comparing.
-                let normalized = expected
-                    .strip_prefix("sha256:")
-                    .unwrap_or(expected);
+                let normalized = expected.strip_prefix("sha256:").unwrap_or(expected);
                 if normalized.eq_ignore_ascii_case(&actual_checksum) {
                     true
                 } else {
