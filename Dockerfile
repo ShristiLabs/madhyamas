@@ -53,7 +53,6 @@ COPY crates/madhyamas-api/src ./crates/madhyamas-api/src
 COPY crates/madhyamas-cli/src ./crates/madhyamas-cli/src
 COPY crates/madhyamas-mcp/src ./crates/madhyamas-mcp/src
 COPY crates/madhyamas-plugin-sdk/src ./crates/madhyamas-plugin-sdk/src
-COPY crates/madhyamas-plugin-sdk/examples ./crates/madhyamas-plugin-sdk/examples
 COPY crates/madhyamas-core/tests ./crates/madhyamas-core/tests
 
 # Touch source files to invalidate cache and force rebuild
