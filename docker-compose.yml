@@ -8,7 +8,6 @@ services:
     ports:
       - "3001:3001" # Web UI / API
       - "8888:8888" # HTTP Proxy
-      - "8443:8443" # HTTPS Proxy
     volumes:
       - madhyamas_data:/data
       - ./certs:/data/certs:ro # Mount pre-generated certs if available
@@ -16,7 +15,6 @@ services:
       - MADHYAMAS_LOG_LEVEL=info
       - MADHYAMAS_API_PORT=3001
       - MADHYAMAS_PROXY_PORT=8888
-      - MADHYAMAS_PROXY_TLS_PORT=8443
       - MADHYAMAS_DATA_DIR=/data
       # IMPORTANT: Set this to your machine's LAN IP for mobile device access
       # The container cannot auto-detect the host's network IP
@@ -57,7 +55,6 @@ services:
       - MADHYAMAS_LOG_LEVEL=info
       - MADHYAMAS_API_PORT=3001
       - MADHYAMAS_PROXY_PORT=8888
-      - MADHYAMAS_PROXY_TLS_PORT=8443
       - MADHYAMAS_DATA_DIR=/data
     command: ["--host", "0.0.0.0"]
     restart: unless-stopped
@@ -109,7 +106,6 @@ services:
     ports:
       - "3001:3001"
       - "8888:8888"
-      - "8443:8443"
       - "5173:5173" # Vite dev server
     volumes:
       - madhyamas_data:/data
