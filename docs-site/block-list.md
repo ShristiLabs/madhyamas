@@ -1,3 +1,8 @@
+---
+title: Block List
+description: Block requests to specific domains or URL patterns in Madhyamas so they never reach upstream servers — returns a configurable response (default 403) with no upstream connection.
+---
+
 # Block List
 
 The Block List lets you **block requests to specific domains or patterns** from ever reaching upstream servers. When a request's host matches a block list entry, the proxy immediately returns a configurable response (by default `403 Forbidden`) instead of forwarding the request. No upstream connection is made.
@@ -113,3 +118,10 @@ Block list entries persist across restarts. Check for leftover entries from a pr
 ### "Toggling one entry off didn't unblock the domain"
 
 If multiple entries match the same host, disabling one won't help if another enabled entry still matches. Check for duplicate patterns.
+
+## See also
+
+- [Rewrites](./rewrites) — modify requests instead of blocking them
+- [Mocks](./mocks) — return a fake response instead of a 403
+- [Access Control](./access-control) — restrict which clients can connect
+- [REST API reference](./rest-api) — `/api/blocklist` endpoints

@@ -1,3 +1,8 @@
+---
+title: Getting Started
+description: Install Madhyamas on macOS, Windows, or Linux and capture your first HTTP/HTTPS request in minutes — Homebrew, cargo, MSI, pre-built binaries, Docker, and Kubernetes covered.
+---
+
 # Getting Started
 
 Welcome to **Madhyamas** — an open-source HTTP/HTTPS debugging proxy that lets you inspect, modify, and replay network traffic between your applications and the servers they talk to. Whether you're debugging an API, testing error handling, or simulating slow networks, Madhyamas gives you full visibility and control.

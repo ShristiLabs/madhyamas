@@ -71,9 +71,12 @@ npm run preview  # Preview the production build
    "## Verification" → "## Troubleshooting" (if applicable) → "## See also".
 5. **Code blocks**: always specify language. Use `bash` for shell, `json` for config,
    `http` for HTTP examples, `ts`/`rust` for code.
-6. **Screenshots**: place under `public/screenshots/`, reference with absolute path
-   `/madhyamas/screenshots/foo.png` (the `/madhyamas/` prefix matches the GitHub Pages
-   base path). Always provide alt text.
+6. **Screenshots**: place under `public/screenshots/`, reference with the
+   root-absolute path `/screenshots/foo.png`. VitePress automatically prepends
+   the configured `base` (`/madhyamas/`) at build time, so the rendered URL
+   becomes `/madhyamas/screenshots/foo.png` on GitHub Pages. Do **not** hardcode
+   the `/madhyamas/` prefix in Markdown — that would double the base path.
+   Always provide alt text.
 7. **Cross-links**: use relative links (`./mocks.md`) — VitePress rewrites them.
 8. **No emojis** in prose, headings, or code comments.
 9. **Voice**: second person ("You can..."), present tense, concise. Aim for a

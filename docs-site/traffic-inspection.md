@@ -1,3 +1,8 @@
+---
+title: Traffic Inspection
+description: View, filter, search, sort, and export HTTP/HTTPS traffic captured by Madhyamas in real time — quick filters, advanced filter builder, HAR and cURL export.
+---
+
 # Traffic Inspection
 
 The Traffic view is the heart of Madhyamas. It shows every HTTP/HTTPS request and response flowing through the proxy in real time, with full details on headers, bodies, timing, and more.
@@ -102,3 +107,12 @@ Click the **Clear** button to remove all captured traffic. This action cannot be
 The traffic list updates in real time as new requests flow through the proxy. A WebSocket connection keeps the UI in sync — no manual refresh needed.
 
 If you need to pause recording without stopping the proxy, toggle the **Recording** button in the top toolbar to switch to **Passthrough** mode. In passthrough, traffic still flows through the proxy but isn't recorded.
+
+## See also
+
+- [Timeline View](./timeline-view) — waterfall visualization of captured traffic
+- [Focus](./focus) — highlight specific hosts without filtering
+- [Sessions](./sessions) — organize traffic into named groups
+- [Importing HAR Files](./har-import) — bring external captures into Madhyamas
+- [WebSocket Inspection](./websockets) — bidirectional WebSocket traffic
+- [REST API reference](./rest-api) — `/api/traffic` endpoints

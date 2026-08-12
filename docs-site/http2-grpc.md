@@ -1,3 +1,8 @@
+---
+title: HTTP/2 & gRPC
+description: Enable HTTP/2 downstream in Madhyamas to intercept HTTP/2 and gRPC traffic, including protobuf payload inspection.
+---
+
 # HTTP/2 & gRPC
 
 Madhyamas supports **HTTP/2** on the downstream (client-facing) side of the proxy. Enabling it lets you intercept HTTP/2 traffic, including **gRPC**, which mandates HTTP/2.
@@ -22,7 +27,7 @@ HTTP/2 downstream is **disabled by default** for safety. Enable it via the web U
 
 ### Web UI
 
-1. Open **Settings** (gear icon)
+1. Open the **Config** dialog (sliders icon in the top toolbar)
 2. Go to the **General** tab
 3. Under **HTTP/2**, toggle **Enable HTTP/2 Downstream**
 4. Click **Save**
@@ -94,3 +99,10 @@ Browsers increasingly use HTTP/2 for HTTPS. Enable downstream HTTP/2 to see the 
 ### HTTP/2-Specific Header Bugs
 
 Some bugs only appear with HTTP/2's header compression (HPACK) or pseudo-headers. Enabling HTTP/2 lets you reproduce and debug these in the traffic detail view.
+
+## See also
+
+- [Traffic Inspection](./traffic-inspection) — viewing, filtering, and exporting captured traffic
+- [Configuration](./configuration) — runtime and startup settings, including HTTP/2 downstream
+- [Scripting](./scripting) — `on_grpc_message` hook for programmatic gRPC handling
+- [REST API reference](./rest-api) — `PATCH /api/config` to toggle HTTP/2 programmatically

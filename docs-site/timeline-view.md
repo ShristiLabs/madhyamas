@@ -1,3 +1,8 @@
+---
+title: Timeline View
+description: Visualize captured Madhyamas traffic as a waterfall chart — spot slow requests, parallel downloads, and overlapping calls at a glance with the Timeline view.
+---
+
 # Timeline View
 
 The Timeline view is a **waterfall chart** visualization of captured traffic. Each request is shown as a horizontal bar positioned by its start time and sized proportional to its duration, making it easy to spot slow requests, parallel downloads, and overlapping calls at a glance.
@@ -68,3 +73,10 @@ See which requests ran concurrently and which were sequential — useful for und
 ### Diagnosing Waterfall Stalls
 
 Identify requests that block others — for example, a slow authentication call that delays every subsequent request. The relative positioning makes these dependencies visible.
+
+## See also
+
+- [Traffic Inspection](./traffic-inspection) — the list view and filtering
+- [Focus](./focus) — highlight specific hosts in the timeline
+- [Throttling](./throttling) — simulate slow networks to populate the waterfall
+- [Sessions](./sessions) — scope the timeline to a session

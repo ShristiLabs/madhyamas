@@ -21,10 +21,12 @@ mkdirSync(OUT_DIR, { recursive: true });
 const VIEWS = [
   { id: "traffic", label: "Traffic", file: "traffic-view.png" },
   { id: "breakpoints", label: "Breakpoints", file: "breakpoints-view.png" },
+  { id: "blocklist", label: "Block List", file: "blocklist-view.png" },
   { id: "throttle", label: "Throttle", file: "throttle-view.png" },
   { id: "mocks", label: "Mocks", file: "mocks-view.png" },
   { id: "rewrites", label: "Rewrites", file: "rewrites-view.png" },
   { id: "replay", label: "Replay", file: "replay-view.png" },
+  { id: "mirror", label: "Mirror", file: "mirror-view.png" },
   { id: "grpc", label: "gRPC", file: "grpc-view.png" },
   { id: "scripts", label: "Scripts", file: "scripts-view.png" },
   { id: "plugins", label: "Plugins", file: "plugins-view.png" },
@@ -77,6 +79,28 @@ async function main() {
       path: resolve(OUT_DIR, "traffic-detail.png"),
       fullPage: false,
     });
+  }
+
+  // Capture the Timeline (waterfall) view — toggle from the list view
+  console.log("Capturing: timeline view");
+  const timelineToggle = page.locator(
+    'button[title="Timeline"], button[aria-label="Timeline"]',
+  );
+  if (await timelineToggle.count() > 0) {
+    await timelineToggle.click();
+    await page.waitForTimeout(1200);
+    await page.screenshot({
+      path: resolve(OUT_DIR, "timeline-view.png"),
+      fullPage: false,
+    });
+    // Toggle back to list view
+    const listToggle = page.locator(
+      'button[title="List"], button[aria-label="List"]',
+    );
+    if (await listToggle.count() > 0) {
+      await listToggle.click();
+      await page.waitForTimeout(500);
+    }
   }
 
   // Capture the Setup/Certificate dialog

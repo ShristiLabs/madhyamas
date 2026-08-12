@@ -1,3 +1,8 @@
+---
+title: Rewrites
+description: Modify requests and responses automatically as they pass through the Madhyamas proxy — redirect traffic, inject headers, replace bodies, and fix URLs without pausing.
+---
+
 # Rewrites
 
 Rewrites let you **modify requests and responses** as they pass through the proxy — without pausing traffic. Unlike breakpoints (which pause for manual intervention), rewrites apply automatically and instantly. Use them to redirect traffic, inject headers, replace response bodies, or fix URLs on the fly.
@@ -97,3 +102,11 @@ If multiple rewrites match the same request, they're applied in order of priorit
 - Click any rewrite to edit its configuration
 - Use the trash icon to delete a rewrite
 - Rewrites are persisted across restarts
+
+## See also
+
+- [Rewrite Templates](./rewrite-templates) — pre-built rules for common scenarios
+- [Breakpoints](./breakpoints) — interactive, one-off modifications
+- [Mocks](./mocks) — return fake responses without hitting the server
+- [Scripting](./scripting) — programmatic transformations
+- [REST API reference](./rest-api) — `/api/rewrites` endpoints

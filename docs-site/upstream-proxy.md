@@ -1,3 +1,8 @@
+---
+title: Upstream Proxy Chaining
+description: Route all outbound Madhyamas traffic through a configurable upstream proxy — HTTP, HTTPS, or SOCKS5, with auth and a bypass list for corporate egress and geo-routing.
+---
+
 # Upstream Proxy Chaining
 
 Madhyamas can route all outbound traffic through a configurable **upstream (external) proxy**. This is essential for corporate networks with a mandatory egress proxy, for geo-routing through remote proxies, or for chaining multiple debugging proxies together.
@@ -143,3 +148,10 @@ The HTTP forwarding path reads the upstream proxy at startup. Restart the proxy 
 ### "Internal hosts are being proxied"
 
 Add them to the bypass list (`--upstream-no-proxy` or `no_proxy_hosts` in the API). Use CIDR notation for IP ranges and wildcard suffixes for domains.
+
+## See also
+
+- [SOCKS5 Proxy](./socks-proxy) — a SOCKS5 listener for inbound clients
+- [Configuration](./configuration) — upstream proxy flags and env vars
+- [Access Control](./access-control) — restrict which clients can connect
+- [REST API reference](./rest-api) — upstream config via `/api/config`

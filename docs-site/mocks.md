@@ -1,3 +1,8 @@
+---
+title: Mocks
+description: Intercept requests and return fake API responses without hitting the real server — match criteria, collections, recording, import/export, and common use cases.
+---
+
 # Mocks
 
 Mocks let you intercept requests and return **fake responses** without hitting the real server. This is perfect for testing how your app handles different API responses, developing against APIs that don't exist yet, or testing edge cases that are hard to reproduce with real services.
@@ -107,3 +112,11 @@ Record traffic from a production environment, export it as mocks, and replay the
 ### Demo Environments
 
 Create a collection of mocks that provides consistent, predictable responses for demos and screenshots — no dependency on live APIs.
+
+## See also
+
+- [Rewrites](./rewrites) — modify live traffic instead of replacing it
+- [Breakpoints](./breakpoints) — interactive, one-off modifications
+- [Replay](./replay) — re-execute captured requests
+- [Scripting](./scripting) — dynamic, programmatic mocks
+- [REST API reference](./rest-api) — `/api/mocks` endpoints

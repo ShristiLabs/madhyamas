@@ -1,3 +1,8 @@
+---
+title: Rewrite Templates
+description: Pre-built rewrite rules in Madhyamas for common debugging scenarios — No Caching, Add CORS, Remove Security Headers, and more — applied with a single click.
+---
+
 # Rewrite Templates
 
 Rewrite templates are **pre-built rewrite rules** that solve common debugging scenarios with a single click. Instead of manually configuring individual header manipulations, you pick a template and Madhyamas creates a fully configured [rewrite](./rewrites) rule for you. You can then customize it (for example, restrict it to specific hosts) or use it as-is.
@@ -100,3 +105,10 @@ Combine Block Cookies with No Caching to simulate a brand-new visitor on every r
 ### Stripping Security Headers for Testing
 
 Use the Remove Security Headers template to test whether your app works without Content-Security-Policy or `X-Frame-Options` — useful when embedding content in third-party pages.
+
+## See also
+
+- [Rewrites](./rewrites) — the underlying rule system templates build on
+- [Mocks](./mocks) — return fake responses instead of rewriting live ones
+- [Scripting](./scripting) — programmatic transformations beyond declarative rules
+- [REST API reference](./rest-api) — `GET /api/rewrites/templates`

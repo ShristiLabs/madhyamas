@@ -1,3 +1,8 @@
+---
+title: Access Control
+description: Restrict which client IP addresses can connect to the Madhyamas proxy with a CIDR-based allowlist — loopback is always allowed and the list updates live without restart.
+---
+
 # Access Control
 
 Access Control lets you restrict which client IP addresses are allowed to connect to the proxy. This is essential when you expose the proxy on a network (for mobile-device testing, shared debugging, or remote access) and want to ensure only trusted devices can route traffic through it.
@@ -145,3 +150,10 @@ One of your entries is malformed. Common mistakes:
 - `192.168.1.0/33` — IPv4 prefix max is `/32`
 - `fd00::/129` — IPv6 prefix max is `/128`
 - `192.168.1` — incomplete IP (use `192.168.1.0`)
+
+## See also
+
+- [Configuration](./configuration) — the `--allowed-ip` flag and `MADHYAMAS_ALLOWED_IPS` env var
+- [Mobile Setup](./mobile-setup) — binding to `0.0.0.0` for mobile devices
+- [Security Overview](./security) — network exposure and the overall security model
+- [Enterprise](./enterprise) — auth and RBAC for user-level access control

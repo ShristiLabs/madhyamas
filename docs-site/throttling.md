@@ -1,3 +1,8 @@
+---
+title: Throttling
+description: Simulate slow or unreliable network conditions in Madhyamas — add latency, cap bandwidth, and randomly drop requests to test app behavior under poor connectivity.
+---
+
 # Throttling
 
 Throttling lets you **simulate slow or unreliable network conditions** so you can test how your app behaves under poor connectivity. Slow down downloads, add latency, or randomly drop requests to reproduce real-world network issues.
@@ -68,3 +73,10 @@ Use the "Offline" preset to verify that your app shows appropriate offline messa
 ### Reproducing Mobile Issues
 
 Use "Slow 3G" or "Fast 3G" presets to reproduce bugs that only appear on mobile networks but not on your fast development machine.
+
+## See also
+
+- [Breakpoints](./breakpoints) — pause and modify requests
+- [Replay](./replay) — re-execute requests under throttled conditions
+- [Mobile Setup](./mobile-setup) — testing from real mobile devices
+- [REST API reference](./rest-api) — `/api/throttle` endpoints

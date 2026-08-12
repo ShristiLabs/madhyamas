@@ -1,3 +1,8 @@
+---
+title: Scripting
+description: Write sandboxed JavaScript hooks that inspect, modify, block, or mock HTTP/HTTPS traffic inside the Madhyamas proxy — hooks, templates, built-in APIs, and examples.
+---
+
 # Scripting
 
 Scripting lets you write **JavaScript** hooks that run inside the proxy to inspect, modify, block, or mock traffic automatically. Unlike [rewrites](./rewrites) (which are declarative rules) or [breakpoints](./breakpoints) (which pause for manual input), scripts give you full programmatic control over requests and responses.
@@ -206,3 +211,12 @@ Apply complex transformations (e.g. rewrite JSON fields, redact sensitive header
 ### Conditional Blocking
 
 Block requests based on runtime logic — for example, block all requests except those carrying a specific debug token.
+
+## See also
+
+- [Plugins](./plugins) — WebAssembly extensions for heavier, distributable logic
+- [Rewrites](./rewrites) — declarative rules for common modifications
+- [Mocks](./mocks) — static fake responses
+- [CLI reference](./cli) — `madhyamas scripts` subcommands
+- [REST API reference](./rest-api) — `/api/scripts` endpoints
+- [Scripting API reference](https://github.com/ShristiLabs/madhyamas/blob/main/docs/SCRIPTING_API.md) — full hook and API documentation (developer docs)

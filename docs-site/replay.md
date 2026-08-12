@@ -1,3 +1,8 @@
+---
+title: Replay
+description: Re-execute captured requests in Madhyamas — single replay, edit-then-repeat with diff-based modifications, and batch replay with iterations, concurrency, and latency stats.
+---
+
 # Replay
 
 Replay lets you **re-execute previously captured requests** — either one at a time or as a saved sequence. This is invaluable for reproducing issues, testing the same request against different servers, or automating repetitive API testing.
@@ -169,3 +174,11 @@ Replay the same request multiple times and compare response times to track perfo
 ### Testing Different Environments
 
 Save a request, then modify the URL to point to staging or production, and replay to compare responses across environments.
+
+## See also
+
+- [Breakpoints](./breakpoints) — modify requests interactively
+- [Mocks](./mocks) — return fake responses without replaying
+- [Throttling](./throttling) — replay under simulated network conditions
+- [CLI reference](./cli) — `madhyamas replay` subcommands
+- [REST API reference](./rest-api) — `/api/replay` endpoints

@@ -1,3 +1,8 @@
+---
+title: HTTPS & Certificates
+description: Install the Madhyamas CA certificate to inspect HTTPS traffic — platform-specific steps for macOS, Windows, Linux, iOS, and Android, plus certificate pinning guidance.
+---
+
 # HTTPS & Certificates
 
 Modern web traffic is encrypted with HTTPS. To inspect HTTPS traffic, Madhyamas acts as a "man-in-the-middle" — it terminates the TLS connection from your client, decrypts the traffic, then establishes a new connection to the server. This requires a Certificate Authority (CA) certificate that your client trusts.
@@ -87,13 +92,58 @@ When disabled, HTTPS traffic passes through the proxy as an opaque tunnel — Ma
 
 ## Certificate Pinning
 
-Some mobile apps use **certificate pinning** — they hardcode the expected server certificate and reject any proxy's CA certificate. This is a security feature that prevents man-in-the-middle interception.
+Some mobile apps use **certificate pinning** — they hardcode the expected server certificate or public key and reject any proxy's CA certificate, even if it's signed by a trusted CA. This is a security feature that prevents man-in-the-middle interception.
 
-If an app uses certificate pinning, you'll see 502 errors in the traffic list with TLS handshake failure messages. Unfortunately, there's no universal bypass — it depends on the app and platform:
+If an app uses certificate pinning, you'll see `502` errors in the traffic list with TLS handshake failure messages like *"TLS handshake failed: the client does not trust the proxy CA certificate."*
 
-- **Android**: See the Android certificate pinning bypass guide (Frida, APK patching, Magisk modules)
-- **iOS**: Jailbroken devices can use SSL Kill Switch; non-jailbroken devices may need app-specific approaches
-- **Browsers**: Most browsers don't use pinning and will work with the CA certificate installed
+### What Is Pinning?
+
+| Layer | Who checks | What it checks |
+|-------|-----------|----------------|
+| **System trust store** | The operating system | "Is this CA on the approved list?" Installing the Madhyamas CA adds it to this list. |
+| **App pinning** | The app itself | "Is this the *exact* certificate I expect?" The app rejects anything else, even if the OS trusts it. |
+
+So even after installing the Madhyamas CA, a pinned app will refuse to connect.
+
+### Types of Pinning
+
+| Type | Implementation | Bypass difficulty |
+|------|---------------|-------------------|
+| Network Security Config | XML in APK | Easy — patch the XML |
+| OkHttp CertificatePinner | Java/Kotlin code | Medium — smali patch or Frida |
+| Custom TrustManager | Java/Kotlin code | Medium — smali patch or Frida |
+| Native (BoringSSL/OpenSSL) | C/C++ in `.so` files | Hard — native hooking |
+| Flutter | BoringSSL in `libflutter.so` | Hard — binary patching |
+| Cronet | Native Google library | Hard — native hooking |
+
+### Bypass Options
+
+There is no universal bypass — the right approach depends on the app and platform.
+
+**Android:**
+
+- **Network Security Config (no root)** — if the app uses an XML network security config, you can patch the APK to trust user CAs.
+- **APK patching (no root)** — decompile the APK with `apktool`, modify the smali to disable pinning, repackage, and sign.
+- **Frida (root or gadget)** — runtime hooking of the pinning code. Works for OkHttp, custom TrustManagers, and some native pinners.
+- **LSPosed/Xposed modules (root)** — modules like JustTrustMe or TrustMeAlready disable common pinning implementations.
+- **Magisk CA installation (root)** — install the Madhyamas CA in the system store so all apps trust it.
+- **Flutter apps** — require binary patching of `libflutter.so`; Frida can also work with the right script.
+- **React Native apps** — usually use OkHttp under the hood, so Frida OkHttp bypasses often work.
+
+For exact commands and a decision matrix, see the [Android certificate pinning bypass guide](https://github.com/ShristiLabs/madhyamas/blob/main/docs/ANDROID_CERT_PINNING.md) in the developer docs.
+
+**iOS:**
+
+- Jailbroken devices can use SSL Kill Switch or similar tweaks.
+- Non-jailbroken devices generally require app-specific approaches; there is no general-purpose bypass.
+
+**Browsers:**
+
+- Most browsers don't use pinning and will work once the Madhyamas CA is installed. Some browsers pin a few high-value sites (e.g. Chrome pins Google properties), but those pins don't prevent intercepting other sites.
+
+### Using the Android Companion VPN App
+
+For devices where manual proxy configuration is problematic, Madhyamas includes an Android companion app that creates a local VPN to route traffic through the proxy transparently. See [Mobile Setup](./mobile-setup#android-companion-vpn-app) for build and setup instructions. Note that the companion app routes traffic but does not by itself bypass certificate pinning — you still need one of the bypass approaches above for pinned apps.
 
 ## Regenerating the CA Certificate
 
@@ -110,3 +160,11 @@ madhyamas serve
 ```
 
 You'll need to install the new CA certificate on all your devices again.
+
+## See also
+
+- [Getting Started](./getting-started) — installation and first steps
+- [Mobile Setup](./mobile-setup) — connecting phones and tablets
+- [Security Overview](./security) — CA key protection and the overall security model
+- [Configuration](./configuration) — `--no-https` and HTTPS interception settings
+- [Troubleshooting](./troubleshooting) — certificate errors and pinning failures

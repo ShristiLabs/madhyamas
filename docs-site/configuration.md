@@ -1,3 +1,8 @@
+---
+title: Configuration
+description: Configure Madhyamas via the web UI, CLI flags, and environment variables — startup options, runtime settings, capture modes, data directory, and performance tuning.
+---
+
 # Configuration
 
 Madhyamas is configurable through the web UI, CLI flags, and environment variables. This guide covers the most important settings and how to change them.

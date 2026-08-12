@@ -1,3 +1,8 @@
+---
+title: Breakpoints
+description: Pause HTTP requests or responses in Madhyamas, inspect them, and modify them before they continue — set breakpoints by URL, method, or status code.
+---
+
 # Breakpoints
 
 Breakpoints let you **pause** HTTP requests or responses as they pass through the proxy, inspect them, and modify them before they continue. This is invaluable for debugging — you can test how your app handles different responses, inject errors, or fix malformed requests on the fly.
@@ -97,3 +102,10 @@ Combine breakpoints with the [Throttle](./throttling) feature to simulate slow s
 ### Inspecting Authentication
 
 Break on requests to your auth endpoint to inspect tokens, cookies, and headers being sent.
+
+## See also
+
+- [Rewrites](./rewrites) — automatic, non-interactive traffic modification
+- [Mocks](./mocks) — return fake responses without hitting the server
+- [Replay](./replay) — re-execute captured requests
+- [REST API reference](./rest-api) — `/api/breakpoints` endpoints

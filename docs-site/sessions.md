@@ -1,3 +1,8 @@
+---
+title: Sessions
+description: Organize captured traffic into named sessions in Madhyamas to keep different debugging contexts separate — create, switch, export, and delete sessions.
+---
+
 # Sessions
 
 Sessions let you **organize traffic into named groups** so you can keep different debugging contexts separate. Instead of one long list of all traffic, you can create sessions for different tasks, bugs, or environments and switch between them easily.
@@ -77,3 +82,10 @@ Create separate sessions for "Production", "Staging", and "Local". Switch betwee
 ### Feature Development
 
 Create a session for the feature you're working on. Capture traffic as you develop and test. Keep it for reference or export it as documentation of the API behavior.
+
+## See also
+
+- [Traffic Inspection](./traffic-inspection) — viewing and filtering traffic within a session
+- [Importing HAR Files](./har-import) — import external captures as sessions
+- [Auto Save](./auto-save) — periodic session backups
+- [REST API reference](./rest-api) — `/api/sessions` endpoints

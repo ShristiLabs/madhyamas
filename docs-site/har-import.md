@@ -1,3 +1,8 @@
+---
+title: Importing HAR Files
+description: Import HAR (HTTP Archive) files from browser DevTools, Charles, or Fiddler into Madhyamas as a new session — your live capture is never disturbed.
+---
+
 # Importing HAR Files
 
 Madhyamas can import traffic from **HAR (HTTP Archive)** files. HAR is a JSON-based standard produced by browser DevTools (Chrome, Firefox, Edge), Charles Proxy, Fiddler, and many other tools. Importing a HAR file creates a **new session** containing all the entries, so your live capture is never disturbed.
@@ -78,3 +83,10 @@ A teammate sends you a HAR file from their machine. Import it into a named sessi
 ### Cross-Tool Migration
 
 Bring traffic captured in Charles Proxy or Fiddler into Madhyamas by exporting it as HAR first, then importing it here.
+
+## See also
+
+- [Sessions](./sessions) — imported HAR files become sessions
+- [Traffic Inspection](./traffic-inspection) — viewing and filtering imported traffic
+- [Migrating from Charles Proxy](./migration-from-charles) — full Charles-to-Madhyamas workflow
+- [REST API reference](./rest-api) — `POST /api/traffic/import/har`

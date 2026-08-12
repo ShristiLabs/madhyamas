@@ -1,3 +1,8 @@
+---
+title: Mobile Setup
+description: Connect iPhones, iPads, and Android devices to the Madhyamas proxy to debug mobile app traffic — Wi-Fi proxy config, CA certificate install, companion VPN app, and troubleshooting.
+---
+
 # Mobile Setup
 
 One of the most powerful uses of Madhyamas is debugging traffic from **mobile apps** — something browser DevTools can't do. This guide walks you through connecting your phone or tablet to the Madhyamas proxy.
@@ -144,3 +149,10 @@ Corporate Wi-Fi networks often have **client isolation** enabled, which prevents
 - Using a personal hotspot from your phone
 - Connecting your computer via Ethernet and your phone via Wi-Fi
 - Asking your IT department to disable client isolation for your devices
+
+## See also
+
+- [HTTPS & Certificates](./https-certificates) — CA installation and certificate pinning
+- [Configuration](./configuration) — `--host 0.0.0.0` and `--public-ip` flags
+- [Access Control](./access-control) — restrict which devices can connect
+- [Troubleshooting](./troubleshooting) — mobile connection fixes

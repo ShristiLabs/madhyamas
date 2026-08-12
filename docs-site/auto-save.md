@@ -1,3 +1,8 @@
+---
+title: Auto Save
+description: Periodically back up the current Madhyamas session to disk with automatic rotation — a disaster-recovery backup layer on top of the real-time SQLite store.
+---
+
 # Auto Save
 
 Auto Save provides **periodic session backup and rotation** for disaster recovery. Madhyamas already stores traffic in SQLite in real time, so Auto Save is a backup mechanism — not the primary store. It periodically exports your session to a backup directory and prunes old backups automatically.
@@ -122,3 +127,10 @@ Set `rotate_after_minutes` to 60 to start a fresh session every hour — useful 
 ### Compliance and Audit
 
 Export to HAR on a schedule and keep a bounded number of backups (`max_backups`) to satisfy audit requirements without unbounded disk growth.
+
+## See also
+
+- [Sessions](./sessions) — sessions are what Auto Save backs up
+- [Recording Limits](./recording-limits) — bound how much traffic is captured in the first place
+- [Configuration](./configuration) — runtime and startup settings
+- [REST API reference](./rest-api) — `/api/autosave` endpoints

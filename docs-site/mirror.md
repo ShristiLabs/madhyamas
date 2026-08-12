@@ -1,3 +1,8 @@
+---
+title: Mirror
+description: Save response bodies to disk following the URL path structure with the Madhyamas Mirror tool, creating a browsable site mirror equivalent to Charles Proxy's Save Responses.
+---
+
 # Mirror
 
 The Mirror tool saves **response bodies to disk** following the URL path structure, creating a browsable site mirror. This is equivalent to Charles Proxy's "Mirror" / "Save Responses" feature.
@@ -116,3 +121,9 @@ Capture API responses to disk and use them as mock data for local development or
 ### Archiving
 
 Capture a snapshot of an API's responses at a point in time for later comparison or compliance.
+
+## See also
+
+- [Auto Save](./auto-save) — periodic session backups
+- [Recording Limits](./recording-limits) — bound how much traffic is captured
+- [REST API reference](./rest-api) — `/api/mirror` endpoints

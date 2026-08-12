@@ -10,6 +10,15 @@ export default defineConfig({
   lang: "en-US",
   cleanUrls: true,
 
+  // Show last-modified time on each page (Git commit date of the file)
+  lastUpdated: true,
+
+  // Sitemap for search engines (emitted to .vitepress/dist/sitemap.xml)
+  // Include the base path so URLs resolve correctly on GitHub Pages.
+  sitemap: {
+    hostname: "https://shristilabs.github.io/madhyamas/",
+  },
+
   // Ignore dead links to localhost URLs (used in setup instructions)
   ignoreDeadLinks: [
     /^https?:\/\/localhost/,
@@ -28,6 +37,8 @@ export default defineConfig({
     nav: [
       { text: "Guides", link: "/getting-started" },
       { text: "Features", link: "/traffic-inspection" },
+      { text: "Reference", link: "/cli" },
+      { text: "AI Agents", link: "/mcp" },
       { text: "GitHub", link: "https://github.com/ShristiLabs/madhyamas" },
     ],
 
@@ -72,6 +83,7 @@ export default defineConfig({
           { text: "SOCKS5 Proxy", link: "/socks-proxy" },
           { text: "Upstream Proxy", link: "/upstream-proxy" },
           { text: "HTTP/2 & gRPC", link: "/http2-grpc" },
+          { text: "WebSocket Inspection", link: "/websockets" },
         ],
       },
       {
@@ -86,6 +98,19 @@ export default defineConfig({
         items: [
           { text: "Auto Save", link: "/auto-save" },
           { text: "Mirror", link: "/mirror" },
+          { text: "Logging & Log Rotation", link: "/logging" },
+        ],
+      },
+      {
+        text: "Reference",
+        items: [
+          { text: "CLI Reference", link: "/cli" },
+          { text: "REST API Reference", link: "/rest-api" },
+          { text: "MCP & AI Agents", link: "/mcp" },
+          { text: "Enterprise Features", link: "/enterprise" },
+          { text: "Security Overview", link: "/security" },
+          { text: "Migrating from Charles Proxy", link: "/migration-from-charles" },
+          { text: "Troubleshooting", link: "/troubleshooting" },
         ],
       },
     ],
@@ -116,5 +141,12 @@ export default defineConfig({
     darkModeSwitchLabel: "Theme",
     sidebarMenuLabel: "Menu",
     returnToTopLabel: "Back to top",
+
+    lastUpdatedText: "Last updated",
+
+    editLink: {
+      pattern: "https://github.com/ShristiLabs/madhyamas/edit/main/docs-site/:path",
+      text: "Edit this page on GitHub",
+    },
   },
 })

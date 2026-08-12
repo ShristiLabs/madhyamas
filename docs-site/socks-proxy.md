@@ -1,3 +1,8 @@
+---
+title: SOCKS5 Proxy
+description: Run a SOCKS5 listener alongside the HTTP/HTTPS proxy in Madhyamas to capture traffic from SOCKS-only clients and tunnel non-HTTP TCP connections.
+---
+
 # SOCKS5 Proxy
 
 Madhyamas can run a **SOCKS5** proxy listener alongside its HTTP/HTTPS proxy listener. SOCKS5 is a generic TCP tunneling protocol used by browsers, CLI tools, and mobile devices that prefer SOCKS over HTTP `CONNECT`. This is convenient for capturing traffic from clients that only speak SOCKS, or for tunneling non-HTTP TCP connections through the proxy.
@@ -169,3 +174,10 @@ Another process (or a previous Madhyamas instance) is using the SOCKS port. Eith
 ### Connections to a target fail with 502
 
 The proxy couldn't reach the target (DNS failure, refused, unreachable). The traffic entry's response body includes the specific SOCKS5 reply code and the underlying error.
+
+## See also
+
+- [Upstream Proxy](./upstream-proxy) — chain outbound traffic through another proxy
+- [Configuration](./configuration) — `--enable-socks`, `--socks-port`, and related flags
+- [Mobile Setup](./mobile-setup) — connecting mobile devices
+- [REST API reference](./rest-api) — SOCKS configuration via `/api/config`

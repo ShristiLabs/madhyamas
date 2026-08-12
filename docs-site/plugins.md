@@ -1,3 +1,8 @@
+---
+title: Plugins
+description: Extend Madhyamas with sandboxed WebAssembly plugins — install from the registry, manage, configure, sign, and scaffold new plugins with the madhyamas-plugin-sdk.
+---
+
 # Plugins
 
 Plugins let you extend Madhyamas with custom logic compiled to **WebAssembly (WASM)**. They run in a sandboxed `wasmtime` runtime with strict CPU and memory limits, so you can add new interception, modification, or logging behavior without compromising the proxy's stability or security.
@@ -137,3 +142,11 @@ Build plugins that understand specific protocols (e.g. a GraphQL inspector, a pr
 ### Team Standards
 
 Distribute a plugin that enforces your team's debugging conventions — logging format, header injection, or traffic filtering — across every developer's proxy.
+
+## See also
+
+- [Scripting](./scripting) — sandboxed JavaScript for lighter-weight automation
+- [Security Overview](./security) — plugin sandboxing and signing
+- [CLI reference](./cli) — `madhyamas plugins` subcommands
+- [REST API reference](./rest-api) — `/api/plugins` endpoints
+- [Plugin development guide](https://github.com/ShristiLabs/madhyamas/blob/main/docs/PLUGIN_DEVELOPMENT.md) — writing your own plugin (developer docs)

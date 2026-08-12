@@ -1,3 +1,8 @@
+---
+title: Focus
+description: Highlight traffic from specific hosts in the Madhyamas traffic view without hiding the rest — visually emphasize the hosts you care about in a busy stream.
+---
+
 # Focus
 
 Focus lets you **highlight traffic from specific hosts** in the traffic view. Unlike a filter (which hides non-matching traffic entirely), focus visually emphasizes matching rows while keeping all traffic visible — so you can spot the hosts you care about in a busy stream without losing context.
@@ -70,3 +75,10 @@ Add focus patterns for both your staging and production API hosts to compare the
 ### Monitoring a Third-Party Integration
 
 Focus on a third-party API host (e.g. a payment provider) to watch every call your app makes to it, without losing sight of the surrounding traffic.
+
+## See also
+
+- [Traffic Inspection](./traffic-inspection) — filtering and searching captured traffic
+- [Timeline View](./timeline-view) — waterfall visualization
+- [Sessions](./sessions) — separating traffic into named groups
+- [REST API reference](./rest-api) — `/api/focus` endpoints

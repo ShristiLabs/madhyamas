@@ -606,6 +606,27 @@ madhyamas --help       <span class="t-dim"># all commands</span></pre>
               <h3>Mobile Setup</h3>
               <p>Connect iPhones, iPads, and Android devices over Wi-Fi to debug mobile app traffic.</p>
             </a>
+            <a class="lp-card lp-card--ghost" href="./mcp">
+              <div class="lp-card__icon lp-card__icon--blue">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1 4 4v3a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-3a4 4 0 0 1 4-4V6a4 4 0 0 1 4-4z" stroke-linejoin="round"/><path d="M12 11v6M9 14h6" stroke-linecap="round"/></svg>
+              </div>
+              <h3>MCP &amp; AI Agents</h3>
+              <p>Connect Claude, Cursor, Windsurf, and Devin to inspect traffic and drive the proxy via MCP.</p>
+            </a>
+            <a class="lp-card lp-card--ghost" href="./cli">
+              <div class="lp-card__icon lp-card__icon--cyan">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v14H4z" stroke-linejoin="round"/><path d="M7 9l3 3-3 3M13 15h4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <h3>CLI Reference</h3>
+              <p>128 subcommands for traffic, mocks, replay, sessions, scripts, plugins, and more — with JSON output.</p>
+            </a>
+            <a class="lp-card lp-card--ghost" href="./troubleshooting">
+              <div class="lp-card__icon lp-card__icon--amber">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 16H3z" stroke-linejoin="round"/><path d="M12 10v4M12 17h.01" stroke-linecap="round"/></svg>
+              </div>
+              <h3>Troubleshooting</h3>
+              <p>Fixes for certificate errors, port conflicts, database locks, mobile connections, and MCP issues.</p>
+            </a>
           </div>
         </div>
       </section>
@@ -649,6 +670,13 @@ madhyamas --help       <span class="t-dim"># all commands</span></pre>
             <a href="./traffic-inspection">Traffic Inspection</a>
             <a href="./https-certificates">HTTPS &amp; Certificates</a>
             <a href="./mobile-setup">Mobile Setup</a>
+          </div>
+          <div class="lp-footer__col">
+            <h5>Reference</h5>
+            <a href="./cli">CLI Reference</a>
+            <a href="./rest-api">REST API</a>
+            <a href="./mcp">MCP &amp; AI Agents</a>
+            <a href="./troubleshooting">Troubleshooting</a>
           </div>
           <div class="lp-footer__col">
             <h5>Community</h5>

@@ -1,3 +1,8 @@
+---
+title: Recording Limits
+description: Bound how much traffic Madhyamas records — max requests, total size, max body size, and ignored domains, with automatic FIFO pruning of the oldest entries.
+---
+
 # Recording Limits
 
 Recording Limits let you **bound how much traffic Madhyamas records** to prevent unbounded memory and disk usage during long debugging sessions. When limits are exceeded, the oldest entries are automatically pruned (FIFO — first in, first out).
@@ -110,3 +115,10 @@ Lower `max_requests` and disable request body capture to reduce memory and disk 
 ### Body-Only Debugging
 
 If you only care about response bodies (e.g. debugging API payloads), disable request body capture to halve the storage overhead while keeping full response inspection.
+
+## See also
+
+- [Configuration](./configuration) — `max_requests`, `max_body_size`, and related settings
+- [Auto Save](./auto-save) — periodic backups of the session
+- [Performance](https://github.com/ShristiLabs/madhyamas/blob/main/docs/PERFORMANCE.md) — memory tracking and tuning
+- [REST API reference](./rest-api) — `/api/capture/stats`
