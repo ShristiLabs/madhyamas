@@ -89,3 +89,6 @@ skills-lock.json
 
 # Local command/scratch directories
 .commandcode/
+
+# Graphify output (local only)
+graphify-out/
