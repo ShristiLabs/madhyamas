@@ -1,5 +1,7 @@
 # WebSocket Migration for Real-time Traffic Updates
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 This document describes the migration from REST API polling to WebSocket-based real-time updates for the traffic view in the Madhyamas proxy tool.
 
 ## Overview

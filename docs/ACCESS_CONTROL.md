@@ -1,5 +1,7 @@
 # Access Control (IP Allowlist)
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 Madhyamas can restrict which client IP addresses are allowed to connect to
 the proxy. This is useful when you expose the proxy on a network (e.g. for
 mobile-device testing, shared debugging, or remote access) and want to
@@ -433,3 +435,10 @@ connection time, not per-request).
 The SOCKS5 listener uses a config snapshot taken at startup (the listener
 is bound at startup and requires a restart to rebind), so SOCKS access
 control changes require a restart.
+
+## See Also
+
+- [NETWORK_CONFIGURATION.md](NETWORK_CONFIGURATION.md) — Network setup and IP detection
+- [SOCKS_PROXY.md](SOCKS_PROXY.md) — SOCKS5 proxy listener (uses access control)
+- [API_CONFIG.md](API_CONFIG.md) — Config endpoints (live ACL updates via PATCH /api/config)
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture

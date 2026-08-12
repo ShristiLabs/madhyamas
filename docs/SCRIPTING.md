@@ -369,3 +369,10 @@ See [SCRIPTING_SECURITY.md](SCRIPTING_SECURITY.md) for the full security model.
 │   applies results to proxy pipeline     │
 └─────────────────────────────────────────┘
 ```
+
+## See Also
+
+- [SCRIPTING_API.md](SCRIPTING_API.md) — JavaScript API reference
+- [SCRIPTING_SECURITY.md](SCRIPTING_SECURITY.md) — Scripting sandbox model
+- [EXTENSION_SYSTEM.md](EXTENSION_SYSTEM.md) — Unified extension model
+- [INTERCEPT_PIPELINE.md](INTERCEPT_PIPELINE.md) — Where scripts run in the pipeline

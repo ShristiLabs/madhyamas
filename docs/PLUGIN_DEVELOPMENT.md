@@ -1,5 +1,7 @@
 # Plugin Development Guide
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 This guide walks you through writing a Madhyamas plugin in Rust, compiling it
 to WASM, and packaging it for installation.
 
@@ -220,18 +222,18 @@ default = 5000
 
 ## Example Plugins
 
-The SDK includes three example plugins in `crates/madhyamas-plugin-sdk/examples/`:
+The SDK ships three example plugins in `plugins/`:
 
-- **`cors_helper.rs`** — adds CORS headers to every response
-- **`request_logger.rs`** — logs every request's method and host
-- **`domain_blocker.rs`** — blocks requests to configurable domains (settings + short-circuit)
+- **`cors-helper`** — adds CORS headers to every response
+- **`request-logger`** — logs every request's method and host
+- **`domain-blocker`** — blocks requests to configurable domains (settings + short-circuit)
 
 Build them with:
 
 ```bash
-cargo build --target wasm32-unknown-unknown --example cors_helper --release -p madhyamas-plugin-sdk
-cargo build --target wasm32-unknown-unknown --example request_logger --release -p madhyamas-plugin-sdk
-cargo build --target wasm32-unknown-unknown --example domain_blocker --release -p madhyamas-plugin-sdk
+cargo build --target wasm32-unknown-unknown --release -p cors-helper
+cargo build --target wasm32-unknown-unknown --release -p request-logger
+cargo build --target wasm32-unknown-unknown --release -p domain-blocker
 ```
 
 ## Installation
@@ -361,3 +363,10 @@ Logs include:
 - Host-side log lines (from the `log()` function)
 - Duration, fuel consumed, success/error status
 - Whether the request/response was modified
+
+## See Also
+
+- [PLUGINS.md](PLUGINS.md) — Plugin system overview
+- [PLUGIN_API.md](PLUGIN_API.md) — Plugin guest SDK API reference
+- [PLUGIN_SECURITY.md](PLUGIN_SECURITY.md) — Plugin security model (signing, fuel)
+- [EXTENSION_SYSTEM.md](EXTENSION_SYSTEM.md) — Unified extension model

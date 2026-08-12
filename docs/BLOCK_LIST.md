@@ -1,5 +1,7 @@
 # Block List Tool
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 The Block List tool lets you block requests to specific domains or patterns
 from reaching upstream servers. When a request's host matches a block list
 entry, the proxy immediately returns a configurable response (default `403
@@ -520,3 +522,10 @@ rarely exceed a few hundred entries, so this is negligible.
 - **Read lock** during request matching (multiple concurrent readers)
 - **Write lock** for hit count increments and CRUD operations
 - The `InterceptStore` uses its own `Mutex<Connection>` for SQLite access
+
+## See Also
+
+- [INTERCEPT_PIPELINE.md](INTERCEPT_PIPELINE.md) — Intercept handler priority model
+- [API_INTERCEPT.md](API_INTERCEPT.md) — Block list API endpoints
+- [REWRITE_TEMPLATES.md](REWRITE_TEMPLATES.md) — Built-in rewrite templates
+- [PERSISTENCE.md](PERSISTENCE.md) — Block list persistence schema

@@ -50,7 +50,7 @@ Full MCP tool reference: `skills/madhyamas/references/mcp-tools.md`.
 ## Core Technologies
 
 **Backend**: axum, hyper, tokio, rustls, rcgen, rusqlite, serde, clap, tracing, rust-embed
-**Frontend**: React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, TanStack Query, Zustand
+**Frontend**: React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, TanStack Query
 
 ## Important Files & Modules
 
@@ -70,7 +70,10 @@ Full MCP tool reference: `skills/madhyamas/references/mcp-tools.md`.
 
 ### Plugin SDK Crate (`madhyamas-plugin-sdk`)
 - `lib.rs` - Guest SDK: `Plugin` trait, `register_plugin!` macro, `Context`/`Outcome` types
-- `examples/` - Example plugins: `cors_helper`, `request_logger`, `domain_blocker`
+
+Example plugins live in `plugins/` (not `crates/madhyamas-plugin-sdk/examples/`):
+`cors-helper`, `request-logger`, `domain-blocker`. See
+[docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md).
 
 ### API Crate (`madhyamas-api`)
 - `lib.rs` - API server setup
@@ -170,11 +173,19 @@ Each feature has a dedicated doc page. Read the relevant one before working on t
 | gRPC | [docs/HTTP2_SUPPORT.md](docs/HTTP2_SUPPORT.md) | gRPC traffic inspection |
 | HAR import | [docs/HAR_IMPORT.md](docs/HAR_IMPORT.md) | Import HAR files as sessions |
 | Rewrite templates | [docs/REWRITE_TEMPLATES.md](docs/REWRITE_TEMPLATES.md) | Built-in rewrite rules (No Caching, Add CORS, etc.) |
+| Mock responses | [docs/MOCK_RESPONSES.md](docs/MOCK_RESPONSES.md) | Single/sequence/conditional/probabilistic mocks; collections; recording |
+| Intercept pipeline | [docs/INTERCEPT_PIPELINE.md](docs/INTERCEPT_PIPELINE.md) | `InterceptHandler` trait, 5 handlers, priority execution order |
+| Extension system | [docs/EXTENSION_SYSTEM.md](docs/EXTENSION_SYSTEM.md) | Unified `Extension` trait abstracting scripts (prio 10) and plugins (prio 20) |
+| Persistence layer | [docs/PERSISTENCE.md](docs/PERSISTENCE.md) | SQLite schema, traffic/intercept/config stores, session model |
+| Web frontend | [docs/WEB_FRONTEND.md](docs/WEB_FRONTEND.md) | React architecture, TanStack Query, WebSocket client, build/embed flow |
+| Performance | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Memory tracking, metrics collector, alerting, connection pool |
+| Enterprise | [docs/ENTERPRISE.md](docs/ENTERPRISE.md) | Auth (JWT + API keys), RBAC, audit logging, user management |
 
 ### Intercept Pipeline Priority Order
 
 Handlers run in ascending priority order. Add new intercept features at the
-correct priority, not at the end blindly.
+correct priority, not at the end blindly. See
+[docs/INTERCEPT_PIPELINE.md](docs/INTERCEPT_PIPELINE.md) for full detail.
 
 | Priority | Handler | Effect |
 |---|---|---|
@@ -186,7 +197,15 @@ correct priority, not at the end blindly.
 
 ### API Endpoints
 
-All endpoints are under the `/api` prefix. Full reference: [docs/API.md](docs/API.md).
+All endpoints are under the `/api` prefix. The API reference is split by
+domain — see [docs/API.md](docs/API.md) for the index:
+- [API_TRAFFIC.md](docs/API_TRAFFIC.md) — traffic, sessions, export, cert
+- [API_WEBSOCKET_GRPC.md](docs/API_WEBSOCKET_GRPC.md) — WebSocket events, WS/gRPC inspection
+- [API_INTERCEPT.md](docs/API_INTERCEPT.md) — breakpoints, mocks, rewrites, throttle, block list, focus, replay
+- [API_SCRIPTS_PLUGINS.md](docs/API_SCRIPTS_PLUGINS.md) — scripts and plugins
+- [API_CONFIG.md](docs/API_CONFIG.md) — config, capture, auto save, mirror, logs, persistence, health
+- [API_ENTERPRISE.md](docs/API_ENTERPRISE.md) — auth, users, RBAC, audit, metrics, onboarding
+
 Real-time traffic updates via WebSocket at `GET /ws`. Health check at `GET /health`.
 
 > **Phase 4 (Enterprise, conditionally enabled):** `/metrics`, `/auth/*`, `/users`, `/rbac/*`, `/audit/*`, `/onboarding/*`
@@ -282,7 +301,7 @@ new-dep.workspace = true
 
 - [README.md](README.md) - Quick start
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - System architecture
-- [docs/API.md](docs/API.md) - Full API reference (177 endpoints)
+- [docs/API.md](docs/API.md) - Full API reference (99 endpoints across 78 paths)
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) - Development guide
 - [agents/README.md](agents/README.md) - Specialized AI agents (design, install, validate, adding new agents)
 - [skills/README.md](skills/README.md) - Published AI skill package (@madhyamas/skill)

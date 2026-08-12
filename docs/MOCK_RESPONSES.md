@@ -1,6 +1,14 @@
 # Mock Responses - Enhanced Features
 
-This document describes the enhanced mock response capabilities in Madhyamas, including dynamic responses, sequencing, conditional responses, collections, recording, and import/export features.
+This document describes the enhanced mock response capabilities in Madhyamas,
+including dynamic responses, sequencing, conditional responses, collections,
+recording, and import/export features.
+
+> **Where mocks fit in the pipeline:** Mocks are an intercept handler with
+> priority 20 — they run after the block list (5) and rewrites (10) but before
+> breakpoints (30) and throttle (40). A matching mock short-circuits the
+> pipeline and returns the mock response without reaching upstream. See
+> [INTERCEPT_PIPELINE.md](INTERCEPT_PIPELINE.md) for the full priority model.
 
 ## Table of Contents
 
@@ -439,3 +447,10 @@ POST /api/mocks/{id}/rollback
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/mocks/preview` | Preview which mock matches a request |
+
+## See Also
+
+- [INTERCEPT_PIPELINE.md](INTERCEPT_PIPELINE.md) — Intercept handler priority model
+- [API_INTERCEPT.md](API_INTERCEPT.md) — Full intercept API reference (breakpoints, mocks, rewrites, throttle, block list)
+- [REWRITE_TEMPLATES.md](REWRITE_TEMPLATES.md) — Built-in rewrite templates
+- [PERSISTENCE.md](PERSISTENCE.md) — Mock rule persistence schema

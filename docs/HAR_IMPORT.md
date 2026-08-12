@@ -149,3 +149,9 @@ returned.
   are not imported.
 - **Headers are flattened** — HAR headers with the same name are
   merged into a single comma-separated value (matching HTTP semantics).
+
+## See Also
+
+- [API_TRAFFIC.md](API_TRAFFIC.md) — Traffic and session API endpoints (HAR import/export)
+- [PERSISTENCE.md](PERSISTENCE.md) — SQLite storage schema
+- [AUTO_SAVE.md](AUTO_SAVE.md) — Periodic HAR/session backup

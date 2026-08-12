@@ -1,104 +1,81 @@
 # Madhyamas API Reference
 
-## Base URL
+All endpoints are served under `/api` on the API server (default
+`http://127.0.0.1:3001/api`). Real-time traffic updates are available via the
+WebSocket at `/api/ws`.
 
-All endpoints are served from the Madhyamas API server (default: `http://127.0.0.1:3001/api`).
+The API is organized into domain groups. Each group has a dedicated reference
+page; this file is the index.
 
-## Traffic
+## Endpoint Map
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/traffic` | List all traffic entries |
-| GET | `/api/traffic/:id` | Get single traffic entry |
-| POST | `/api/traffic/clear` | Clear all traffic |
-| GET | `/api/traffic/count` | Get traffic count |
+```mermaid
+graph LR
+    subgraph Core
+        T[Traffic]
+        S[Sessions]
+        C[Config]
+        CAP[Capture]
+        CERT[Certificate]
+        H[Health]
+        WS[WebSocket]
+    end
+    subgraph Intercept
+        BP[Breakpoints]
+        M[Mocks]
+        RW[Rewrites]
+        TH[Throttle]
+        BL[Block List]
+        F[Focus]
+        RP[Replay]
+    end
+    subgraph Tools
+        SC[Scripts]
+        PL[Plugins]
+        GR[gRPC]
+        WST[WS Traffic]
+    end
+    subgraph Ops
+        AS[Auto Save]
+        MR[Mirror]
+        LG[Logs]
+        PS[Persistence]
+        EX[Export]
+    end
+    subgraph Enterprise
+        AU[Auth]
+        US[Users]
+        RB[RBAC]
+        AU2[Audit]
+        MT[Metrics]
+        OB[Onboarding]
+    end
+```
 
-## Sessions
+## Domain Reference
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/sessions` | List all sessions |
-| POST | `/api/sessions` | Create new session |
-| GET | `/api/sessions/:id` | Get session details |
-| DELETE | `/api/sessions/:id` | Delete session |
-| GET | `/api/sessions/:id/export` | Export session as HAR |
-| POST | `/api/sessions/:id/switch` | Switch active session |
-| POST | `/api/sessions/import` | Import session from HAR |
+| Domain | File | Endpoints | Notes |
+|--------|------|-----------|-------|
+| Traffic | [API_TRAFFIC.md](API_TRAFFIC.md) | `/traffic`, `/sessions`, `/export`, `/cert` | Capture, list, filter, sessions, HAR/cURL export |
+| WebSocket & gRPC | [API_WEBSOCKET_GRPC.md](API_WEBSOCKET_GRPC.md) | `/ws`, `/ws-traffic`, `/grpc` | Real-time updates, WS traffic inspection, gRPC streams |
+| Intercept | [API_INTERCEPT.md](API_INTERCEPT.md) | `/breakpoints`, `/mocks`, `/rewrites`, `/throttle`, `/blocklist`, `/focus`, `/replay` | The intercept pipeline surface |
+| Scripts & Plugins | [API_SCRIPTS_PLUGINS.md](API_SCRIPTS_PLUGINS.md) | `/scripts`, `/plugins` | Scripting + WASM plugin management |
+| Config & Capture | [API_CONFIG.md](API_CONFIG.md) | `/config`, `/capture`, `/autosave`, `/mirror`, `/logs`, `/persistence`, `/health` | Runtime configuration and operational endpoints |
+| Enterprise | [API_ENTERPRISE.md](API_ENTERPRISE.md) | `/auth`, `/users`, `/rbac`, `/audit`, `/metrics`, `/onboarding`, `/performance`, `/health/detailed` | Feature-gated (`enterprise`); JWT-protected |
 
-## Export
+## Conventions
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/export/har` | Export traffic as HAR |
-| GET | `/api/export/curl/:id` | Export request as cURL |
+- **Path parameters** use `{name}` syntax (e.g. `/traffic/{id}`).
+- **Query parameters** are documented per-endpoint where applicable.
+- All request/response bodies are JSON unless noted otherwise.
+- Binary responses (e.g. CA cert, HAR export) use the appropriate content type.
+- Enterprise endpoints are mounted only when built with the `enterprise` Cargo
+  feature and enabled at startup; they are JWT-protected when an auth service is
+  configured (see [ENTERPRISE.md](ENTERPRISE.md)).
 
-## Interception
+## Common Query Parameters
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET/POST/DELETE | `/api/breakpoints` | Manage breakpoint rules |
-| GET/POST | `/api/breakpoints/paused` | List/resume paused requests |
-| POST | `/api/breakpoints/paused/:id/resume` | Resume a paused request |
-| GET/POST | `/api/mocks` | Manage mock rules |
-| PUT/DELETE | `/api/mocks/:id` | Update/delete mock rule |
-| POST | `/api/mocks/:id/toggle` | Enable/disable mock |
-| GET/POST/DELETE | `/api/rewrites` | Manage rewrite rules |
-| PUT/DELETE | `/api/rewrites/:id` | Update/delete rewrite rule |
-| POST | `/api/rewrites/:id/toggle` | Enable/disable rewrite |
-| GET/POST | `/api/throttle` | Manage throttling |
-| POST | `/api/throttle/enabled` | Enable/disable throttling |
-| GET | `/api/throttle/presets` | Get throttle presets |
-
-## Replay
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET/POST | `/api/replay/saved` | Manage saved requests |
-| POST | `/api/replay/execute/:id` | Replay a request |
-| GET | `/api/replay/history` | View replay history |
-
-## WebSocket & gRPC
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/ws` | WebSocket for real-time traffic updates |
-| GET | `/api/ws-traffic/connections` | List WebSocket connections |
-| GET | `/api/grpc/connections` | List gRPC connections |
-| GET | `/api/grpc/streams` | List gRPC streams |
-| GET | `/api/grpc/frames` | List gRPC frames |
-| GET | `/api/grpc/stats` | Get gRPC statistics |
-
-## Scripts & Plugins
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET/POST | `/api/scripts` | List/create scripts |
-| PUT/DELETE | `/api/scripts/:id` | Update/delete script |
-| POST | `/api/scripts/:id/toggle` | Enable/disable script |
-| GET | `/api/plugins` | List plugins |
-| POST | `/api/plugins/:id/enable` | Enable plugin |
-| POST | `/api/plugins/:id/disable` | Disable plugin |
-| POST | `/api/plugins/reload` | Reload plugins |
-
-## Configuration & Capture
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/config` | Get proxy configuration |
-| PATCH | `/api/config` | Update proxy configuration |
-| GET | `/api/capture` | Get capture status |
-| POST | `/api/capture/toggle` | Toggle traffic capture |
-| GET | `/api/cert/ca` | Download CA certificate |
-
-## Health
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/health` | Health check |
-
-## Query Parameters
-
-### Traffic Filter
+### Traffic filtering
 
 ```
 GET /api/traffic?method=GET&url=*https://example.com*&status_code=200&content_type=application/json
@@ -106,10 +83,10 @@ GET /api/traffic?method=GET&url=*https://example.com*&status_code=200&content_ty
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| method | string | HTTP method (GET, POST, etc.) |
-| url | string | URL pattern (supports wildcards and regex) |
-| status_code | number | HTTP status code |
-| content_type | string | Response content type |
+| `method` | string | HTTP method (GET, POST, etc.) |
+| `url` | string | URL pattern (supports wildcards and regex) |
+| `status_code` | number | HTTP status code |
+| `content_type` | string | Response content type |
 
 ### Pagination
 
@@ -119,38 +96,17 @@ GET /api/traffic?limit=100&offset=0
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| limit | number | Max results to return |
-| offset | number | Number of results to skip |
+| `limit` | number | Max results to return |
+| `offset` | number | Number of results to skip |
 
 ## WebSocket Events
 
-The WebSocket endpoint (`/api/ws`) sends `WsServerMessage` messages to clients. Traffic updates are wrapped in `WsServerMessage::Traffic(Box<TrafficEvent>)`.
+The WebSocket endpoint (`/api/ws`) sends `WsServerMessage` messages to clients.
+See [API_WEBSOCKET_GRPC.md](API_WEBSOCKET_GRPC.md) for the full message schema.
 
-### Server-to-Client Messages (`WsServerMessage`)
+## See Also
 
-| Message Type | Payload | Description |
-|--------------|---------|-------------|
-| `Traffic` | `Box<TrafficEvent>` | A traffic event notification (see below) |
-| `InitialTraffic` | `Vec<TrafficEntrySnapshot>` | Initial traffic list sent on connection |
-| `Connected` | `{ client_id: String }` | Connection established acknowledgment |
-| `Pong` | - | Response to client ping (keep-alive) |
-| `Error` | `{ message: String }` | Error message |
-
-### Traffic Event Variants (`TrafficEvent`)
-
-| Variant | Payload | Description |
-|---------|---------|-------------|
-| `Added` | `TrafficEntrySnapshot` | A new traffic entry was added (request captured) |
-| `Updated` | `TrafficEntrySnapshot` | A traffic entry was updated (response received) |
-| `Deleted` | `Vec<String>` | Specific traffic entries were deleted |
-| `Cleared` | - | All traffic was cleared |
-| `CountUpdate` | `usize` | Traffic count changed |
-
-### Client-to-Server Messages (`WsClientMessage`)
-
-| Message Type | Payload | Description |
-|--------------|---------|-------------|
-| `Subscribe` | `{ filter: Option<TrafficSubscriptionFilter> }` | Subscribe to traffic updates with optional filter |
-| `Unsubscribe` | - | Unsubscribe from traffic updates |
-| `GetInitialTraffic` | `{ limit: Option<usize> }` | Request initial traffic data |
-| `Ping` | - | Keep-alive ping |
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture
+- [INTERCEPT_PIPELINE.md](INTERCEPT_PIPELINE.md) — Intercept handler priority model
+- [ENTERPRISE.md](ENTERPRISE.md) — Enterprise auth/RBAC/audit
+- [MCP-INTEGRATION.md](MCP-INTEGRATION.md) — MCP server for AI agent integration

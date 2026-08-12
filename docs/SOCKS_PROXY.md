@@ -1,5 +1,7 @@
 # SOCKS5 Proxy Support
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 Madhyamas can run a **SOCKS5** proxy listener (RFC 1928) alongside its
 HTTP/HTTPS proxy listener. SOCKS5 is a generic TCP tunneling protocol used by
 browsers, CLI tools, and mobile devices that prefer SOCKS over HTTP

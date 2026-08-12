@@ -1,5 +1,7 @@
 # zstd Content-Encoding Support
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 ## Overview
 
 [zstd](https://datatracker.ietf.org/doc/html/rfc8878) (Zstandard) is a modern

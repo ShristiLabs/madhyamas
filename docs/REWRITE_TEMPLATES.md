@@ -1,5 +1,7 @@
 # Rewrite Templates
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 Rewrite templates are pre-built rewrite rules that solve common debugging
 scenarios with a single click. Instead of manually configuring individual
 header manipulations, you pick a template and Madhyamas creates a fully

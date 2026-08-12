@@ -1,5 +1,7 @@
 # Repeat Advanced (Batch Replay)
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 Repeat Advanced is the Madhyamas equivalent of Charles Proxy's "Repeat
 Advanced" tool. It replays a saved request multiple times with configurable
 **iterations**, **concurrency**, and an optional **inter-request delay**,

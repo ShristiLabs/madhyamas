@@ -1,5 +1,7 @@
 # Upstream Proxy Chaining
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 Madhyamas can route all outbound traffic through a configurable upstream
 (external) proxy. This is essential for corporate networks with a mandatory
 egress proxy, for geo-routing through remote proxies, or for chaining
@@ -318,3 +320,10 @@ cargo test -p madhyamas
   upstream proxy must be specified explicitly.
 - **NTLM/Kerberos auth:** Only Basic auth (HTTP) and username/password
   (SOCKS5) are supported. NTLM and Kerberos are not implemented.
+
+## See Also
+
+- [SOCKS_PROXY.md](SOCKS_PROXY.md) — SOCKS5 proxy listener
+- [PROXY_FLOW.md](PROXY_FLOW.md) — End-to-end proxy flow
+- [NETWORK_CONFIGURATION.md](NETWORK_CONFIGURATION.md) — Network setup and IP detection
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture

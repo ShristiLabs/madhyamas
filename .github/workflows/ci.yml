@@ -12,6 +12,8 @@ on:
       - "Dockerfile"
       - "docker-compose.yml"
       - "docker-compose.yaml"
+      - "docs/**"
+      - "scripts/check-docs*.sh"
       - ".github/workflows/ci.yml"
   pull_request:
     branches: [main, develop]
@@ -24,6 +26,8 @@ on:
       - "Dockerfile"
       - "docker-compose.yml"
       - "docker-compose.yaml"
+      - "docs/**"
+      - "scripts/check-docs*.sh"
       - ".github/workflows/ci.yml"
   workflow_dispatch:
 
@@ -308,3 +312,16 @@ jobs:
           name: madhyamas-${{ matrix.target }}
           path: dist/madhyamas-*.*
           retention-days: 3
+
+  # =============================================================================
+  # Docs check — broken links, stale source paths, module coverage
+  # =============================================================================
+  docs-check:
+    name: Docs check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check internal links and source path references
+        run: bash scripts/check-docs.sh
+      - name: Check module documentation coverage
+        run: bash scripts/check-docs-coverage.sh

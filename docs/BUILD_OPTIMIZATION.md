@@ -1,7 +1,8 @@
 # Build Optimization Proposal
 
-**Status:** Proposal — no changes applied yet
-**Date:** 2026-07-22
+**Status:** Implemented — the proposals below have been applied to CI and the
+build configuration.
+**Date:** 2026-07-22 (proposals), **Last verified:** 2026-08-12 (implementation)
 **Scope:** CI snapshot builds (`ci.yml`), release builds (`release.yml`), and Docker builds
 
 ---

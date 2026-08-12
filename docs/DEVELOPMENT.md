@@ -1,17 +1,29 @@
 # Development Guide
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 ## Prerequisites
 
 ### Required Tools
-- **Rust** 1.75 or later
+- **Rust** 1.88 or later (see `Cargo.toml` `rust-version`)
 - **Cargo** (comes with Rust)
 - **Node.js** 18+ and npm
 - **Git**
+- **OpenSSL** (for HTTPS certificate generation)
+  ```bash
+  # macOS
+  brew install openssl
+  # Ubuntu/Debian
+  sudo apt-get install libssl-dev
+  # Fedora/RHEL
+  sudo dnf install openssl-devel
+  ```
 
 ### Optional Tools
 - **Docker** (for containerized development)
 - **SQLite CLI** (for database inspection)
 - **Postman/Insomnia** (for API testing)
+- **cargo-watch** (for backend auto-reload on file change)
 
 ## Setting Up Development Environment
 
@@ -667,3 +679,83 @@ The hook only runs when `.rs` files or frontend config files are staged. To bypa
 ```bash
 git commit --no-verify
 ```
+
+## Local Development Scripts
+
+For convenience, startup scripts are provided to build and run Madhyamas
+locally without Docker.
+
+### Start / Stop
+
+```bash
+./startup-local.sh           # Build web + Rust, start in background
+./startup-local.sh --clean   # Clean rebuild (removes web/dist, node_modules, target)
+./stop-local.sh              # Stop the local instance
+```
+
+### Data Directory
+
+All Madhyamas data lives under `~/.madhyamas/`:
+
+```
+~/.madhyamas/
+├── certs/           # SSL certificates
+├── logs/            # Log files (madhyamas.log)
+├── traffic.db       # Traffic database (SQLite)
+└── madhyamas.pid    # Process ID file
+```
+
+View logs in real-time:
+
+```bash
+tail -f ~/.madhyamas/logs/madhyamas.log
+```
+
+To reset all data:
+
+```bash
+rm -rf ~/.madhyamas/
+```
+
+### Troubleshooting
+
+**Port already in use:**
+
+```bash
+lsof -i :3001          # find the process
+kill -9 <PID>          # or use different ports:
+export MADHYAMAS_API_PORT=3002
+export MADHYAMAS_PROXY_PORT=8889
+./startup-local.sh
+```
+
+**Build errors:**
+
+```bash
+./startup-local.sh --clean   # or manually: cargo clean && rm -rf web/dist web/node_modules
+```
+
+**Process won't stop:**
+
+```bash
+pkill -9 -f madhyamas
+rm ~/.madhyamas/madhyamas.pid
+```
+
+### Local vs Docker
+
+| Feature | Local | Docker |
+|---------|-------|--------|
+| Setup | Requires Rust + Node.js | Only requires Docker |
+| Build time | Faster (incremental) | Slower (full rebuild) |
+| Hot reload | Yes (with cargo-watch) | No |
+| Isolation | No | Yes |
+| Best for | Development | Production / testing |
+
+## See Also
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture
+- [WEB_FRONTEND.md](WEB_FRONTEND.md) — Frontend architecture and build flow
+- [DEPLOYMENT.md](DEPLOYMENT.md) — Docker and production deployment
+- [NETWORK_CONFIGURATION.md](NETWORK_CONFIGURATION.md) — Network setup
+- [GETTING_STARTED.md](GETTING_STARTED.md) — User-facing getting started guide

@@ -1,5 +1,7 @@
 # Madhyamas — Proxy Flow & Internals
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 This document explains in detail how the Madhyamas proxy works end‑to‑end:
 how connections are accepted, how TLS/HTTPS interception is performed, how
 certificates are generated and used, how traffic is stored, and how it is
@@ -624,3 +626,12 @@ The web UI is built with Vite (`cd web && npm run build`) and the resulting
 | **Self‑exclusion of `:api_port` requests** | Prevents the web UI's own API calls from creating a feedback loop in the traffic list. |
 | **TLS handshake failures recorded as 502** | Makes failed interception attempts (e.g. cert pinning) visible in the UI instead of silently dropping them. |
 | **Embedded web assets (`rust-embed`)** | Single self‑contained binary; no external file dependencies at runtime. |
+
+## See Also
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture
+- [INTERCEPT_PIPELINE.md](INTERCEPT_PIPELINE.md) — Intercept handler priority model
+- [EXTENSION_SYSTEM.md](EXTENSION_SYSTEM.md) — Unified scripting/plugin extension model
+- [SOCKS_PROXY.md](SOCKS_PROXY.md) — SOCKS5 proxy listener
+- [UPSTREAM_PROXY.md](UPSTREAM_PROXY.md) — Upstream proxy chaining
+- [PERSISTENCE.md](PERSISTENCE.md) — SQLite storage schema

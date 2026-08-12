@@ -366,9 +366,19 @@ cargo test -p madhyamas-core
 
 When adding features, update:
 - `README.md` - If it affects usage
-- `docs/API.md` - For API changes
+- `docs/API.md` (and the relevant `docs/API_*.md` domain page) - For API changes
 - `docs/GETTING_STARTED.md` - For user-facing features
 - `docs/ARCHITECTURE.md` - For architectural changes
+- `docs/README.md` - Add new docs to the categorized index
+- Feature-specific docs in `docs/` (see the index in `docs/README.md`)
+
+The API reference is split by domain: `API_TRAFFIC.md`, `API_INTERCEPT.md`,
+`API_SCRIPTS_PLUGINS.md`, `API_CONFIG.md`, `API_ENTERPRISE.md`,
+`API_WEBSOCKET_GRPC.md`, with `API.md` as the index. Update the relevant
+domain page(s) when adding or changing endpoints.
+
+For new modules in `crates/madhyamas-core/src/`, create a corresponding
+`docs/` reference page using the structure in `docs/TEMPLATE.md`.
 
 ### Changelog
 

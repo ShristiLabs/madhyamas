@@ -1,5 +1,7 @@
 # Charles Proxy vs Madhyamas — Feature Comparison
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6` and Charles Proxy v5.2.
+
 This document is a comprehensive feature-by-feature comparison between
 [Charles Proxy](https://www.charlesproxy.com/documentation/) (v5.2, the
 commercial reference HTTP/HTTPS debugging proxy) and **Madhyamas** (the

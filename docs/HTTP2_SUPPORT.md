@@ -1,5 +1,7 @@
 # HTTP/2 Downstream Support
 
+> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+
 Madhyamas supports HTTP/2 on the **downstream** (client-facing) side of the proxy,
 enabling interception of HTTP/2 traffic including **gRPC** (which mandates HTTP/2).
 
@@ -207,3 +209,9 @@ responses, reflecting the negotiated protocol (`HTTP/2` or `HTTP/1.1`).
   `None` (treated as `HTTP/1.1`).
 - When `enable_h2_downstream` is `false` (the default), the proxy behaves
   exactly as before — only `http/1.1` is advertised via ALPN.
+
+## See Also
+
+- [API_WEBSOCKET_GRPC.md](API_WEBSOCKET_GRPC.md) — gRPC and WebSocket API endpoints
+- [PROXY_FLOW.md](PROXY_FLOW.md) — End-to-end proxy flow
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture
