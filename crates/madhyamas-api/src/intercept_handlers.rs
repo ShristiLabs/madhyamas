@@ -443,6 +443,64 @@ pub async fn delete_mock_collection(
     }
 }
 
+/// Update a mock collection's metadata (name, description, enabled, tags).
+///
+/// Accepts a partial body: only the provided fields are updated; omitted
+/// fields retain their existing values. The `id`, `created_at` fields are
+/// preserved from the existing collection.
+#[derive(Debug, Deserialize)]
+pub struct UpdateCollectionRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub enabled: Option<bool>,
+    pub tags: Option<Vec<String>>,
+}
+
+pub async fn update_mock_collection(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateCollectionRequest>,
+) -> impl IntoResponse {
+    let existing = match state.mock_manager.get_collection(&id) {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Collection not found".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let mut updated = existing.clone();
+    if let Some(name) = req.name {
+        updated.name = name;
+    }
+    if let Some(desc) = req.description {
+        updated.description = Some(desc);
+    }
+    if let Some(enabled) = req.enabled {
+        updated.enabled = enabled;
+    }
+    if let Some(tags) = req.tags {
+        updated.tags = tags;
+    }
+
+    if state.mock_manager.update_collection(&id, updated.clone()) {
+        Json(updated).into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Collection not found".to_string(),
+            }),
+        )
+            .into_response()
+    }
+}
+
 /// Toggle a mock collection (enable/disable all rules in collection)
 pub async fn toggle_mock_collection(
     State(state): State<Arc<AppState>>,

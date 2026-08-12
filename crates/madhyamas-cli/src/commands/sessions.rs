@@ -55,6 +55,8 @@ pub struct SessionExportArgs {
 pub enum SessionCommands {
     /// List all sessions
     List,
+    /// Get a specific session by ID
+    Get(SessionDeleteArgs),
     /// Create a new session
     Create(SessionCreateArgs),
     /// Delete a session
@@ -71,6 +73,11 @@ impl SessionCommands {
             SessionCommands::List => {
                 let client = ApiClient::new(api_url);
                 let result = client.get("sessions").await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            SessionCommands::Get(args) => {
+                let client = ApiClient::new(api_url);
+                let result = client.get(&format!("sessions/{}", args.id)).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             SessionCommands::Create(args) => {

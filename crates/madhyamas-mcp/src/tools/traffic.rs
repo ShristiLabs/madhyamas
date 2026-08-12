@@ -1,13 +1,17 @@
-//! Traffic inspection tools
+//! Traffic inspection tools.
 
 use reqwest::Client;
 use serde_json::{json, Value};
 
-use crate::types::McpError;
+use super::helpers::{api_result, get_id, json_text};
+use super::tool_trait::McpTool;
+use crate::types::{ContentBlock, McpError};
+
+// ============ Internal helpers (existing free functions, kept as pub(super)) ============
 
 /// Advanced traffic filter parameters
 #[derive(Debug, Default)]
-pub struct TrafficFilter {
+pub(super) struct TrafficFilter {
     pub filter: Option<String>,
     pub method: Option<String>,
     pub status: Option<u16>,
@@ -24,7 +28,7 @@ pub struct TrafficFilter {
 }
 
 /// Get captured traffic with advanced filtering
-pub async fn get_traffic_filtered(
+pub(super) async fn get_traffic_filtered(
     client: &Client,
     api_url: &str,
     filter: TrafficFilter,
@@ -102,31 +106,8 @@ pub async fn get_traffic_filtered(
     Ok(traffic)
 }
 
-/// Get captured traffic (legacy interface for backward compatibility)
-pub async fn get_traffic(
-    client: &Client,
-    api_url: &str,
-    filter: Option<&str>,
-    method: Option<&str>,
-    limit: Option<usize>,
-    offset: Option<usize>,
-) -> Result<Value, McpError> {
-    get_traffic_filtered(
-        client,
-        api_url,
-        TrafficFilter {
-            filter: filter.map(|s| s.to_string()),
-            method: method.map(|s| s.to_string()),
-            limit,
-            offset,
-            ..Default::default()
-        },
-    )
-    .await
-}
-
 /// Get a specific traffic entry
-pub async fn get_traffic_entry(
+pub(super) async fn get_traffic_entry(
     client: &Client,
     api_url: &str,
     entry_id: &str,
@@ -154,7 +135,7 @@ pub async fn get_traffic_entry(
 }
 
 /// Clear all traffic
-pub async fn clear_traffic(client: &Client, api_url: &str) -> Result<Value, McpError> {
+pub(super) async fn clear_traffic(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/traffic/clear", api_url);
 
     let response = client
@@ -178,7 +159,7 @@ pub async fn clear_traffic(client: &Client, api_url: &str) -> Result<Value, McpE
 /// is provided it is used as the new session's name; otherwise the server
 /// defaults to `"Imported HAR"`. When `switch_session` is true the active
 /// session is switched to the newly created one.
-pub async fn import_har(
+pub(super) async fn import_har(
     client: &Client,
     api_url: &str,
     har: Value,
@@ -215,7 +196,7 @@ pub async fn import_har(
 }
 
 /// Get traffic count
-pub async fn get_traffic_count(client: &Client, api_url: &str) -> Result<Value, McpError> {
+pub(super) async fn get_traffic_count(client: &Client, api_url: &str) -> Result<Value, McpError> {
     let url = format!("{}/api/traffic/count", api_url);
 
     let response = client
@@ -239,7 +220,7 @@ pub async fn get_traffic_count(client: &Client, api_url: &str) -> Result<Value, 
 }
 
 /// Search traffic by content
-pub async fn search_traffic(
+pub(super) async fn search_traffic(
     client: &Client,
     api_url: &str,
     query: &str,
@@ -271,7 +252,7 @@ pub async fn search_traffic(
 }
 
 /// Format traffic summary for AI analysis
-pub fn format_traffic_summary(traffic: &Value) -> String {
+pub(super) fn format_traffic_summary(traffic: &Value) -> String {
     let mut summary = String::new();
     summary.push_str("# Traffic Summary\n\n");
 
@@ -324,7 +305,7 @@ pub fn format_traffic_summary(traffic: &Value) -> String {
 }
 
 /// Format a single traffic entry for detailed analysis
-pub fn format_traffic_detail(entry: &Value) -> String {
+pub(super) fn format_traffic_detail(entry: &Value) -> String {
     let mut detail = String::new();
 
     if let Some(obj) = entry.as_object() {
@@ -376,4 +357,369 @@ pub fn format_traffic_detail(entry: &Value) -> String {
     }
 
     detail
+}
+
+// ============ Trait-based tool structs ============
+
+/// List captured HTTP traffic with advanced filtering.
+pub struct GetTrafficTool;
+
+#[async_trait::async_trait]
+impl McpTool for GetTrafficTool {
+    fn name(&self) -> &str {
+        "madhyamas_get_traffic"
+    }
+    fn description(&self) -> &str {
+        "List captured HTTP traffic with advanced filtering. Returns a summary of requests including method, URL, status code, and timing."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "filter": {
+                    "type": "string",
+                    "description": "Filter expression to match URLs (supports wildcards)"
+                },
+                "method": {
+                    "type": "string",
+                    "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+                    "description": "Filter by HTTP method"
+                },
+                "status": {
+                    "type": "integer",
+                    "description": "Filter by HTTP status code (e.g., 200, 404, 500)"
+                },
+                "file_type": {
+                    "type": "string",
+                    "description": "Filter by file type/extension (e.g., json, html, css, js, png)"
+                },
+                "header": {
+                    "type": "string",
+                    "description": "Filter by header (format: 'key:value' or just 'key')"
+                },
+                "cookie": {
+                    "type": "string",
+                    "description": "Filter by cookie (format: 'name=value' or just 'name')"
+                },
+                "search": {
+                    "type": "string",
+                    "description": "Search in request/response bodies"
+                },
+                "min_size": {
+                    "type": "integer",
+                    "description": "Filter by minimum response size in bytes"
+                },
+                "max_size": {
+                    "type": "integer",
+                    "description": "Filter by maximum response size in bytes"
+                },
+                "min_time": {
+                    "type": "integer",
+                    "description": "Filter by minimum response time in milliseconds"
+                },
+                "max_time": {
+                    "type": "integer",
+                    "description": "Filter by maximum response time in milliseconds"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (default: 100)"
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Offset for pagination"
+                }
+            }
+        })
+    }
+    async fn execute(
+        &self,
+        client: &Client,
+        api_url: &str,
+        arguments: &Value,
+    ) -> Result<Vec<ContentBlock>, McpError> {
+        let filter = TrafficFilter {
+            filter: arguments
+                .get("filter")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            method: arguments
+                .get("method")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            status: arguments
+                .get("status")
+                .and_then(|v| v.as_u64())
+                .map(|s| s as u16),
+            file_type: arguments
+                .get("file_type")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            header: arguments
+                .get("header")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            cookie: arguments
+                .get("cookie")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            search: arguments
+                .get("search")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            min_size: arguments
+                .get("min_size")
+                .and_then(|v| v.as_u64())
+                .map(|s| s as usize),
+            max_size: arguments
+                .get("max_size")
+                .and_then(|v| v.as_u64())
+                .map(|s| s as usize),
+            min_time: arguments.get("min_time").and_then(|v| v.as_u64()),
+            max_time: arguments.get("max_time").and_then(|v| v.as_u64()),
+            limit: arguments
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|s| s as usize),
+            offset: arguments
+                .get("offset")
+                .and_then(|v| v.as_u64())
+                .map(|s| s as usize),
+        };
+        let result = get_traffic_filtered(client, api_url, filter).await?;
+        Ok(vec![ContentBlock::Text {
+            text: format_traffic_summary(&result),
+        }])
+    }
+}
+
+/// Get detailed information about a specific traffic entry.
+pub struct GetTrafficEntryTool;
+
+#[async_trait::async_trait]
+impl McpTool for GetTrafficEntryTool {
+    fn name(&self) -> &str {
+        "madhyamas_get_traffic_entry"
+    }
+    fn description(&self) -> &str {
+        "Get detailed information about a specific traffic entry, including full request/response headers and bodies."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "The ID of the traffic entry to retrieve"
+                }
+            },
+            "required": ["id"]
+        })
+    }
+    async fn execute(
+        &self,
+        client: &Client,
+        api_url: &str,
+        arguments: &Value,
+    ) -> Result<Vec<ContentBlock>, McpError> {
+        let id = get_id(arguments)?;
+        let result = get_traffic_entry(client, api_url, &id).await?;
+        Ok(vec![ContentBlock::Text {
+            text: format_traffic_detail(&result),
+        }])
+    }
+}
+
+/// Search captured traffic by content.
+pub struct SearchTrafficTool;
+
+#[async_trait::async_trait]
+impl McpTool for SearchTrafficTool {
+    fn name(&self) -> &str {
+        "madhyamas_search_traffic"
+    }
+    fn description(&self) -> &str {
+        "Search captured traffic by content (headers, bodies, URLs). Useful for finding specific API calls or patterns."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query string"
+                }
+            },
+            "required": ["query"]
+        })
+    }
+    async fn execute(
+        &self,
+        client: &Client,
+        api_url: &str,
+        arguments: &Value,
+    ) -> Result<Vec<ContentBlock>, McpError> {
+        let query = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| McpError::InvalidParams("query is required".to_string()))?;
+        let result = search_traffic(client, api_url, query).await?;
+        Ok(vec![ContentBlock::Text {
+            text: format_traffic_summary(&result),
+        }])
+    }
+}
+
+/// Get the total count of captured traffic entries.
+pub struct GetTrafficCountTool;
+
+#[async_trait::async_trait]
+impl McpTool for GetTrafficCountTool {
+    fn name(&self) -> &str {
+        "madhyamas_get_traffic_count"
+    }
+    fn description(&self) -> &str {
+        "Get the total count of captured traffic entries."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {}
+        })
+    }
+    async fn execute(
+        &self,
+        client: &Client,
+        api_url: &str,
+        _arguments: &Value,
+    ) -> Result<Vec<ContentBlock>, McpError> {
+        let result = get_traffic_count(client, api_url).await?;
+        Ok(json_text(&result))
+    }
+}
+
+/// Clear all captured traffic.
+pub struct ClearTrafficTool;
+
+#[async_trait::async_trait]
+impl McpTool for ClearTrafficTool {
+    fn name(&self) -> &str {
+        "madhyamas_clear_traffic"
+    }
+    fn description(&self) -> &str {
+        "Clear all captured traffic. This action cannot be undone."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {}
+        })
+    }
+    async fn execute(
+        &self,
+        client: &Client,
+        api_url: &str,
+        _arguments: &Value,
+    ) -> Result<Vec<ContentBlock>, McpError> {
+        let result = clear_traffic(client, api_url).await?;
+        Ok(json_text(&result))
+    }
+}
+
+/// Import traffic from a HAR JSON document into a new session.
+pub struct ImportHarTool;
+
+#[async_trait::async_trait]
+impl McpTool for ImportHarTool {
+    fn name(&self) -> &str {
+        "madhyamas_import_har"
+    }
+    fn description(&self) -> &str {
+        "Import traffic from a HAR (HTTP Archive) JSON document into a new session. Each log.entries[] entry is converted into a traffic entry. Invalid entries are skipped. Useful for loading traffic captured by other tools (Chrome DevTools, Charles, Fiddler)."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "har": {
+                    "type": "object",
+                    "description": "The full HAR JSON document (must contain a 'log' object with an 'entries' array)"
+                },
+                "session_name": {
+                    "type": "string",
+                    "description": "Optional name for the newly created session (default: 'Imported HAR')"
+                },
+                "switch_session": {
+                    "type": "boolean",
+                    "description": "Switch the active session to the newly created one after import (default: false)"
+                }
+            },
+            "required": ["har"]
+        })
+    }
+    async fn execute(
+        &self,
+        client: &Client,
+        api_url: &str,
+        arguments: &Value,
+    ) -> Result<Vec<ContentBlock>, McpError> {
+        let har = arguments
+            .get("har")
+            .ok_or_else(|| McpError::InvalidParams("har is required".to_string()))?
+            .clone();
+        let session_name = arguments
+            .get("session_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let switch_session = arguments
+            .get("switch_session")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let result = import_har(
+            client,
+            api_url,
+            har,
+            session_name.as_deref(),
+            switch_session,
+        )
+        .await?;
+        Ok(json_text(&result))
+    }
+}
+
+/// Get script execution traces for a traffic entry.
+pub struct GetTrafficScriptTracesTool;
+
+#[async_trait::async_trait]
+impl McpTool for GetTrafficScriptTracesTool {
+    fn name(&self) -> &str {
+        "madhyamas_get_traffic_script_traces"
+    }
+    fn description(&self) -> &str {
+        "Get script execution traces for a specific traffic entry, showing \
+         which scripts ran on the request and their results."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Traffic entry ID" }
+            },
+            "required": ["id"]
+        })
+    }
+    async fn execute(
+        &self,
+        client: &Client,
+        api_url: &str,
+        arguments: &Value,
+    ) -> Result<Vec<ContentBlock>, McpError> {
+        let id = get_id(arguments)?;
+        let resp = client
+            .get(format!("{}/api/traffic/{}/script-traces", api_url, id))
+            .send()
+            .await
+            .map_err(|e| McpError::Http(e.to_string()))?;
+        api_result(resp).await
+    }
 }

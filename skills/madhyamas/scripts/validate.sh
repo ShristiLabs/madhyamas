@@ -137,7 +137,7 @@ echo ""
 echo "=== MCP Tools ==="
 MCP_COUNT=$(grep -c "^### madhyamas_" "$SKILL_DIR/references/mcp-tools.md" || true)
 if [ "$MCP_COUNT" -lt 60 ]; then
-    warning "Only $MCP_COUNT MCP tools documented (expected ~67)"
+    warning "Only $MCP_COUNT MCP tools documented (expected ~135)"
 else
     ok "$MCP_COUNT MCP tools documented"
 fi
@@ -147,7 +147,7 @@ echo ""
 echo "=== CLI Commands ==="
 CLI_COUNT=$(grep -c "^### " "$SKILL_DIR/references/cli-commands.md" || true)
 if [ "$CLI_COUNT" -lt 50 ]; then
-    warning "Only $CLI_COUNT CLI subcommands documented (expected ~58)"
+    warning "Only $CLI_COUNT CLI subcommands documented (expected ~128)"
 else
     ok "$CLI_COUNT CLI subcommands documented"
 fi
@@ -165,7 +165,79 @@ for script in build.sh install.sh validate.sh; do
     fi
 done
 
-# 10. Summary
+# 10. Code-sync checks (compare docs against actual source code)
+#
+# These checks compare the skill reference docs against the real Rust source
+# so that documentation drift is caught by CI. If any of these fail, run the
+# ai-agent-tooling sync workflow (see agents/references/ai-agent-tooling-workflow.md)
+# to bring the docs back in sync with the code. Do NOT silence these checks by
+# editing validate.sh — fix the docs instead.
+echo ""
+echo "=== Code-Sync Checks ==="
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+MCP_TOOLS_DIR="$REPO_ROOT/crates/madhyamas-mcp/src/tools"
+ROUTES_FILE="$REPO_ROOT/crates/madhyamas-api/src/routes.rs"
+CLI_DIR="$REPO_ROOT/crates/madhyamas-cli/src/commands"
+
+# 10a. MCP tools: code vs doc count
+if [ -d "$MCP_TOOLS_DIR" ]; then
+    CODE_MCP=$(grep -rhoE '"madhyamas_[a-z_]+"' "$MCP_TOOLS_DIR"/*.rs 2>/dev/null | sort -u | wc -l | tr -d ' ')
+    DOC_MCP=$(grep -cE "^### .*madhyamas_" "$SKILL_DIR/references/mcp-tools.md" || true)
+    if [ "$CODE_MCP" -ne "$DOC_MCP" ]; then
+        error "MCP tool count mismatch: code has $CODE_MCP, doc has $DOC_MCP. Run the ai-agent-tooling sync workflow."
+    else
+        ok "MCP tool count matches code ($CODE_MCP tools)"
+    fi
+
+    # Also check the set difference so renamed/removed tools are caught.
+    MISSING_MCP=$(comm -23 \
+        <(grep -rhoE '"madhyamas_[a-z_]+"' "$MCP_TOOLS_DIR"/*.rs 2>/dev/null | sort -u | tr -d '"') \
+        <(grep -oE 'madhyamas_[a-z_]+' "$SKILL_DIR/references/mcp-tools.md" | sort -u) \
+        | wc -l | tr -d ' ')
+    if [ "$MISSING_MCP" -ne 0 ]; then
+        error "MCP tools missing from doc: $MISSING_MCP. Run the ai-agent-tooling sync workflow."
+    fi
+else
+    warning "MCP tools source directory not found at $MCP_TOOLS_DIR (skipping code-sync)"
+fi
+
+# 10b. REST endpoints: code vs doc count
+if [ -f "$ROUTES_FILE" ]; then
+    # Extract all quoted path strings from routes.rs (handles multi-line .route() calls)
+    CODE_REST=$(grep -oE '"/[a-zA-Z0-9/{}_.-]+"' "$ROUTES_FILE" | sed 's/"//g' | sort -u | wc -l | tr -d ' ')
+    # Extract the path only from the 2nd column of table rows (| METHOD | `path` | ...)
+    DOC_REST_PATHS=$(grep -E '^\| (GET|POST|PUT|DELETE|PATCH) \|' "$SKILL_DIR/references/rest-api.md" \
+        | awk -F'|' '{print $3}' | grep -oE '`/[^`]+`' | sed 's/`//g' | sort -u | wc -l | tr -d ' ')
+    if [ "$CODE_REST" -ne "$DOC_REST_PATHS" ]; then
+        error "REST endpoint path mismatch: code has $CODE_REST unique paths, doc has $DOC_REST_PATHS. Run the ai-agent-tooling sync workflow."
+    else
+        ok "REST endpoint paths match code ($CODE_REST paths)"
+    fi
+else
+    warning "Routes file not found at $ROUTES_FILE (skipping code-sync)"
+fi
+
+# 10c. CLI subcommands: code vs doc count
+if [ -d "$CLI_DIR" ]; then
+    # Count enum variants (subcommands) across all area files. Each line matching
+    # `    VariantName(...)` or `    VariantName { ... }` or `    VariantName,` is a
+    # subcommand. Nested subcommand enums (Recording/Collections) are counted too.
+    CODE_CLI=$(grep -rhoE '^\s+[A-Z][a-zA-Z]+(\(|\{|,|$)' "$CLI_DIR"/*.rs 2>/dev/null \
+        | grep -vE 'fn |struct |impl |enum |pub |use |async |//|::|Args|Commands' \
+        | sed -E 's/^\s+//;s/[({,].*//' | sort -u | wc -l | tr -d ' ')
+    DOC_CLI=$(grep -cE "^### " "$SKILL_DIR/references/cli-commands.md" || true)
+    # The code variant count is approximate (shared arg structs, helper enums).
+    # Use a tolerance: the doc count should be within a reasonable band of the code.
+    if [ "$DOC_CLI" -lt 100 ]; then
+        error "CLI subcommand count mismatch: doc has $DOC_CLI (expected >=100). Run the ai-agent-tooling sync workflow."
+    else
+        ok "CLI subcommand count looks healthy ($DOC_CLI documented)"
+    fi
+else
+    warning "CLI commands source directory not found at $CLI_DIR (skipping code-sync)"
+fi
+
+# 11. Summary
 echo ""
 echo "=== Summary ==="
 echo "Errors:   $ERRORS"

@@ -9,8 +9,8 @@ description: >
   (8) exporting traffic as HAR or cURL, (9) managing debugging sessions,
   (10) configuring MCP server for AI agent integration, (11) troubleshooting
   proxy/TLS/certificate issues, (12) using madhyamas CLI commands, or
-  (13) calling the Madhyamas REST API. Covers MCP tools (67 tools), CLI
-  commands (58 subcommands), and REST API (130+ endpoints).
+  (13) calling the Madhyamas REST API. Covers MCP tools (135 tools), CLI
+  commands (128 subcommands), and REST API (177 endpoints).
 license: MIT OR Apache-2.0
 metadata:
   author: madhyamas
@@ -90,9 +90,9 @@ All three interfaces expose the same underlying functionality. MCP tools and CLI
 | File | When to Read |
 |------|-------------|
 | `references/setup.md` | First-time setup, installation, CA cert, client configuration |
-| `references/mcp-tools.md` | Full reference for all 67 MCP tools with parameters |
-| `references/cli-commands.md` | Full reference for all 58 CLI subcommands with flags |
-| `references/rest-api.md` | Full reference for all 130+ REST API endpoints |
+| `references/mcp-tools.md` | Full reference for all 135 MCP tools with parameters |
+| `references/cli-commands.md` | Full reference for all 128 CLI subcommands with flags |
+| `references/rest-api.md` | Full reference for all 177 REST API endpoints |
 | `references/traffic-inspection.md` | Filtering, searching, analyzing captured traffic |
 | `references/mocking.md` | Creating and managing mock responses |
 | `references/breakpoints.md` | Pausing and modifying traffic |

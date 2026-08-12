@@ -1,6 +1,6 @@
 # CLI Commands Reference
 
-All 58 CLI subcommands for the `madhyamas` binary. The CLI communicates with a running Madhyamas proxy instance via REST API.
+All 128 CLI subcommands for the `madhyamas` binary. The CLI communicates with a running Madhyamas proxy instance via REST API.
 
 ## Global Flags
 
@@ -134,6 +134,230 @@ Arguments:
   <ENABLED>   Enable or disable (true/false)
 ```
 
+### mocks update
+
+Update an existing mock rule.
+
+```bash
+madhyamas mocks update <ID> [OPTIONS]
+
+Arguments:
+  <ID>    Mock ID
+
+Options:
+  -u, --url-pattern <PATTERN>    URL pattern
+  -m, --method <METHOD>          HTTP method to match
+  -s, --status-code <CODE>       Response status code
+  -b, --body <BODY>              Response body
+  -d, --delay-ms <MS>            Response delay in milliseconds
+  -e, --enabled <BOOL>           Enable or disable
+      --json                     Output as JSON
+```
+
+### mocks duplicate
+
+Duplicate an existing mock rule.
+
+```bash
+madhyamas mocks duplicate <ID> [OPTIONS]
+
+Arguments:
+  <ID>    Mock ID to duplicate
+
+Options:
+  -n, --new-name <NAME>    Optional new name for the duplicate
+```
+
+### mocks rollback
+
+Rollback a mock rule to a previous version.
+
+```bash
+madhyamas mocks rollback <ID> [OPTIONS]
+
+Arguments:
+  <ID>    Mock ID
+
+Options:
+  -v, --version <VERSION>    Version number to rollback to
+```
+
+### mocks versions
+
+Get version history for a mock rule.
+
+```bash
+madhyamas mocks versions <ID>
+
+Arguments:
+  <ID>    Mock ID
+```
+
+### mocks create-advanced
+
+Create an advanced mock rule from a JSON config.
+
+```bash
+madhyamas mocks create-advanced [OPTIONS]
+
+Options:
+  -c, --config <JSON>          Advanced mock config as a JSON string
+      --config-file <PATH>     Read config from a JSON file
+```
+
+### mocks analytics
+
+Get mock hit analytics (global or per-rule).
+
+```bash
+madhyamas mocks analytics [ID]
+
+Arguments:
+  [ID]    Optional mock ID (if omitted, returns global analytics)
+```
+
+### mocks history
+
+Get mock hit history for a specific rule.
+
+```bash
+madhyamas mocks history <ID>
+
+Arguments:
+  <ID>    Mock ID
+```
+
+### mocks preview
+
+Preview which mock rule would match a given request.
+
+```bash
+madhyamas mocks preview [OPTIONS]
+
+Options:
+  -m, --method <METHOD>    HTTP method
+  -u, --url <URL>          Request URL
+  -h, --headers <JSON>     Request headers as JSON
+  -b, --body <BODY>        Request body
+```
+
+### mocks test
+
+Test a mock rule against a sample request.
+
+```bash
+madhyamas mocks test <ID> [OPTIONS]
+
+Arguments:
+  <ID>    Mock ID to test
+
+Options:
+  -m, --method <METHOD>    HTTP method
+  -u, --url <URL>          Request URL
+  -h, --headers <JSON>     Request headers as JSON
+  -b, --body <BODY>        Request body
+```
+
+### mocks export
+
+Export all mock rules as JSON.
+
+```bash
+madhyamas mocks export [OPTIONS]
+
+Options:
+  -o, --output <FILE>    Write to file instead of stdout
+```
+
+### mocks import
+
+Import mock rules from a file.
+
+```bash
+madhyamas mocks import --input <FILE> [OPTIONS]
+
+Options:
+  -i, --input <FILE>      Input JSON file
+  -f, --format <FORMAT>   Import format (har, openapi, postman) [default: har]
+```
+
+### mocks recording
+
+Mock recording subcommands.
+
+```bash
+madhyamas mocks recording <SUBCOMMAND>
+
+Subcommands:
+  set --enabled <BOOL>    Enable or disable recording mode
+  status                  Get current recording status
+  list                    List all recorded mock candidates
+  promote                 Promote recorded mocks to active rules
+```
+
+### mocks collections
+
+Mock collection subcommands.
+
+```bash
+madhyamas mocks collections <SUBCOMMAND>
+
+Subcommands:
+  list                                    List all mock collections
+  create --name <NAME> [--description D]  Create a new collection
+  get <ID>                                Get a specific collection
+  delete <ID> [--delete-rules]            Delete a collection
+  toggle <ID> <ENABLED>                   Toggle all mocks in a collection
+  update <ID> [--name N] [--description D] [--enabled BOOL]  Update collection metadata
+```
+
+### mocks get
+
+Get a specific mock rule by ID.
+
+```bash
+madhyamas mocks get <ID>
+
+Arguments:
+  <ID>    Mock ID
+```
+
+### mocks batch-toggle
+
+Batch toggle multiple mock rules.
+
+```bash
+madhyamas mocks batch-toggle --ids <IDS> --enabled <BOOL>
+
+Options:
+  -i, --ids <IDS>        Comma-separated list of mock rule IDs
+  -e, --enabled <BOOL>   Enable or disable
+```
+
+### mocks templates
+
+List available predefined mock templates.
+
+```bash
+madhyamas mocks templates
+```
+
+### mocks clear-recording
+
+Clear all recorded mock candidates.
+
+```bash
+madhyamas mocks clear-recording
+```
+
+### mocks clear-analytics
+
+Clear all mock hit history and analytics data.
+
+```bash
+madhyamas mocks clear-analytics
+```
+
 ## breakpoints — Breakpoints
 
 ### breakpoints list
@@ -143,6 +367,17 @@ List all breakpoint rules.
 ```bash
 madhyamas breakpoints list
 ```
+
+### breakpoints get
+
+Get a specific breakpoint rule by ID.
+
+```bash
+madhyamas breakpoints get <ID>
+```
+
+Arguments:
+  <ID>    Breakpoint rule ID
 
 ### breakpoints create
 
@@ -170,6 +405,19 @@ madhyamas breakpoints delete <ID>
 
 Arguments:
   <ID>    Breakpoint ID
+```
+
+### breakpoints paused
+
+Paused traffic subcommands.
+
+```bash
+madhyamas breakpoints paused <SUBCOMMAND>
+
+Subcommands:
+  list              List all traffic paused by breakpoints
+  get <ID>          Get a specific paused traffic item
+  resume <ID> <ACTION>   Resume a paused item (action: continue or abort)
 ```
 
 ## sessions — Session Management
@@ -454,6 +702,22 @@ Options:
   -a, --action <ACTION>    Replacement action (new URL or body)
 ```
 
+### rewrites update
+
+Update a rewrite rule.
+
+```bash
+madhyamas rewrites update <ID> [OPTIONS]
+
+Arguments:
+  <ID>    Rewrite rule ID
+
+Options:
+  -n, --name <NAME>        Rule name
+  -p, --pattern <PATTERN>  URL pattern to match
+  -a, --action <ACTION>    Replacement action (new URL or body)
+```
+
 ### rewrites delete
 
 Delete a rewrite rule.
@@ -474,6 +738,18 @@ madhyamas rewrites toggle <ID>
 
 Arguments:
   <ID>    Rewrite rule ID
+```
+
+### rewrites batch-toggle
+
+Batch toggle multiple rewrite rules.
+
+```bash
+madhyamas rewrites batch-toggle --ids <IDS> --enabled <BOOL>
+
+Options:
+  -i, --ids <IDS>        Comma-separated list of rewrite rule IDs
+  -e, --enabled <BOOL>   Enable or disable
 ```
 
 ### rewrites templates
@@ -598,6 +874,113 @@ List available script templates.
 madhyamas scripts templates
 ```
 
+### scripts test
+
+Test (dry-run) a script against a sample context without affecting live traffic.
+
+```bash
+madhyamas scripts test [OPTIONS]
+
+Options:
+  -i, --inline <CODE>   Inline script source to test
+      --file <PATH>     Path to a file containing the script source to test
+  -H, --hook <HOOK>     Hook to test against (e.g. on_request, on_response)
+```
+
+Example: `madhyamas scripts test --inline "console.log(request.url)" --hook on_request`
+
+### scripts validate
+
+Validate a script's syntax without executing it.
+
+```bash
+madhyamas scripts validate [OPTIONS]
+
+Options:
+  -i, --inline <CODE>   Inline script source to validate
+      --file <PATH>     Path to a file containing the script source to validate
+```
+
+### scripts history
+
+Show execution history for a specific script.
+
+```bash
+madhyamas scripts history <ID> [OPTIONS]
+
+Arguments:
+  <ID>    Script ID
+
+Options:
+  -l, --limit <LIMIT>   Max number of history entries [default: 20]
+```
+
+### scripts history-all
+
+Show execution history across all scripts.
+
+```bash
+madhyamas scripts history-all
+```
+
+### scripts history-clear
+
+Clear execution history for a specific script.
+
+```bash
+madhyamas scripts history-clear <ID>
+
+Arguments:
+  <ID>    Script ID
+```
+
+### scripts reorder
+
+Reorder a script by changing its priority (lower = earlier in the chain).
+
+```bash
+madhyamas scripts reorder <ID> --priority <PRIORITY>
+
+Arguments:
+  <ID>    Script ID
+
+Options:
+  -p, --priority <PRIORITY>   New priority position
+```
+
+### scripts match-preview
+
+Preview which scripts would match a given request without executing them.
+
+```bash
+madhyamas scripts match-preview [OPTIONS]
+
+Options:
+      --url <URL>       URL to test (required)
+      --method <METHOD> HTTP method [default: GET]
+```
+
+### scripts config
+
+Get global script runtime configuration.
+
+```bash
+madhyamas scripts config
+```
+
+### scripts config-update
+
+Update global script runtime configuration.
+
+```bash
+madhyamas scripts config-update [OPTIONS]
+
+Options:
+      --timeout-ms <MS>          Execution timeout in milliseconds
+      --memory-limit-mb <MB>     Memory limit in MB
+      --capture-console <BOOL>   Enable console output capture
+```
+
 ## plugins — Plugin Management
 
 ### plugins list
@@ -660,6 +1043,171 @@ Reload all plugins from disk.
 madhyamas plugins reload
 ```
 
+### plugins install
+
+Install a plugin from a URL or registry id.
+
+```bash
+madhyamas plugins install [OPTIONS] <TARGET>
+
+Arguments:
+  <TARGET>    Plugin URL (when source=url) or registry id (when source=registry)
+
+Options:
+      --source <SOURCE>   Install source: "url" or "registry" [default: url]
+      --checksum <HASH>   Expected SHA-256 checksum (optional for URL source)
+```
+
+Example: `madhyamas plugins install --source registry cors-helper`
+
+### plugins uninstall
+
+Uninstall a plugin (removes from disk and persistence).
+
+```bash
+madhyamas plugins uninstall <ID>
+
+Arguments:
+  <ID>    Plugin ID
+```
+
+### plugins search
+
+Search the plugin registry by name, description, or tags.
+
+```bash
+madhyamas plugins search <QUERY>
+
+Arguments:
+  <QUERY>    Search query
+```
+
+### plugins registry
+
+List all available plugins in the registry.
+
+```bash
+madhyamas plugins registry
+```
+
+### plugins registry-config
+
+Show or set the registry GitHub repo (e.g. "owner/repo" or "owner/repo@branch").
+
+```bash
+madhyamas plugins registry-config [REPO]
+
+Arguments:
+  [REPO]    Set the registry repo (omit to just show current config)
+```
+
+### plugins registry-refresh
+
+Force-refresh the registry cache from the configured GitHub repository.
+
+```bash
+madhyamas plugins registry-refresh
+```
+
+### plugins schema
+
+Get a plugin's settings schema (for UI generation).
+
+```bash
+madhyamas plugins schema <ID>
+
+Arguments:
+  <ID>    Plugin ID
+```
+
+### plugins get-settings
+
+Get a plugin's current settings.
+
+```bash
+madhyamas plugins get-settings <ID>
+
+Arguments:
+  <ID>    Plugin ID
+```
+
+### plugins set-settings
+
+Update a plugin's settings (pass JSON via --settings).
+
+```bash
+madhyamas plugins set-settings <ID> --settings <JSON>
+
+Arguments:
+  <ID>    Plugin ID
+
+Options:
+  -s, --settings <JSON>   Settings as a JSON string
+```
+
+### plugins logs
+
+Get a plugin's recent invocation logs.
+
+```bash
+madhyamas plugins logs <ID> [OPTIONS]
+
+Arguments:
+  <ID>    Plugin ID
+
+Options:
+  -l, --limit <LIMIT>   Maximum number of log entries [default: 50]
+```
+
+### plugins gen-key
+
+Generate a new Ed25519 keypair for signing plugins.
+
+```bash
+madhyamas plugins gen-key [OPTIONS]
+
+Options:
+      --format <FORMAT>   Output format: "hex" (default) or "json" [default: hex]
+```
+
+### plugins sign
+
+Sign a plugin zip package with a publisher secret key.
+
+```bash
+madhyamas plugins sign <ZIP_PATH> --secret-key <KEY> [OPTIONS]
+
+Arguments:
+  <ZIP_PATH>    Path to the plugin zip package to sign
+
+Options:
+  -s, --secret-key <KEY>   Publisher secret key as hex (64 hex chars = 32 bytes)
+  -o, --output <PATH>      Output path for the signature file (default: <zip_path>.sig)
+```
+
+### plugins new
+
+Scaffold a new plugin project from a template.
+
+```bash
+madhyamas plugins new <TEMPLATE> <NAME> [OPTIONS]
+
+Arguments:
+  <TEMPLATE>    Template id: basic, cors, request-logger, domain-blocker, response-modifier
+  <NAME>        Plugin name (kebab-case, e.g. "my-cors-plugin")
+
+Options:
+  -o, --output <DIR>   Output directory [default: .]
+```
+
+### plugins templates
+
+List available plugin scaffolding templates.
+
+```bash
+madhyamas plugins templates
+```
+
 ## export — Export Traffic
 
 ### export har
@@ -684,4 +1232,307 @@ madhyamas export curl <ID>
 
 Arguments:
   <ID>    Traffic entry ID
+```
+
+## autosave — Auto Save
+
+### autosave get
+
+Get current Auto Save configuration.
+
+```bash
+madhyamas autosave get [OPTIONS]
+
+Options:
+      --json    Output as JSON
+```
+
+### autosave update
+
+Update Auto Save configuration. Only provided fields are updated.
+
+```bash
+madhyamas autosave update [OPTIONS]
+
+Options:
+      --enabled <BOOL>                  Enable or disable Auto Save
+      --interval-seconds <SECONDS>      Seconds between snapshots
+      --export-format <FORMAT>          Export format: "har" or "session"
+      --output-dir <DIR>                Backup directory path
+      --max-backups <NUM>               Number of backups to keep
+      --rotate-after-requests <NUM>     Rotate session after N requests (0 to disable)
+      --rotate-after-minutes <NUM>      Rotate session after N minutes (0 to disable)
+      --json                            Output as JSON
+```
+
+Example: `madhyamas autosave update --enabled true --interval-seconds 300`
+
+### autosave snapshot
+
+Trigger an immediate Auto Save snapshot (save now).
+
+```bash
+madhyamas autosave snapshot [OPTIONS]
+
+Options:
+      --json    Output as JSON
+```
+
+## blocklist — Block List
+
+### blocklist list
+
+List all block list entries.
+
+```bash
+madhyamas blocklist list
+```
+
+### blocklist stats
+
+View block list summary statistics (total entries, enabled count, total hits).
+
+```bash
+madhyamas blocklist stats
+```
+
+### blocklist get
+
+Get a specific block list entry by ID.
+
+```bash
+madhyamas blocklist get <ID>
+
+Arguments:
+  <ID>    Block list entry ID
+```
+
+### blocklist create
+
+Create a block list entry.
+
+```bash
+madhyamas blocklist create --pattern <PATTERN> [OPTIONS]
+
+Options:
+  -p, --pattern <PATTERN>       Domain or wildcard pattern to block
+  -n, --note <NOTE>             Optional note describing why this entry exists
+  -e, --enabled <BOOL>          Whether the entry is enabled (default: true)
+      --status-code <CODE>      HTTP status code to return (default: 403)
+      --response-body <BODY>    Response body to return when blocked
+      --content-type <TYPE>     Content-Type header for the block response
+      --json                    Output as JSON
+```
+
+Example: `madhyamas blocklist create --pattern "*.ads.example.com" --status-code 403`
+
+### blocklist update
+
+Update a block list entry.
+
+```bash
+madhyamas blocklist update <ID> [OPTIONS]
+
+Arguments:
+  <ID>    Block list entry ID
+
+Options:
+  -p, --pattern <PATTERN>       Domain or wildcard pattern
+  -n, --note <NOTE>             Optional note
+  -e, --enabled <BOOL>          Enable or disable
+      --status-code <CODE>      HTTP status code
+      --response-body <BODY>    Response body
+      --content-type <TYPE>     Content-Type header
+```
+
+### blocklist delete
+
+Delete a block list entry.
+
+```bash
+madhyamas blocklist delete <ID>
+
+Arguments:
+  <ID>    Block list entry ID
+```
+
+### blocklist toggle
+
+Enable or disable a block list entry.
+
+```bash
+madhyamas blocklist toggle <ID> <ENABLED>
+
+Arguments:
+  <ID>        Block list entry ID
+  <ENABLED>   Enable (true) or disable (false)
+```
+
+## focus — Focus Hosts
+
+### focus list
+
+List all focus host patterns.
+
+```bash
+madhyamas focus list
+```
+
+### focus add
+
+Add a focus host pattern to highlight matching traffic.
+
+```bash
+madhyamas focus add <PATTERN>
+
+Arguments:
+  <PATTERN>    Host pattern (e.g. `api.example.com`, `*.example.com`, `*api*`)
+```
+
+### focus remove
+
+Remove a focus host by ID.
+
+```bash
+madhyamas focus remove <ID>
+
+Arguments:
+  <ID>    Focus host ID
+```
+
+### focus clear
+
+Clear all focus hosts.
+
+```bash
+madhyamas focus clear
+```
+
+## logs — Log Rotation
+
+### logs status
+
+Show current log rotation status and archived files.
+
+```bash
+madhyamas logs status [OPTIONS]
+
+Options:
+      --json    Output as JSON
+```
+
+### logs rotate
+
+Rotate the current log file immediately (on-demand).
+
+```bash
+madhyamas logs rotate
+```
+
+### logs config
+
+Update log rotation configuration. Only provided fields are updated.
+
+```bash
+madhyamas logs config [OPTIONS]
+
+Options:
+      --enabled <BOOL>           Enable or disable file logging
+      --rotation <MODE>          Rotation mode: never, hourly, daily, or size
+      --size-mb <MB>             Size in MB (only used with --rotation size)
+      --max-files <NUM>          Maximum number of archived log files to keep
+      --max-file-size-mb <MB>    Hard per-file size cap in MB
+      --json-format <BOOL>       Use structured JSON log format
+      --json                     Output as JSON
+```
+
+Example: `madhyamas logs config --rotation daily --max-files 10`
+
+## mirror — Mirror Tool
+
+### mirror status
+
+Show current mirror status and statistics.
+
+```bash
+madhyamas mirror status [OPTIONS]
+
+Options:
+      --json    Output as JSON
+```
+
+### mirror start
+
+Start mirroring (enable the mirror tool).
+
+```bash
+madhyamas mirror start
+```
+
+### mirror stop
+
+Stop mirroring (disable the mirror tool).
+
+```bash
+madhyamas mirror stop
+```
+
+### mirror config
+
+Update mirror configuration. Only provided fields are updated.
+
+```bash
+madhyamas mirror config [OPTIONS]
+
+Options:
+      --enabled <BOOL>             Enable or disable mirroring
+      --output-dir <DIR>           Output directory for mirrored files
+      --host-filter <PATTERNS>     Comma-separated host filter patterns (use "none" to clear)
+      --save-request-bodies <BOOL> Whether to also save request bodies
+      --json                       Output as JSON
+```
+
+## wstraffic — WebSocket Traffic
+
+### wstraffic connections
+
+List all WebSocket connections.
+
+```bash
+madhyamas wstraffic connections
+```
+
+### wstraffic connection
+
+Get details of a specific WebSocket connection.
+
+```bash
+madhyamas wstraffic connection <ID>
+
+Arguments:
+  <ID>    WebSocket connection ID
+```
+
+### wstraffic messages
+
+List WebSocket messages with optional filtering.
+
+```bash
+madhyamas wstraffic messages [OPTIONS]
+
+Options:
+      --connection-id <ID>     Filter by connection ID
+      --direction <DIR>        Filter by direction (send, receive)
+      --message-type <TYPE>    Filter by message type (text, binary, ping, pong, close)
+      --search <QUERY>         Search in message payloads
+      --limit <LIMIT>          Maximum number of results
+      --offset <OFFSET>        Offset for pagination
+```
+
+### wstraffic clear
+
+Clear all WebSocket traffic (messages and closed connections).
+
+```bash
+madhyamas wstraffic clear
 ```

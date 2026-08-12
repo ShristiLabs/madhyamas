@@ -1,13 +1,9 @@
 //! Self-registering MCP tool trait.
 //!
 //! Each tool implements [`McpTool`] and is collected into a
-//! [`ToolRegistry`] via [`ToolRegistry::register`].  This replaces the
-//! older three-file pattern (registry definition + executor match-arm +
-//! tool module) with a single struct that carries both its schema and its
-//! handler.
-//!
-//! Existing tools continue to work through the legacy `ToolExecutor` match
-//! statement; new tools should prefer this trait.
+//! [`DynToolRegistry`] via [`DynToolRegistry::register`].  The tool
+//! carries both its schema and its handler in a single struct, so adding
+//! a new tool requires no edits to any other file.
 
 use reqwest::Client;
 use serde_json::Value;
@@ -18,7 +14,7 @@ use crate::types::{ContentBlock, McpError, Tool};
 ///
 /// Implementors provide their name, description, JSON-schema, and an
 /// async `execute` handler.  Tools are registered in
-/// [`ToolRegistry::register`] and invoked automatically by the MCP server.
+/// [`DynToolRegistry::register`] and invoked automatically by the MCP server.
 #[async_trait::async_trait]
 pub trait McpTool: Send + Sync {
     /// Unique tool name (e.g. `"madhyamas_get_traffic"`).

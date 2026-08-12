@@ -166,6 +166,10 @@ fn create_routes_inner(
         )
         .route(
             "/mocks/collections/{id}",
+            put(intercept_handlers::update_mock_collection),
+        )
+        .route(
+            "/mocks/collections/{id}",
             delete(intercept_handlers::delete_mock_collection),
         )
         .route(

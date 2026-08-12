@@ -144,6 +144,8 @@ pub enum ReplayCommands {
     Export(ReplayExportArgs),
     /// Show replay history
     History(ReplayListArgs),
+    /// Clear all replay history
+    HistoryClear,
 }
 
 impl ReplayCommands {
@@ -343,6 +345,11 @@ impl ReplayCommands {
                 } else {
                     print_replay_history(&result);
                 }
+            }
+            ReplayCommands::HistoryClear => {
+                let client = ApiClient::new(api_url);
+                client.delete_void("replay/history").await?;
+                println!("Cleared all replay history.");
             }
         }
         Ok(())

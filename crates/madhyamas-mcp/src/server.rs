@@ -5,21 +5,23 @@
 
 use std::io::{self, BufRead, Write};
 
+use reqwest::Client;
 use serde_json::{json, Value};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info};
 
-use crate::tools::{default_dyn_registry, DynToolRegistry, ToolExecutor, ToolRegistry};
+use crate::tools::{default_registry, DynToolRegistry};
 use crate::types::*;
 
 /// MCP Server for Madhyamas
 pub struct McpServer {
-    tool_registry: ToolRegistry,
-    /// Trait-based tool registry (new tools self-register here).
+    /// Trait-based tool registry (all tools self-register here).
     dyn_registry: DynToolRegistry,
     tokio_runtime: Runtime,
-    /// Cached ToolExecutor (reused across calls instead of fresh per invocation)
-    tool_executor: ToolExecutor,
+    /// HTTP client used for resource reads and passed to tool executions.
+    http_client: Client,
+    /// Madhyamas REST API base URL.
+    api_url: String,
 }
 
 impl McpServer {
@@ -32,13 +34,11 @@ impl McpServer {
 
         let tokio_runtime = Runtime::new().map_err(|e| McpError::ToolExecution(e.to_string()))?;
 
-        let tool_executor = ToolExecutor::new(config.api_url.clone(), http_client);
-
         Ok(Self {
-            tool_registry: ToolRegistry::new(),
-            dyn_registry: default_dyn_registry(),
+            dyn_registry: default_registry(),
             tokio_runtime,
-            tool_executor,
+            http_client,
+            api_url: config.api_url,
         })
     }
 
@@ -138,9 +138,7 @@ impl McpServer {
 
     /// Handle tools/list request
     fn handle_list_tools(&self, request: JsonRpcRequest) -> JsonRpcResponse {
-        // Merge legacy static tools with trait-based tools.
-        let mut tools = self.tool_registry.list_tools();
-        tools.extend(self.dyn_registry.list_tools());
+        let tools = self.dyn_registry.list_tools();
         let result = ListToolsResult { tools };
 
         JsonRpcResponse {
@@ -181,23 +179,16 @@ impl McpServer {
 
         debug!("Calling tool: {} with args: {:?}", tool_name, arguments);
 
-        // Try the trait-based registry first. If the tool isn't found
-        // there, fall back to the legacy executor match statement.
         let result = self.tokio_runtime.block_on(async {
-            if let Some(r) = self
-                .dyn_registry
-                .execute(
-                    &tool_name,
-                    self.tool_executor.client(),
-                    self.tool_executor.api_url(),
-                    &arguments,
-                )
+            self.dyn_registry
+                .execute(&tool_name, &self.http_client, &self.api_url, &arguments)
                 .await
-            {
-                return r;
-            }
-            self.tool_executor.execute(&tool_name, arguments).await
         });
+
+        let result = match result {
+            Some(r) => r,
+            None => Err(McpError::NotFound(format!("Unknown tool: {}", tool_name))),
+        };
 
         match result {
             Ok(content) => {
@@ -288,13 +279,21 @@ impl McpServer {
             }
         };
 
+        let client = &self.http_client;
+        let api_url = &self.api_url;
+
         let contents = self.tokio_runtime.block_on(async {
             match uri {
                 "madhyamas://traffic" => {
-                    let traffic = self
-                        .tool_executor
-                        .get_traffic(None, None, None, None)
-                        .await?;
+                    let resp = client
+                        .get(format!("{}/api/traffic", api_url))
+                        .send()
+                        .await
+                        .map_err(|e| McpError::Http(e.to_string()))?;
+                    let traffic: Value = resp
+                        .json()
+                        .await
+                        .map_err(|e| McpError::Parse(e.to_string()))?;
                     Ok(vec![ResourceContents {
                         uri: uri.to_string(),
                         mime_type: Some("application/json".to_string()),
@@ -303,7 +302,15 @@ impl McpServer {
                     }])
                 }
                 "madhyamas://sessions" => {
-                    let sessions = self.tool_executor.get_sessions().await?;
+                    let resp = client
+                        .get(format!("{}/api/sessions", api_url))
+                        .send()
+                        .await
+                        .map_err(|e| McpError::Http(e.to_string()))?;
+                    let sessions: Value = resp
+                        .json()
+                        .await
+                        .map_err(|e| McpError::Parse(e.to_string()))?;
                     Ok(vec![ResourceContents {
                         uri: uri.to_string(),
                         mime_type: Some("application/json".to_string()),
@@ -312,7 +319,15 @@ impl McpServer {
                     }])
                 }
                 "madhyamas://config" => {
-                    let config = self.tool_executor.get_config().await?;
+                    let resp = client
+                        .get(format!("{}/api/config", api_url))
+                        .send()
+                        .await
+                        .map_err(|e| McpError::Http(e.to_string()))?;
+                    let config: Value = resp
+                        .json()
+                        .await
+                        .map_err(|e| McpError::Parse(e.to_string()))?;
                     Ok(vec![ResourceContents {
                         uri: uri.to_string(),
                         mime_type: Some("application/json".to_string()),

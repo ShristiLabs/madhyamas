@@ -81,6 +81,42 @@ pub struct ScriptHistoryArgs {
     pub limit: usize,
 }
 
+#[derive(Debug, Args)]
+pub struct ScriptReorderArgs {
+    /// Script ID
+    pub id: String,
+
+    /// New priority position (lower = earlier in the chain)
+    #[arg(short, long)]
+    pub priority: i32,
+}
+
+#[derive(Debug, Args)]
+pub struct ScriptMatchPreviewArgs {
+    /// URL to test for script matches
+    #[arg(long)]
+    pub url: String,
+
+    /// HTTP method
+    #[arg(long, default_value = "GET")]
+    pub method: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ScriptConfigArgs {
+    /// Script execution timeout in milliseconds
+    #[arg(long)]
+    pub timeout_ms: Option<u64>,
+
+    /// Memory limit in MB
+    #[arg(long)]
+    pub memory_limit_mb: Option<u64>,
+
+    /// Enable console output capture
+    #[arg(long)]
+    pub capture_console: Option<bool>,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum ScriptCommands {
     /// List all scripts
@@ -101,6 +137,18 @@ pub enum ScriptCommands {
     Validate(ScriptValidateArgs),
     /// Show execution history for a script
     History(ScriptHistoryArgs),
+    /// Show execution history across all scripts
+    HistoryAll,
+    /// Clear execution history for a script
+    HistoryClear(ScriptIdArgs),
+    /// Reorder a script (change its priority)
+    Reorder(ScriptReorderArgs),
+    /// Preview which scripts would match a given request
+    MatchPreview(ScriptMatchPreviewArgs),
+    /// Get global script runtime configuration
+    Config,
+    /// Update global script runtime configuration
+    ConfigUpdate(ScriptConfigArgs),
 }
 
 impl ScriptCommands {
@@ -188,6 +236,52 @@ impl ScriptCommands {
                 let result = client
                     .get(&format!("scripts/{}/history?limit={}", args.id, args.limit))
                     .await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            ScriptCommands::HistoryAll => {
+                let result = client.get("scripts/history").await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            ScriptCommands::HistoryClear(args) => {
+                client
+                    .delete_void(&format!("scripts/{}/history", args.id))
+                    .await?;
+                println!("Cleared history for script {}.", args.id);
+            }
+            ScriptCommands::Reorder(args) => {
+                let body = json!({ "priority": args.priority });
+                client
+                    .post_void(&format!("scripts/{}/reorder", args.id), body)
+                    .await?;
+                println!(
+                    "Reordered script {} to priority {}.",
+                    args.id, args.priority
+                );
+            }
+            ScriptCommands::MatchPreview(args) => {
+                let body = json!({
+                    "url": args.url,
+                    "method": args.method,
+                });
+                let result = client.post("scripts/match-preview", body).await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            ScriptCommands::Config => {
+                let result = client.get("scripts/config").await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            ScriptCommands::ConfigUpdate(args) => {
+                let mut body = json!({});
+                if let Some(t) = args.timeout_ms {
+                    body["timeout_ms"] = json!(t);
+                }
+                if let Some(m) = args.memory_limit_mb {
+                    body["memory_limit_mb"] = json!(m);
+                }
+                if let Some(c) = args.capture_console {
+                    body["capture_console"] = json!(c);
+                }
+                let result = client.put("scripts/config", body).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
         }

@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::Subcommand;
 
 mod autosave;
+mod blocklist;
 mod breakpoints;
 mod capture;
 mod config;
@@ -20,8 +21,10 @@ mod scripts;
 mod sessions;
 mod throttle;
 mod traffic;
+mod wstraffic;
 
 use self::autosave::AutoSaveCommands;
+use self::blocklist::BlockListCommands;
 use self::breakpoints::BreakpointCommands;
 use self::capture::CaptureCommands;
 use self::config::ConfigCommands;
@@ -38,6 +41,7 @@ use self::scripts::ScriptCommands;
 use self::sessions::SessionCommands;
 use self::throttle::ThrottleCommands;
 use self::traffic::TrafficCommands;
+use self::wstraffic::WsTrafficCommands;
 
 /// Common API client for CLI commands
 pub struct ApiClient {
@@ -207,6 +211,38 @@ impl ApiClient {
         }
         Ok(())
     }
+
+    /// Execute a DELETE request with a JSON body.
+    pub async fn delete_with_body(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let url = format!("{}/api/{}", self.base_url, path);
+        let response = self
+            .client
+            .delete(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("API error: HTTP {} - {}", status, body);
+        }
+
+        // Handle 204 No Content gracefully.
+        if response.status() == reqwest::StatusCode::NO_CONTENT {
+            return Ok(serde_json::Value::Null);
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -262,6 +298,12 @@ pub enum Commands {
     /// Log rotation commands (rotate, status, config)
     #[command(subcommand)]
     Logs(LogsCommands),
+    /// Block list commands (block domains/patterns)
+    #[command(subcommand)]
+    Blocklist(BlockListCommands),
+    /// WebSocket traffic inspection commands
+    #[command(subcommand)]
+    WsTraffic(WsTrafficCommands),
 }
 
 impl Commands {
@@ -284,6 +326,8 @@ impl Commands {
             Commands::Autosave(cmd) => cmd.execute(api_url).await,
             Commands::Mirror(cmd) => cmd.execute(api_url).await,
             Commands::Logs(cmd) => cmd.execute(api_url).await,
+            Commands::Blocklist(cmd) => cmd.execute(api_url).await,
+            Commands::WsTraffic(cmd) => cmd.execute(api_url).await,
         }
     }
 }

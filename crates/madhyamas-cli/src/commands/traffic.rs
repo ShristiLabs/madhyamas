@@ -81,6 +81,8 @@ pub enum TrafficCommands {
     Clear,
     /// Import traffic from a HAR file into a new session
     ImportHar(TrafficImportHarArgs),
+    /// Show script execution traces for a traffic entry
+    ScriptTraces(TrafficGetArgs),
 }
 
 impl TrafficCommands {
@@ -186,6 +188,13 @@ impl TrafficCommands {
                         }
                     }
                 }
+            }
+            TrafficCommands::ScriptTraces(args) => {
+                let client = ApiClient::new(api_url);
+                let result = client
+                    .get(&format!("traffic/{}/script-traces", args.id))
+                    .await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
             }
         }
         Ok(())

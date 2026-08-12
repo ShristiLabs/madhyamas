@@ -41,7 +41,7 @@ madhyamas                          # Start proxy + web UI (default subcommand)
 madhyamas mcp                      # Run as MCP server (stdio transport)
 madhyamas traffic list             # CLI: list captured traffic
 madhyamas export har --output f.har # CLI: export HAR
-madhyamas --help                   # See all 58 CLI subcommands
+madhyamas --help                   # See all 128 CLI subcommands
 ```
 
 Full CLI reference: `skills/madhyamas/references/cli-commands.md`.
@@ -282,7 +282,7 @@ new-dep.workspace = true
 
 - [README.md](README.md) - Quick start
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - System architecture
-- [docs/API.md](docs/API.md) - Full API reference (130+ endpoints)
+- [docs/API.md](docs/API.md) - Full API reference (177 endpoints)
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) - Development guide
 - [agents/README.md](agents/README.md) - Specialized AI agents (design, install, validate, adding new agents)
 - [skills/README.md](skills/README.md) - Published AI skill package (@madhyamas/skill)

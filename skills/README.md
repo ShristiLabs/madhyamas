@@ -7,9 +7,9 @@ AI agent skills package providing procedural knowledge for using the [Madhyamas]
 
 ## What's Included
 
-- **67 MCP tools** — Full coverage of traffic inspection, mocking, breakpoints, rewrites, throttling, replay, sessions, gRPC, scripting, and plugins
-- **58 CLI subcommands** — Complete command-line interface reference
-- **130+ REST API endpoints** — All HTTP endpoints with examples
+- **135 MCP tools** — Full coverage of traffic inspection, mocking, breakpoints, rewrites, throttling, replay, sessions, gRPC, scripting, and plugins
+- **128 CLI subcommands** — Complete command-line interface reference
+- **177 REST API endpoints** — All HTTP endpoints with examples
 - **18 workflow guides** — Step-by-step procedures for common debugging tasks
 - **Multi-harness support** — Works with Claude, Windsurf, Cursor, Devin, OpenCode, CommandCode, and any Agent Skills-compatible harness
 
@@ -97,9 +97,9 @@ skills/madhyamas/
 ├── .npmignore                  # npm publish exclusions
 ├── references/                 # Detailed reference files (loaded on demand)
 │   ├── setup.md                # Installation, configuration, CA certs
-│   ├── mcp-tools.md            # All 67 MCP tools with parameters
-│   ├── cli-commands.md         # All 58 CLI subcommands with flags
-│   ├── rest-api.md             # All 130+ REST API endpoints
+│   ├── mcp-tools.md            # All 135 MCP tools with parameters
+│   ├── cli-commands.md         # All 128 CLI subcommands with flags
+│   ├── rest-api.md             # All 177 REST API endpoints
 │   ├── traffic-inspection.md   # Filtering, searching, analyzing traffic
 │   ├── mocking.md              # Creating and managing mock responses
 │   ├── breakpoints.md          # Pausing and modifying traffic
@@ -191,8 +191,9 @@ Checks performed:
 - SKILL.md is under 500 lines
 - All referenced files in SKILL.md exist
 - No emojis in markdown files
-- MCP tool count matches expected (~67)
-- CLI command count matches expected (~58)
+- MCP tool count matches code (135)
+- CLI command count matches code (128)
+- REST endpoint count matches code (177)
 - Scripts are executable
 
 ## Publishing
