@@ -3,9 +3,21 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Get the default data directory for Madhyamas
-/// Uses ~/.madhyamas on all platforms
+/// Get the default data directory for Madhyamas.
+///
+/// Honors the `MADHYAMAS_DATA_DIR` environment variable when set, so the
+/// Docker image (`ENV MADHYAMAS_DATA_DIR=/data`) and the systemd unit
+/// (`Environment=MADHYAMAS_DATA_DIR=/var/lib/madhyamas`) relocate all
+/// state — certs, traffic database, logs, config, autosave backups, and
+/// mirror output — onto a single mounted volume. Defaults to
+/// `~/.madhyamas` on all platforms.
 fn get_data_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("MADHYAMAS_DATA_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
     if let Some(home) = dirs::home_dir() {
         home.join(".madhyamas")
     } else {
