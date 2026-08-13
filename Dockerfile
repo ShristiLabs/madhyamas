@@ -28,9 +28,10 @@ COPY crates/madhyamas-api/Cargo.toml ./crates/madhyamas-api/
 COPY crates/madhyamas-cli/Cargo.toml ./crates/madhyamas-cli/
 COPY crates/madhyamas-mcp/Cargo.toml ./crates/madhyamas-mcp/
 COPY crates/madhyamas-plugin-sdk/Cargo.toml ./crates/madhyamas-plugin-sdk/
+COPY crates/madhyamas-enterprise/Cargo.toml ./crates/madhyamas-enterprise/
 
 # Create dummy files to build dependencies
-RUN mkdir -p crates/madhyamas/src crates/madhyamas-core/src crates/madhyamas-api/src crates/madhyamas-cli/src crates/madhyamas-mcp/src crates/madhyamas-plugin-sdk/src
+RUN mkdir -p crates/madhyamas/src crates/madhyamas-core/src crates/madhyamas-api/src crates/madhyamas-cli/src crates/madhyamas-mcp/src crates/madhyamas-plugin-sdk/src crates/madhyamas-enterprise/src
 RUN echo "fn main() {}" > crates/madhyamas/src/main.rs
 RUN echo "fn main() {}" > crates/madhyamas-core/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-api/src/lib.rs
@@ -39,6 +40,7 @@ RUN echo "pub fn dummy() {}" > crates/madhyamas-cli/src/lib.rs
 RUN echo "pub fn dummy() {}" > crates/madhyamas-mcp/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-mcp/src/main.rs
 RUN echo "pub fn dummy() {}" > crates/madhyamas-plugin-sdk/src/lib.rs
+RUN echo "pub fn dummy() {}" > crates/madhyamas-enterprise/src/lib.rs
 
 # Copy web dist for rust-embed (needed at compile time)
 COPY --from=frontend-builder /app/web/dist ./web/dist
@@ -53,6 +55,7 @@ COPY crates/madhyamas-api/src ./crates/madhyamas-api/src
 COPY crates/madhyamas-cli/src ./crates/madhyamas-cli/src
 COPY crates/madhyamas-mcp/src ./crates/madhyamas-mcp/src
 COPY crates/madhyamas-plugin-sdk/src ./crates/madhyamas-plugin-sdk/src
+COPY crates/madhyamas-enterprise/src ./crates/madhyamas-enterprise/src
 COPY crates/madhyamas-core/tests ./crates/madhyamas-core/tests
 
 # Touch source files to invalidate cache and force rebuild

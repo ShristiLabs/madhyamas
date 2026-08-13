@@ -213,6 +213,23 @@ struct Args {
         global = true
     )]
     rate_limit_burst: u32,
+
+    /// Enable enterprise authentication (JWT + API keys). Only effective
+    /// when the binary is built with the `enterprise` feature (the default).
+    /// In the OSS build this flag is accepted but has no effect.
+    #[arg(long, env = "MADHYAMAS_ENABLE_AUTH", global = true)]
+    enable_auth: bool,
+
+    /// JWT secret used for signing/validating tokens. If not provided, a
+    /// default development secret is used. **Change this in production.**
+    /// The secret is never logged.
+    #[arg(long, env = "MADHYAMAS_JWT_SECRET", global = true)]
+    jwt_secret: Option<String>,
+
+    /// Path to a license file (enterprise tier). Accepted but not yet
+    /// enforced — license verification is implemented in Phase 3.
+    #[arg(long, env = "MADHYAMAS_LICENSE_FILE", global = true)]
+    license_file: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -833,13 +850,49 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     #[cfg(feature = "plugins")]
     let api_state = api_state.with_plugin_manager(plugin_manager);
 
+    // Enterprise tier: construct EnterpriseState, inject the three trait
+    // impls (AuthProvider, Authorizer, AuditSink) into AppState, and build
+    // the enterprise router to merge under /api. This entire block is
+    // compiled out in the OSS build (--no-default-features), so no
+    // enterprise code is linked.
+    #[cfg(feature = "enterprise")]
+    let (api_state, enterprise_router) = {
+        let jwt_secret = args.jwt_secret.clone().unwrap_or_else(|| {
+            tracing::warn!(
+                "No --jwt-secret provided; using default development secret. \
+                 Set --jwt-secret or MADHYAMAS_JWT_SECRET in production."
+            );
+            madhyamas_enterprise::AuthConfig::default().jwt_secret
+        });
+        let auth_config = madhyamas_enterprise::AuthConfig {
+            enabled: args.enable_auth,
+            jwt_secret,
+            ..madhyamas_enterprise::AuthConfig::default()
+        };
+        if let Some(ref license_path) = args.license_file {
+            tracing::info!(
+                "License file specified: {:?} (enforcement deferred to Phase 3)",
+                license_path
+            );
+        }
+        let enterprise = madhyamas_enterprise::EnterpriseState::new(auth_config);
+        let api_state = api_state
+            .with_auth_provider(enterprise.auth.clone())
+            .with_authorizer(enterprise.rbac.clone())
+            .with_audit_sink(enterprise.audit.clone());
+        let router = madhyamas_enterprise::create_enterprise_router(Some(enterprise.auth.clone()));
+        (api_state, Some(router))
+    };
+    #[cfg(not(feature = "enterprise"))]
+    let enterprise_router: Option<axum::Router<std::sync::Arc<madhyamas_api::AppState>>> = None;
+
     let rate_limit_config = if args.rate_limit {
         RateLimitConfig::enabled(args.rate_limit_rps, args.rate_limit_burst)
     } else {
         RateLimitConfig::disabled()
     };
 
-    let app = create_router(api_state, rate_limit_config);
+    let app = create_router(api_state, rate_limit_config, enterprise_router);
 
     let api_addr = config.api_addr();
     info!("Starting API server on {}", api_addr);

@@ -26,6 +26,7 @@ pub use audit::{AuditEvent, AuditEventType, AuditFilter, AuditLogger};
 pub use auth::{ApiKey, AuthConfig, AuthManager, JwtClaims};
 pub use enterprise_error::EnterpriseError;
 pub use rbac::{Permission, RbacManager, Resource, ResourceType};
+pub use router::create_enterprise_router;
 pub use user::{User, UserRole, UserStatus};
 
 use madhyamas_api::auth::{AuditError, AuthError};

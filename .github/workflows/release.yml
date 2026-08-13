@@ -860,7 +860,7 @@ jobs:
           # doesn't exist in the published tarball)
           cargo publish -p madhyamas-core --token "$CRATES_TOKEN"
           sleep 30
-          cargo publish -p madhyamas-api --no-default-features --features grpc,scripting,plugins,enterprise --token "$CRATES_TOKEN"
+          cargo publish -p madhyamas-api --no-default-features --features grpc,scripting,plugins --token "$CRATES_TOKEN"
           sleep 30
           cargo publish -p madhyamas-cli --token "$CRATES_TOKEN"
           sleep 30

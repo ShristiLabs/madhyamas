@@ -314,13 +314,28 @@ impl RateLimitConfig {
 /// `rate_limit` controls whether the [`tower_governor`] rate-limiting layer
 /// is applied. When [`RateLimitConfig::enabled`] is `false` (the default),
 /// no rate limiting is applied.
-pub fn create_router(state: AppState, rate_limit: RateLimitConfig) -> Router<()> {
+///
+/// `enterprise_router` is an optional set of additional API routes (keyed on
+/// `Arc<AppState>`) to merge under the `/api` prefix. The main binary passes
+/// the enterprise router when the `enterprise` feature is enabled and `None`
+/// for the OSS build, keeping all `#[cfg]` gates in the binary rather than
+/// the API crate.
+pub fn create_router(
+    state: AppState,
+    rate_limit: RateLimitConfig,
+    enterprise_router: Option<Router<Arc<AppState>>>,
+) -> Router<()> {
     let state = Arc::new(state);
+
+    let mut api_routes = routes::create_routes();
+    if let Some(ent) = enterprise_router {
+        api_routes = api_routes.merge(ent);
+    }
 
     let mut router = Router::new()
         // Top-level health check for quick status
         .route("/health", axum::routing::get(|| async { "OK" }))
-        .nest("/api", routes::create_routes())
+        .nest("/api", api_routes)
         // Serve embedded web assets (compiled into the binary via rust-embed).
         // Falls back to disk-based serving via MADHYAMAS_WEB_DIR for dev.
         .fallback(embedded_assets::embedded_fallback)

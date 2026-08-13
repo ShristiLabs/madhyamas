@@ -2430,6 +2430,7 @@ dependencies = [
  "madhyamas-api",
  "madhyamas-cli",
  "madhyamas-core",
+ "madhyamas-enterprise",
  "madhyamas-mcp",
  "parking_lot",
  "reqwest",
