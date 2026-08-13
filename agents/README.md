@@ -31,6 +31,23 @@ for its specific activity.
 | `plugin-engineer` | yellow | read, write, edit, grep, glob, exec | Build, test, sign, document WASM plugins |
 | `ai-agent-tooling` | red | read, write, edit, grep, glob, exec | Sync MCP tools, CLI subcommands, skill package |
 
+### Enterprise Implementation Pipeline
+
+These 7 agents form a pipeline for implementing the enterprise tier
+described in `docs/ENTERPRISE_IMPLEMENTATION_PLAN.md`. The orchestrator
+coordinates the others in a chain: issues -> developer -> tester +
+reviewer (parallel) -> regression -> committer.
+
+| Agent | Color | Tools | Purpose |
+|---|---|---|---|
+| `enterprise-orchestrator` | cyan | full | Coordinate the pipeline, monitor status, log progress |
+| `enterprise-issues` | magenta | full | Create GitHub issues with context, acceptance criteria, approach |
+| `enterprise-developer` | green | full | Read issues, implement enterprise features following the plan |
+| `enterprise-reviewer` | blue | read, grep, glob, exec | Review changes for correctness, security, performance, scalability |
+| `enterprise-tester` | yellow | full | Generate unit tests, ensure 80%+ coverage on changed modules |
+| `enterprise-regression` | red | full | Build both tiers, run all tests, verify no regressions |
+| `enterprise-committer` | white | full | Format, stage, generate commit message, commit |
+
 ## Directory Structure
 
 ```
@@ -42,12 +59,20 @@ agents/
 │   ├── developer.md
 │   ├── reviewer.md
 │   ├── plugin-engineer.md
-│   └── ai-agent-tooling.md
+│   ├── ai-agent-tooling.md
+│   ├── enterprise-orchestrator.md    # Enterprise pipeline coordinator
+│   ├── enterprise-issues.md          # GitHub issue creation
+│   ├── enterprise-developer.md       # Enterprise feature implementation
+│   ├── enterprise-reviewer.md        # Enterprise code review (read-only)
+│   ├── enterprise-tester.md          # Unit test generation (80%+ coverage)
+│   ├── enterprise-regression.md      # Build + regression verification
+│   └── enterprise-committer.md       # Format, stage, commit
 ├── references/                    # Shared, loaded on demand (keeps prompts lean)
 │   ├── project-conventions.md     # Rust workspace + React conventions, build/test cmds
 │   ├── docs-site-structure.md     # docs-site/ layout, IA, frontmatter, SEO rules
 │   ├── plugin-workflow.md         # SDK + examples + test + doc workflow
-│   └── ai-agent-tooling-workflow.md  # MCP/CLI/skill sync checklist
+│   ├── ai-agent-tooling-workflow.md  # MCP/CLI/skill sync checklist
+│   └── enterprise-workflow.md     # Enterprise pipeline, handoff protocol, phases
 └── scripts/
     ├── install.sh                 # Fan out to all harness locations (subagents + skills)
     └── validate.sh                # Check frontmatter, refs, agnosticism, line counts
