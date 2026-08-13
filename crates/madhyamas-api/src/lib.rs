@@ -1,5 +1,6 @@
 //! Madhyamas API - REST and WebSocket API for the web UI
 
+pub mod auth;
 pub mod embedded_assets;
 #[cfg(feature = "enterprise")]
 pub mod enterprise_handlers;
@@ -13,6 +14,11 @@ pub mod routes;
 pub mod tools_handlers;
 pub mod validation;
 pub mod ws;
+
+pub use auth::{
+    AuditError, AuditEvent, AuditEventType, AuditFilter, AuditSink, AuthError, AuthMethod,
+    AuthProvider, Authorizer, Identity, Permission, ResourceType,
+};
 
 use axum::Router;
 #[cfg(feature = "enterprise")]
@@ -101,6 +107,20 @@ pub struct AppState {
     /// routes.
     #[cfg(feature = "enterprise")]
     pub auth_service: Option<Arc<AuthManager>>,
+    /// Pluggable authentication provider (trait object). `None` in the
+    /// simple/OSS tier; `Some` in the enterprise tier once the enterprise
+    /// crate injects its `AuthManager`-backed implementation (Phase 1b).
+    pub auth_provider: Option<Arc<dyn AuthProvider + Send + Sync>>,
+    /// Pluggable authorization checker (trait object). `None` in the
+    /// simple/OSS tier (allow-all); `Some` in the enterprise tier once the
+    /// enterprise crate injects its `RbacManager`-backed implementation
+    /// (Phase 1b).
+    pub authorizer: Option<Arc<dyn Authorizer + Send + Sync>>,
+    /// Pluggable audit sink (trait object). `None` in the simple/OSS tier
+    /// (audit events dropped); `Some` in the enterprise tier once the
+    /// enterprise crate injects its `AuditLogger`-backed implementation
+    /// (Phase 1b).
+    pub audit_sink: Option<Arc<dyn AuditSink + Send + Sync>>,
 }
 
 impl AppState {
@@ -132,6 +152,9 @@ impl AppState {
             log_handle: None,
             #[cfg(feature = "enterprise")]
             auth_service: None,
+            auth_provider: None,
+            authorizer: None,
+            audit_sink: None,
         }
     }
 
@@ -234,6 +257,30 @@ impl AppState {
     #[cfg(feature = "enterprise")]
     pub fn with_auth_service(mut self, auth_service: Arc<AuthManager>) -> Self {
         self.auth_service = Some(auth_service);
+        self
+    }
+
+    /// Attach a pluggable authentication provider. When set, the API layer
+    /// can validate JWT/API-key credentials via the [`AuthProvider`] trait
+    /// without depending on enterprise concrete types.
+    pub fn with_auth_provider(mut self, provider: Arc<dyn AuthProvider + Send + Sync>) -> Self {
+        self.auth_provider = Some(provider);
+        self
+    }
+
+    /// Attach a pluggable authorization checker. When set, the API layer
+    /// can enforce RBAC via the [`Authorizer`] trait without depending on
+    /// enterprise concrete types. When unset, authorization is allow-all.
+    pub fn with_authorizer(mut self, authorizer: Arc<dyn Authorizer + Send + Sync>) -> Self {
+        self.authorizer = Some(authorizer);
+        self
+    }
+
+    /// Attach a pluggable audit sink. When set, the API layer can record
+    /// and query audit events via the [`AuditSink`] trait without depending
+    /// on enterprise concrete types. When unset, audit events are dropped.
+    pub fn with_audit_sink(mut self, sink: Arc<dyn AuditSink + Send + Sync>) -> Self {
+        self.audit_sink = Some(sink);
         self
     }
 }

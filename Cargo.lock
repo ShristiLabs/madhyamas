@@ -2448,6 +2448,7 @@ name = "madhyamas-api"
 version = "0.1.6"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "axum-extra",
  "bytes",

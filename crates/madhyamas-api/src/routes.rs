@@ -57,10 +57,6 @@ fn create_routes_inner(
         // Traffic endpoints
         .route("/traffic", get(handlers::get_traffic))
         .route("/traffic/{id}", get(handlers::get_traffic_entry))
-        .route(
-            "/traffic/{id}/script-traces",
-            get(tools_handlers::get_traffic_script_traces),
-        )
         .route("/traffic/clear", post(handlers::clear_traffic))
         .route("/traffic/count", get(handlers::get_traffic_count))
         .route("/traffic/import/har", post(handlers::import_traffic_har))
@@ -371,6 +367,10 @@ fn create_routes_inner(
     // === Scripting System ===
     #[cfg(feature = "scripting")]
     let router = router
+        .route(
+            "/traffic/{id}/script-traces",
+            get(tools_handlers::get_traffic_script_traces),
+        )
         .route("/scripts", get(tools_handlers::get_scripts))
         .route("/scripts", post(tools_handlers::create_script))
         .route(

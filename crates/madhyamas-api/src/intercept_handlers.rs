@@ -355,7 +355,10 @@ pub async fn create_mock_from_traffic(
                 let mock_response = MockResponse {
                     status_code: response.status_code,
                     headers: response.headers.clone(),
-                    body: response.body.as_ref().and_then(|b| String::from_utf8(b.clone()).ok()),
+                    body: response
+                        .body
+                        .as_ref()
+                        .and_then(|b| String::from_utf8(b.clone()).ok()),
                     ..Default::default()
                 };
 
@@ -1284,10 +1287,9 @@ pub async fn batch_save_requests_from_traffic(
         match state.traffic_store.get_by_id(entry_id) {
             Ok(Some(entry)) => {
                 let name = match &req.name_prefix {
-                    Some(prefix) => format!(
-                        "{}: {} {}",
-                        prefix, entry.request.method, entry.request.url
-                    ),
+                    Some(prefix) => {
+                        format!("{}: {} {}", prefix, entry.request.method, entry.request.url)
+                    }
                     None => format!("{} {}", entry.request.method, entry.request.url),
                 };
                 let saved = SavedRequest::from_traffic(entry_id, entry.request.clone());

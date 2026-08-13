@@ -22,6 +22,7 @@ embedded-assets = ["dep:rust-embed"]
 
 [dependencies]
 madhyamas-core.workspace = true
+async-trait.workspace = true
 tokio.workspace = true
 axum.workspace = true
 axum-extra.workspace = true
