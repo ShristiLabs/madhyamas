@@ -3,8 +3,6 @@
 pub mod access_control;
 pub mod auto_save;
 pub mod config;
-#[cfg(feature = "enterprise")]
-pub mod enterprise;
 pub mod error;
 pub mod extension;
 #[cfg(feature = "grpc")]
@@ -148,7 +146,4 @@ pub enum Error {
     Config(String),
     #[error("Channel error: {0}")]
     Channel(String),
-    #[cfg(feature = "enterprise")]
-    #[error("Enterprise error: {0}")]
-    Enterprise(#[from] enterprise::EnterpriseError),
 }
