@@ -19,6 +19,7 @@ pub mod replay;
 #[cfg(feature = "scripting")]
 pub mod scripting;
 pub mod session;
+pub mod storage;
 pub mod tls;
 pub mod traffic;
 pub mod websocket;
@@ -123,6 +124,13 @@ pub use performance::{
     MemoryManager, MemoryPressure, MemoryStats, Metrics, MetricsCollector, PerformanceMonitor,
     PerformanceStats,
 };
+
+// Re-exports from storage (Phase 2b async backend traits)
+#[cfg(feature = "plugins")]
+pub use storage::PluginStoreBackend;
+#[cfg(feature = "scripting")]
+pub use storage::ScriptStoreBackend;
+pub use storage::{ConfigStoreBackend, InterceptStoreBackend, TrafficStoreBackend};
 
 /// Result type
 pub type Result<T> = std::result::Result<T, Error>;
