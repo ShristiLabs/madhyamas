@@ -12,7 +12,8 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 1c | #31 | done | skipped | approved | done | committed (04b0db3) | done |
 | 1d | #32 | done | skipped | approved | done | committed (6948ac6) | done |
 | 1e | #33 | done | skipped | approved | done (routes verified) | committed (8f3229c) | done |
-| 2a | #34 | — | — | — | — | — | pending |
+| 2a | #34 | done | skipped | approved | done (handlers return real data) | committed (e960a8b) | done |
+| 2b | #35 | — | — | — | — | — | pending |
 
 ## Agent Log
 
@@ -96,3 +97,16 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 - madhyamas-api has zero enterprise cfg gates (auth.rs traits retained)
 - OSS binary has no enterprise code
 - Both builds green, clippy clean, tests pass
+
+### 2026-08-13 — enterprise-developer (Phase 2a, #34)
+- Created EnterpriseStore async trait + SqliteEnterpriseStore (sqlx::SqlitePool) in enterprise crate
+- Row types (UserRecord, ApiKeyRecord, AuthSession, AuditEventRecord, UserUpdate, AuditStats) with sqlx::FromRow
+- Inline DDL for users/api_keys/auth_sessions/audit_events tables
+- EnterpriseState.store field + with_store() builder; main.rs constructs SqlitePool + store
+- Handlers wired to store via axum Extension (api stays decoupled from enterprise)
+- All 6 NOT_IMPLEMENTED stubs replaced; login/create_user/list_users/audit return real data
+- Added sqlx workspace dep; SHA-256 password hash interim (Argon2id deferred to Phase 4)
+- BUILD_OSS: pass, BUILD_ENTERPRISE: pass, CLIPPY: pass, TESTS: 487 pass
+- curl verified: /api/users [], POST creates user, /auth/login 200/401, /api/audit/stats real
+- Commit: e960a8b
+- Status: completed
