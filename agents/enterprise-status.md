@@ -1,7 +1,7 @@
 # Enterprise Implementation Status
 
 ## Current Phase
-Phase 1: Extract madhyamas-enterprise crate (next)
+Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 
 ## Phase Progress
 | Sub-phase | Issue | Developer | Tester | Reviewer | Regression | Committer | Status |
@@ -11,7 +11,8 @@ Phase 1: Extract madhyamas-enterprise crate (next)
 | 1b | #30 | done | skipped (no-test rule) | approved (spot-checked trait impls) | done (build/test/clippy pass) | committed | done |
 | 1c | #31 | done | skipped | approved | done | committed (04b0db3) | done |
 | 1d | #32 | done | skipped | approved | done | committed (6948ac6) | done |
-| 1e | #33 | — | — | — | — | — | pending |
+| 1e | #33 | done | skipped | approved | done (routes verified) | committed (8f3229c) | done |
+| 2a | #34 | — | — | — | — | — | pending |
 
 ## Agent Log
 
@@ -76,3 +77,22 @@ Phase 1: Extract madhyamas-enterprise crate (next)
 - BUILD_OSS: pass, BUILD_ENTERPRISE: pass, CLIPPY: pass, TESTS: 487 pass
 - Two commits: 04b0db3 (1c), 6948ac6 (1d)
 - Status: completed
+
+### 2026-08-13 — enterprise-developer (Phase 1e, #33)
+- Added madhyamas-enterprise as optional dep; enterprise feature = ["dep:madhyamas-enterprise"]
+- main.rs: #[cfg(feature="enterprise")] block constructs EnterpriseState, injects trait impls into AppState, builds enterprise router; #[cfg(not)] sets None for OSS
+- CLI flags: --enable-auth, --jwt-secret, --license-file (with env vars); secret never logged
+- api create_router accepts optional enterprise router to merge
+- Dockerfile + release.yml updated
+- BUILD_OSS: pass, BUILD_ENTERPRISE: pass, CLIPPY: pass, TESTS: pass
+- Route verification: enterprise binary mounts /api/auth/*, /api/users, /api/audit; OSS binary 404s (SPA fallback)
+- cfg gate count: 2 (in main.rs only)
+- Commit: 8f3229c
+- Status: completed
+
+## Phase 1 (Crate Extraction) COMPLETE — exit criteria met:
+- madhyamas-enterprise crate compiles standalone
+- madhyamas-core has zero enterprise references
+- madhyamas-api has zero enterprise cfg gates (auth.rs traits retained)
+- OSS binary has no enterprise code
+- Both builds green, clippy clean, tests pass
