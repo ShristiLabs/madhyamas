@@ -8,9 +8,8 @@
 //! them via the [`crate::AppState`] builder methods.
 //!
 //! The trait method signatures mirror the existing concrete implementations
-//! in `madhyamas-core::enterprise` (`AuthManager`, `RbacManager`,
-//! `AuditLogger`) so Phase 1b can implement these traits with minimal
-//! adapter code.
+//! in the enterprise crate (`AuthManager`, `RbacManager`, `AuditLogger`) so
+//! Phase 1b can implement these traits with minimal adapter code.
 
 use std::collections::HashMap;
 
@@ -21,9 +20,9 @@ use thiserror::Error;
 
 /// Error returned by [`AuthProvider`] and [`Authorizer`] operations.
 ///
-/// Mirrors the auth/permission variants of
-/// `madhyamas_core::enterprise::EnterpriseError` so the enterprise crate can
-/// map its existing errors with `From`.
+/// Mirrors the auth/permission variants of the enterprise crate's
+/// `EnterpriseError` so the enterprise crate can map its existing errors
+/// with `From`.
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum AuthError {
     /// Authentication failed (invalid credentials, unknown user, etc.).
@@ -83,9 +82,9 @@ pub enum AuthMethod {
 }
 
 /// Authenticated user identity injected into request extensions by auth
-/// middleware. Field names match [`madhyamas_core::enterprise::User`] and
-/// [`madhyamas_core::enterprise::JwtClaims`] so the enterprise crate can
-/// construct this from either source with no translation.
+/// middleware. Field names match the enterprise crate's `User` and
+/// `JwtClaims` types so the enterprise crate can construct this from either
+/// source with no translation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
     /// User ID (JWT `sub` or API key owner).
@@ -110,7 +109,7 @@ pub struct Identity {
 
 /// Resource type a permission check applies to.
 ///
-/// This is a superset of [`madhyamas_core::enterprise::ResourceType`]: the
+/// This is a superset of the enterprise crate's `ResourceType`: the
 /// original engine-level resources plus the enterprise-only resources
 /// (`User`, `Audit`, `License`) that the RBAC matrix will govern once the
 /// enterprise crate is extracted.
@@ -143,7 +142,7 @@ pub enum ResourceType {
 
 /// Permission action a role may perform on a [`ResourceType`].
 ///
-/// Mirrors [`madhyamas_core::enterprise::Permission`] with an added `Admin`
+/// Mirrors the enterprise crate's `Permission` with an added `Admin`
 /// variant for enterprise-only administrative actions (user management,
 /// license management).
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Serialize, Deserialize)]
@@ -161,9 +160,8 @@ pub enum Permission {
     Admin,
 }
 
-/// Audit event type, mirroring
-/// [`madhyamas_core::enterprise::AuditEventType`] plus an `Admin` variant
-/// for enterprise administrative actions.
+/// Audit event type, mirroring the enterprise crate's `AuditEventType` plus
+/// an `Admin` variant for enterprise administrative actions.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditEventType {
@@ -197,9 +195,9 @@ pub enum AuditEventType {
     Custom,
 }
 
-/// Audit event record. Field names match
-/// [`madhyamas_core::enterprise::AuditEvent`] so the enterprise crate can
-/// convert between them with `From`/`Into`.
+/// Audit event record. Field names match the enterprise crate's
+/// `AuditEvent` so the enterprise crate can convert between them with
+/// `From`/`Into`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
     /// Unique event ID.
@@ -222,7 +220,7 @@ pub struct AuditEvent {
 
 /// Filter for querying audit events via [`AuditSink::query_events`].
 ///
-/// Mirrors [`madhyamas_core::enterprise::AuditFilter`].
+/// Mirrors the enterprise crate's `AuditFilter`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AuditFilter {
     /// Filter by event type.

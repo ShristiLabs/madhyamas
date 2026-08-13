@@ -1,58 +1,23 @@
 //! API routes
 
-#[cfg(feature = "enterprise")]
-use axum::middleware::from_fn_with_state;
 use axum::{
     routing::{delete, get, patch, post, put},
     Router,
 };
-#[cfg(feature = "enterprise")]
-use madhyamas_core::enterprise::AuthManager;
 use std::sync::Arc;
 
-#[cfg(feature = "enterprise")]
-use super::enterprise_handlers;
 use super::handlers;
 use super::intercept_handlers;
-#[cfg(feature = "enterprise")]
-use super::middleware;
 #[cfg(any(feature = "grpc", feature = "scripting", feature = "plugins"))]
 use super::tools_handlers;
 use super::AppState;
 
 /// Create API routes
 pub fn create_routes() -> Router<Arc<AppState>> {
-    #[cfg(feature = "enterprise")]
-    {
-        create_routes_inner(false, None)
-    }
-    #[cfg(not(feature = "enterprise"))]
-    {
-        create_routes_inner()
-    }
+    create_routes_inner()
 }
 
-/// Create API routes with optional enterprise endpoints enabled.
-///
-/// When `enabled` is `true` **and** `auth_service` is provided, JWT
-/// authentication is enforced on the enterprise routes via
-/// [`middleware::auth_middleware`]. Public enterprise routes (login, detailed
-/// health) bypass the check. When `enabled` is `true` but no auth service is
-/// supplied, enterprise routes are mounted without authentication (useful for
-/// development). When `enabled` is `false`, enterprise routes are not mounted
-/// at all and `auth_service` is ignored.
-#[cfg(feature = "enterprise")]
-pub fn create_routes_with_enterprise(
-    enabled: bool,
-    auth_service: Option<Arc<AuthManager>>,
-) -> Router<Arc<AppState>> {
-    create_routes_inner(enabled, auth_service)
-}
-
-fn create_routes_inner(
-    #[cfg(feature = "enterprise")] enterprise_enabled: bool,
-    #[cfg(feature = "enterprise")] auth_service: Option<Arc<AuthManager>>,
-) -> Router<Arc<AppState>> {
+fn create_routes_inner() -> Router<Arc<AppState>> {
     let router = Router::new()
         // Traffic endpoints
         .route("/traffic", get(handlers::get_traffic))
@@ -463,86 +428,6 @@ fn create_routes_inner(
             get(tools_handlers::list_plugin_templates),
         )
         .route("/plugins/scaffold", post(tools_handlers::scaffold_plugin));
-
-    // === Enterprise features (conditionally enabled) ===
-    #[cfg(feature = "enterprise")]
-    {
-        if enterprise_enabled {
-            let enterprise_router = router
-                // Performance & Monitoring
-                .route("/metrics", get(enterprise_handlers::get_metrics))
-                .route(
-                    "/health/detailed",
-                    get(enterprise_handlers::get_health_check),
-                )
-                .route(
-                    "/performance",
-                    get(enterprise_handlers::get_performance_stats),
-                )
-                // Authentication
-                .route("/auth/login", post(enterprise_handlers::login))
-                .route("/auth/logout", post(enterprise_handlers::logout))
-                .route("/auth/me", get(enterprise_handlers::get_current_user))
-                .route("/auth/validate", post(enterprise_handlers::validate_token))
-                .route("/auth/api-keys", get(enterprise_handlers::get_api_keys))
-                .route("/auth/api-keys", post(enterprise_handlers::create_api_key))
-                .route(
-                    "/auth/api-keys/{id}",
-                    delete(enterprise_handlers::revoke_api_key),
-                )
-                // User Management
-                .route("/users", get(enterprise_handlers::get_users))
-                .route("/users", post(enterprise_handlers::create_user))
-                .route("/users/{id}", get(enterprise_handlers::get_user))
-                .route("/users/{id}", put(enterprise_handlers::update_user))
-                .route("/users/{id}", delete(enterprise_handlers::delete_user))
-                // RBAC
-                .route("/rbac/roles", get(enterprise_handlers::get_roles))
-                .route(
-                    "/rbac/permissions",
-                    get(enterprise_handlers::get_permissions),
-                )
-                .route("/rbac/check", post(enterprise_handlers::check_permission))
-                // Audit Logs
-                .route("/audit", get(enterprise_handlers::get_audit_events))
-                .route("/audit/stats", get(enterprise_handlers::get_audit_stats))
-                .route(
-                    "/audit/export",
-                    get(enterprise_handlers::export_audit_events),
-                )
-                .route(
-                    "/audit/clear",
-                    delete(enterprise_handlers::clear_audit_events),
-                )
-                // Onboarding
-                .route(
-                    "/onboarding",
-                    get(enterprise_handlers::get_onboarding_status),
-                )
-                .route(
-                    "/onboarding/complete",
-                    post(enterprise_handlers::complete_onboarding_step),
-                )
-                .route(
-                    "/onboarding/skip",
-                    post(enterprise_handlers::skip_onboarding),
-                )
-                // Configuration
-                .route("/config/export", get(enterprise_handlers::export_config))
-                .route("/config/import", post(enterprise_handlers::import_config));
-
-            // Enforce JWT authentication on enterprise routes when an auth
-            // service is provided. Public routes (login, detailed health) and
-            // static assets bypass the check inside the middleware (see
-            // `is_public_path`).
-            if let Some(auth) = auth_service {
-                return enterprise_router
-                    .layer(from_fn_with_state(auth, middleware::auth_middleware));
-            } else {
-                return enterprise_router;
-            }
-        }
-    }
 
     router
 }

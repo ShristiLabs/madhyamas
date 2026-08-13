@@ -2,13 +2,9 @@
 
 pub mod auth;
 pub mod embedded_assets;
-#[cfg(feature = "enterprise")]
-pub mod enterprise_handlers;
 pub mod error;
 pub mod handlers;
 pub mod intercept_handlers;
-#[cfg(feature = "enterprise")]
-pub mod middleware;
 pub mod routes;
 #[cfg(any(feature = "grpc", feature = "scripting", feature = "plugins"))]
 pub mod tools_handlers;
@@ -21,8 +17,6 @@ pub use auth::{
 };
 
 use axum::Router;
-#[cfg(feature = "enterprise")]
-use madhyamas_core::enterprise::AuthManager;
 #[cfg(feature = "plugins")]
 use madhyamas_core::plugin::PluginRegistry;
 #[cfg(feature = "grpc")]
@@ -102,11 +96,6 @@ pub struct AppState {
     /// running (not in CLI/MCP modes). Enables `GET /api/logs`,
     /// `POST /api/logs/rotate`, and `PATCH /api/logs`.
     pub log_handle: Option<Arc<LogHandle>>,
-    /// Optional enterprise auth manager. When present and enterprise
-    /// features are enabled, JWT authentication is enforced on protected
-    /// routes.
-    #[cfg(feature = "enterprise")]
-    pub auth_service: Option<Arc<AuthManager>>,
     /// Pluggable authentication provider (trait object). `None` in the
     /// simple/OSS tier; `Some` in the enterprise tier once the enterprise
     /// crate injects its `AuthManager`-backed implementation (Phase 1b).
@@ -150,8 +139,6 @@ impl AppState {
             autosave_manager: None,
             mirror_writer: None,
             log_handle: None,
-            #[cfg(feature = "enterprise")]
-            auth_service: None,
             auth_provider: None,
             authorizer: None,
             audit_sink: None,
@@ -249,14 +236,6 @@ impl AppState {
     /// trigger on-demand rotation, and update the rotation config at runtime.
     pub fn with_log_handle(mut self, handle: LogHandle) -> Self {
         self.log_handle = Some(Arc::new(handle));
-        self
-    }
-
-    /// Attach an enterprise auth manager. When set, enterprise routes
-    /// enforce JWT authentication (see [`middleware::auth_middleware`]).
-    #[cfg(feature = "enterprise")]
-    pub fn with_auth_service(mut self, auth_service: Arc<AuthManager>) -> Self {
-        self.auth_service = Some(auth_service);
         self
     }
 

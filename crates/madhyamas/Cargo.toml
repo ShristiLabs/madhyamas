@@ -13,7 +13,10 @@ grpc = ["madhyamas-api/grpc", "madhyamas-core/grpc"]
 scripting = ["madhyamas-api/scripting", "madhyamas-core/scripting"]
 plugins = ["madhyamas-api/plugins", "madhyamas-core/plugins"]
 wasm-runtime = ["madhyamas-core/wasm-runtime"]
-enterprise = ["madhyamas-api/enterprise", "madhyamas-core/enterprise"]
+## Enterprise tier. Currently a no-op placeholder — the enterprise routes
+## are mounted via the `madhyamas-enterprise` crate in Phase 1e. Kept in the
+## default feature set so existing build commands continue to work.
+enterprise = []
 ## Embed web UI assets at compile time (requires web/dist/ in workspace root)
 ## Enabled by the release workflow, not by default (cargo install from
 ## crates.io won't have web/dist/)
