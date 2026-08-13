@@ -8,7 +8,8 @@ Phase 1: Extract madhyamas-enterprise crate (next)
 |---|---|---|---|---|---|---|---|
 | 0 | #28 | done | n/a (doc-only) | approved | done (baselines=regression) | committed | done |
 | 1a | #29 | done | skipped (no-test rule) | approved (w/ minor improvements applied) | done (build/test/clippy pass) | committed | done |
-| 1b | #30 | — | — | — | — | — | pending |
+| 1b | #30 | done | skipped (no-test rule) | approved (spot-checked trait impls) | done (build/test/clippy pass) | committed | done |
+| 1c | #31 | — | — | — | — | — | pending |
 
 ## Agent Log
 
@@ -47,4 +48,19 @@ Phase 1: Extract madhyamas-enterprise crate (next)
 
 ### 2026-08-13 — enterprise-committer (Phase 1a, #29)
 - Committed trait abstractions + OSS build fix + fmt fix
+- Status: completed
+
+### 2026-08-13 — enterprise-developer (Phase 1b, #30)
+- Created crates/madhyamas-enterprise (11 files, BSL-1.1)
+- Copied enterprise code from core/api; implemented AuthProvider/Authorizer/AuditSink
+- EnterpriseState + create_enterprise_router; error/type conversion impls
+- BUILD_OSS: pass, BUILD_ENTERPRISE: pass, CLIPPY: pass, TESTS: 491 pass
+- Status: completed
+
+### 2026-08-13 — enterprise-reviewer (Phase 1b, #30)
+- Verdict: approved (spot-checked lib.rs + AuthProvider impl; inherent/trait method resolution correct; From impls correct)
+- Status: completed
+
+### 2026-08-13 — enterprise-committer (Phase 1b, #30)
+- Committed new enterprise crate
 - Status: completed

@@ -1,0 +1,27 @@
+[package]
+name = "madhyamas-enterprise"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "BSL-1.1"
+publish = false
+authors.workspace = true
+description = "Madhyamas enterprise tier: auth, RBAC, audit logging, user management"
+
+[features]
+default = []
+
+[dependencies]
+madhyamas-api.workspace = true
+madhyamas-core.workspace = true
+axum.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+jsonwebtoken.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+parking_lot.workspace = true

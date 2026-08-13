@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/madhyamas-core",
     "crates/madhyamas-api",
+    "crates/madhyamas-enterprise",
     "crates/madhyamas",
     "crates/madhyamas-cli",
     "crates/madhyamas-mcp",
