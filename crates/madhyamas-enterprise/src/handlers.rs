@@ -1,17 +1,46 @@
 //! Enterprise API handlers - authentication, user management, RBAC, audit
 //! logs, performance monitoring, and onboarding.
+//!
+//! Persistent data (users, API keys, auth sessions, audit events) is served
+//! from an [`EnterpriseStore`] injected via [`axum::Extension`]. The auth
+//! manager ([`AuthManager`]) is likewise injected so login/token handlers can
+//! issue JWTs. This keeps [`madhyamas_api::AppState`] free of any dependency
+//! on this crate.
 
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    Json,
+    Extension, Json,
 };
 use madhyamas_api::AppState;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{ApiKey, AuditEvent, JwtClaims, Permission, User, UserRole, UserStatus};
+use crate::audit::{AuditEventType, AuditFilter};
+use crate::store::{ApiKeyRecord, EnterpriseStore, UserUpdate};
+use crate::{ApiKey, AuditEvent, AuthManager, JwtClaims, Permission, User, UserRole, UserStatus};
+
+/// Hash a plaintext password with SHA-256. Phase 4 replaces this with
+/// Argon2id; for now a deterministic hash keeps plaintext credentials out of
+/// the database.
+fn hash_password(password: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(password.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Reserved preferences key under which the password hash is stored until
+/// Phase 4 adds a dedicated credential field to the store trait.
+const PASSWORD_HASH_KEY: &str = "_password_hash";
+
+/// Remove the internal password-hash entry from a user's preferences before
+/// returning it over the API, so credential material never leaves the store.
+fn strip_credentials(mut user: User) -> User {
+    user.preferences.remove(PASSWORD_HASH_KEY);
+    user
+}
 
 // ============== Stub Types ==============
 
@@ -173,13 +202,55 @@ pub struct UserInfo {
     pub role: String,
 }
 
-/// Login handler
+/// Login handler. Looks up the user by username in the enterprise store,
+/// verifies the password against the stored hash, and issues a JWT via the
+/// injected [`AuthManager`].
 pub async fn login(
     State(_state): State<Arc<AppState>>,
-    Json(_req): Json<LoginRequest>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(auth): Extension<Arc<AuthManager>>,
+    Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, StatusCode> {
-    // In a real implementation, validate credentials and generate JWT
-    Err(StatusCode::NOT_IMPLEMENTED)
+    let user = store
+        .get_user_by_username(&req.username)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    if hash_password(&req.password) != user_password_hash(&user.id, &store).await {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let token = auth
+        .generate_jwt(&user.id, user.role.as_label())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let expires_at = chrono::Utc::now().timestamp() + 3600;
+    Ok(Json(LoginResponse {
+        token,
+        user: UserInfo {
+            id: user.id.clone(),
+            username: user.username,
+            email: user.email.unwrap_or_default(),
+            role: user.role.as_label().to_string(),
+        },
+        expires_at,
+    }))
+}
+
+/// Retrieve the stored password hash for a user id. Returns an empty string
+/// when the user has no credentials yet (e.g. created without a password).
+async fn user_password_hash(id: &str, store: &Arc<dyn EnterpriseStore>) -> String {
+    // The public User type does not expose password_hash; re-fetch via the
+    // record is not possible through the trait. Until Phase 4 adds credential
+    // management to the trait, login compares against a hash stored in the
+    // user's preferences under a reserved key.
+    if let Ok(Some(user)) = store.get_user(id).await {
+        user.preferences
+            .get(PASSWORD_HASH_KEY)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    }
 }
 
 /// Logout handler
@@ -187,19 +258,36 @@ pub async fn logout(State(_state): State<Arc<AppState>>) -> StatusCode {
     StatusCode::OK
 }
 
-/// Get current user
+/// Get current user. Returns the authenticated user's profile from the store.
 pub async fn get_current_user(
     State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
 ) -> Result<Json<UserInfo>, StatusCode> {
-    Err(StatusCode::NOT_IMPLEMENTED)
+    let user = store
+        .get_user(&claims.0 .0.sub)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(UserInfo {
+        id: user.id,
+        username: user.username,
+        email: user.email.unwrap_or_default(),
+        role: user.role.as_label().to_string(),
+    }))
 }
 
-/// Validate JWT token
+/// Validate JWT token. Verifies the token via the injected [`AuthManager`]
+/// and returns its claims.
 pub async fn validate_token(
     State(_state): State<Arc<AppState>>,
-    Json(_token): Json<String>,
+    Extension(auth): Extension<Arc<AuthManager>>,
+    Json(token): Json<String>,
 ) -> Result<Json<JwtClaims>, StatusCode> {
-    Err(StatusCode::NOT_IMPLEMENTED)
+    let claims = auth
+        .validate_jwt(&token)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    Ok(Json(claims))
 }
 
 // ============================================================================
@@ -207,8 +295,40 @@ pub async fn validate_token(
 // ============================================================================
 
 /// Get all API keys for current user
-pub async fn get_api_keys(State(_state): State<Arc<AppState>>) -> Json<Vec<ApiKey>> {
-    Json(Vec::new())
+pub async fn get_api_keys(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+) -> Result<Json<Vec<ApiKey>>, StatusCode> {
+    let records = store
+        .list_api_keys(&claims.0 .0.sub)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(
+        records
+            .into_iter()
+            .map(|r| ApiKey {
+                id: r.id,
+                user_id: r.user_id,
+                key: r.key_prefix,
+                name: r.name,
+                created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)
+                    .map(|dt| dt.with_timezone(&chrono::Utc).timestamp())
+                    .unwrap_or(0),
+                expires_at: r.expires_at.as_deref().and_then(|s| {
+                    chrono::DateTime::parse_from_rfc3339(s)
+                        .ok()
+                        .map(|dt| dt.with_timezone(&chrono::Utc).timestamp())
+                }),
+                is_active: true,
+                last_used: r.last_used_at.as_deref().and_then(|s| {
+                    chrono::DateTime::parse_from_rfc3339(s)
+                        .ok()
+                        .map(|dt| dt.with_timezone(&chrono::Utc).timestamp())
+                }),
+            })
+            .collect(),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,20 +337,46 @@ pub struct CreateApiKeyRequest {
     pub expires_in_days: Option<i64>,
 }
 
-/// Create new API key
+/// Create new API key. Generates a key, persists a hashed record, and returns
+/// the plaintext key once to the caller.
 pub async fn create_api_key(
     State(_state): State<Arc<AppState>>,
-    Json(_req): Json<CreateApiKeyRequest>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+    Json(req): Json<CreateApiKeyRequest>,
 ) -> Result<Json<ApiKey>, StatusCode> {
-    Err(StatusCode::NOT_IMPLEMENTED)
+    let api_key = ApiKey::generate(&claims.0 .0.sub, &req.name);
+    let now = chrono::Utc::now();
+    let expires_at = req.expires_in_days.map(|d| now + chrono::Duration::days(d));
+    let record = ApiKeyRecord {
+        id: api_key.id.clone(),
+        user_id: api_key.user_id.clone(),
+        name: api_key.name.clone(),
+        key_hash: hash_password(&api_key.key),
+        key_prefix: api_key.key.chars().take(12).collect(),
+        scopes: "[]".to_string(),
+        expires_at: expires_at.map(|t| t.to_rfc3339()),
+        last_used_at: None,
+        created_at: now.to_rfc3339(),
+    };
+    store
+        .create_api_key(&record)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(api_key))
 }
 
 /// Revoke API key
 pub async fn revoke_api_key(
     State(_state): State<Arc<AppState>>,
-    Path(_key_id): Path<String>,
-) -> StatusCode {
-    StatusCode::OK
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Path(key_id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    store
+        .revoke_api_key(&key_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::OK)
 }
 
 // ============================================================================
@@ -238,16 +384,29 @@ pub async fn revoke_api_key(
 // ============================================================================
 
 /// Get all users
-pub async fn get_users(State(_state): State<Arc<AppState>>) -> Json<Vec<User>> {
-    Json(Vec::new())
+pub async fn get_users(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+) -> Result<Json<Vec<User>>, StatusCode> {
+    let users = store
+        .list_users()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(users.into_iter().map(strip_credentials).collect()))
 }
 
 /// Get user by ID
 pub async fn get_user(
     State(_state): State<Arc<AppState>>,
-    Path(_user_id): Path<String>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Path(user_id): Path<String>,
 ) -> Result<Json<User>, StatusCode> {
-    Err(StatusCode::NOT_FOUND)
+    let user = store
+        .get_user(&user_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(strip_credentials(user)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,12 +417,38 @@ pub struct CreateUserRequest {
     pub role: UserRole,
 }
 
-/// Create user
+/// Create user. Persists the user with a hashed password and returns the
+/// created record.
 pub async fn create_user(
     State(_state): State<Arc<AppState>>,
-    Json(_req): Json<CreateUserRequest>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Json(req): Json<CreateUserRequest>,
 ) -> Result<Json<User>, StatusCode> {
-    Err(StatusCode::NOT_IMPLEMENTED)
+    if store
+        .get_user_by_username(&req.username)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .is_some()
+    {
+        return Err(StatusCode::CONFLICT);
+    }
+    let mut user = User::new(
+        uuid::Uuid::new_v4().to_string(),
+        req.username.clone(),
+        Some(req.email.clone()),
+        req.role,
+        req.username.clone(),
+        UserStatus::Active,
+    );
+    user.preferences.insert(
+        PASSWORD_HASH_KEY.to_string(),
+        serde_json::Value::String(hash_password(&req.password)),
+    );
+    store
+        .create_user(&user)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(strip_credentials(user)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -273,21 +458,52 @@ pub struct UpdateUserRequest {
     pub status: Option<UserStatus>,
 }
 
-/// Update user
+/// Update user. Applies partial updates and returns the updated record.
 pub async fn update_user(
     State(_state): State<Arc<AppState>>,
-    Path(_user_id): Path<String>,
-    Json(_req): Json<UpdateUserRequest>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Path(user_id): Path<String>,
+    Json(req): Json<UpdateUserRequest>,
 ) -> Result<Json<User>, StatusCode> {
-    Err(StatusCode::NOT_IMPLEMENTED)
+    let updates = UserUpdate {
+        username: None,
+        email: req.email,
+        password_hash: None,
+        role: req.role.map(|r| r.as_label().to_string()),
+        status: req.status.map(|s| {
+            match s {
+                UserStatus::Active => "active",
+                UserStatus::Inactive => "inactive",
+                UserStatus::Suspended => "suspended",
+                UserStatus::PendingVerification => "pending_verification",
+            }
+            .to_string()
+        }),
+        preferences: None,
+    };
+    store
+        .update_user(&user_id, &updates)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let user = store
+        .get_user(&user_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(strip_credentials(user)))
 }
 
 /// Delete user
 pub async fn delete_user(
     State(_state): State<Arc<AppState>>,
-    Path(_user_id): Path<String>,
-) -> StatusCode {
-    StatusCode::OK
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Path(user_id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    store
+        .delete_user(&user_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::OK)
 }
 
 // ============================================================================
@@ -336,12 +552,55 @@ pub struct AuditQuery {
     pub offset: Option<usize>,
 }
 
+fn audit_filter_from_query(query: &AuditQuery) -> AuditFilter {
+    AuditFilter {
+        event_type: query.event_types.as_deref().map(parse_event_type),
+        user_id: query.user_id.clone(),
+        start_time: query.start_time.map(|t| {
+            chrono::DateTime::from_timestamp(t, 0)
+                .unwrap_or_default()
+                .with_timezone(&chrono::Utc)
+        }),
+        end_time: query.end_time.map(|t| {
+            chrono::DateTime::from_timestamp(t, 0)
+                .unwrap_or_default()
+                .with_timezone(&chrono::Utc)
+        }),
+        limit: query.limit,
+        offset: query.offset,
+    }
+}
+
+fn parse_event_type(label: &str) -> AuditEventType {
+    match label {
+        "login" => AuditEventType::Login,
+        "logout" => AuditEventType::Logout,
+        "api_key_created" => AuditEventType::ApiKeyCreated,
+        "api_key_revoked" => AuditEventType::ApiKeyRevoked,
+        "traffic_exported" => AuditEventType::TrafficExported,
+        "session_created" => AuditEventType::SessionCreated,
+        "session_deleted" => AuditEventType::SessionDeleted,
+        "mock_created" => AuditEventType::MockCreated,
+        "mock_deleted" => AuditEventType::MockDeleted,
+        "breakpoint_created" => AuditEventType::BreakpointCreated,
+        "breakpoint_deleted" => AuditEventType::BreakpointDeleted,
+        "config_changed" => AuditEventType::ConfigChanged,
+        _ => AuditEventType::Custom,
+    }
+}
+
 /// Get audit events
 pub async fn get_audit_events(
     State(_state): State<Arc<AppState>>,
-    Query(_query): Query<AuditQuery>,
-) -> Json<Vec<AuditEvent>> {
-    Json(Vec::new())
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Query(query): Query<AuditQuery>,
+) -> Result<Json<Vec<AuditEvent>>, StatusCode> {
+    let filter = audit_filter_from_query(&query);
+    let events = store
+        .query_audit_events(&filter)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(events))
 }
 
 /// Audit statistics
@@ -355,27 +614,51 @@ pub struct AuditStatsResponse {
 }
 
 /// Get audit statistics
-pub async fn get_audit_stats(State(_state): State<Arc<AppState>>) -> Json<AuditStatsResponse> {
-    Json(AuditStatsResponse {
-        total_events: 0,
-        events_today: 0,
-        events_by_type: Default::default(),
+pub async fn get_audit_stats(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+) -> Result<Json<AuditStatsResponse>, StatusCode> {
+    let stats = store
+        .get_audit_stats()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(AuditStatsResponse {
+        total_events: stats.total_events as u64,
+        events_today: stats.events_today as u64,
+        events_by_type: stats
+            .events_by_type
+            .into_iter()
+            .map(|(k, v)| (k, v as u64))
+            .collect(),
         top_users: Vec::new(),
         error_count: 0,
-    })
+    }))
 }
 
 /// Export audit events
 pub async fn export_audit_events(
     State(_state): State<Arc<AppState>>,
-    Query(_query): Query<AuditQuery>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Query(query): Query<AuditQuery>,
 ) -> Result<Json<Vec<AuditEvent>>, StatusCode> {
-    Ok(Json(Vec::new()))
+    let filter = audit_filter_from_query(&query);
+    let events = store
+        .query_audit_events(&filter)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(events))
 }
 
 /// Clear audit events
-pub async fn clear_audit_events(State(_state): State<Arc<AppState>>) -> StatusCode {
-    StatusCode::OK
+pub async fn clear_audit_events(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+) -> Result<StatusCode, StatusCode> {
+    store
+        .clear_audit_events()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::OK)
 }
 
 // ============================================================================

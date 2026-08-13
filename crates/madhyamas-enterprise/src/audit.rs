@@ -62,6 +62,9 @@ pub struct AuditEvent {
     pub description: String,
     /// Additional metadata
     pub metadata: HashMap<String, serde_json::Value>,
+    /// Hash of the previous event in the tamper-evident chain (Phase 4e).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub prev_hash: Option<String>,
 }
 
 impl AuditEvent {
@@ -76,6 +79,7 @@ impl AuditEvent {
             client_ip: None,
             description: description.into(),
             metadata: HashMap::new(),
+            prev_hash: None,
         }
     }
 
@@ -252,6 +256,7 @@ impl From<ApiAuditEvent> for AuditEvent {
             client_ip: value.client_ip,
             description: value.description,
             metadata: value.metadata,
+            prev_hash: None,
         }
     }
 }

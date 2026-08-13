@@ -3,24 +3,32 @@
 //! These routes are extracted from `madhyamas-api/src/routes.rs` (the
 //! enterprise block). They return a [`Router`] keyed on
 //! `Arc<madhyamas_api::AppState>` so the main binary can merge them with the
-//! core API router when the enterprise tier is enabled.
+//! core API router when the enterprise tier is enabled. The persistent
+//! [`EnterpriseStore`] is injected via an [`axum::Extension`] layer so the
+//! handlers can access it without `madhyamas-api` depending on this crate.
 
 use axum::{
     middleware::from_fn_with_state,
     routing::{delete, get, post, put},
-    Router,
+    Extension, Router,
 };
 use madhyamas_api::AppState;
 use std::sync::Arc;
 
-use crate::{handlers, middleware, AuthManager};
+use crate::{handlers, middleware, AuthManager, EnterpriseStore};
 
 /// Create the enterprise router (all enterprise endpoints under `/api`).
 ///
-/// When `auth` is `Some`, JWT authentication is enforced on the enterprise
-/// routes via [`middleware::auth_middleware`]. Public routes (login, detailed
-/// health) bypass the check inside the middleware (see `is_public_path`).
-pub fn create_enterprise_router(auth: Option<Arc<AuthManager>>) -> Router<Arc<AppState>> {
+/// `store` is injected into request extensions so enterprise handlers can
+/// persist/restore users, API keys, sessions, and audit events. When `auth`
+/// is `Some`, JWT authentication is enforced on the enterprise routes via
+/// [`middleware::auth_middleware`] (gated by `require_auth`). Public routes
+/// (login, detailed health) bypass the check inside the middleware (see
+/// `is_public_path`).
+pub fn create_enterprise_router(
+    store: Arc<dyn EnterpriseStore>,
+    auth: Arc<AuthManager>,
+) -> Router<Arc<AppState>> {
     let router = Router::new()
         // Performance & Monitoring
         .route("/metrics", get(handlers::get_metrics))
@@ -58,14 +66,17 @@ pub fn create_enterprise_router(auth: Option<Arc<AuthManager>>) -> Router<Arc<Ap
         .route("/onboarding/skip", post(handlers::skip_onboarding))
         // Configuration
         .route("/config/export", get(handlers::export_config))
-        .route("/config/import", post(handlers::import_config));
+        .route("/config/import", post(handlers::import_config))
+        // Inject the persistent store and auth manager into request
+        // extensions so enterprise handlers can access them without
+        // madhyamas-api depending on this crate.
+        .layer(Extension(store))
+        .layer(Extension(auth.clone()));
 
-    // Enforce JWT authentication on enterprise routes when an auth service is
-    // provided. Public routes (login, detailed health) and static assets
-    // bypass the check inside the middleware (see `is_public_path`).
-    if let Some(auth) = auth {
-        router.layer(from_fn_with_state(auth, middleware::auth_middleware))
-    } else {
-        router
-    }
+    // Enforce JWT authentication on enterprise routes. The middleware itself
+    // honors `AuthManager::require_auth()`, so it only rejects requests when
+    // strict auth is enabled. Public routes (login, detailed health) and
+    // static assets bypass the check inside the middleware (see
+    // `is_public_path`).
+    router.layer(from_fn_with_state(auth, middleware::auth_middleware))
 }

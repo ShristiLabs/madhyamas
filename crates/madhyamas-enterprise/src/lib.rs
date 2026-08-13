@@ -20,6 +20,7 @@ pub mod handlers;
 pub mod middleware;
 pub mod rbac;
 pub mod router;
+pub mod store;
 pub mod user;
 
 pub use audit::{AuditEvent, AuditEventType, AuditFilter, AuditLogger};
@@ -27,6 +28,8 @@ pub use auth::{ApiKey, AuthConfig, AuthManager, JwtClaims};
 pub use enterprise_error::EnterpriseError;
 pub use rbac::{Permission, RbacManager, Resource, ResourceType};
 pub use router::create_enterprise_router;
+pub use store::{ApiKeyRecord, AuditStats, AuthSession, UserUpdate};
+pub use store::{EnterpriseStore, SqliteEnterpriseStore, StoreError};
 pub use user::{User, UserRole, UserStatus};
 
 use madhyamas_api::auth::{AuditError, AuthError};
@@ -44,6 +47,8 @@ pub struct EnterpriseState {
     pub rbac: Arc<RbacManager>,
     /// Audit logger (in-memory ring buffer).
     pub audit: Arc<AuditLogger>,
+    /// Persistent enterprise store (users, API keys, sessions, audit events).
+    pub store: Option<Arc<dyn EnterpriseStore>>,
 }
 
 impl EnterpriseState {
@@ -53,7 +58,14 @@ impl EnterpriseState {
             auth: Arc::new(AuthManager::new(config)),
             rbac: Arc::new(RbacManager::new()),
             audit: Arc::new(AuditLogger::default()),
+            store: None,
         }
+    }
+
+    /// Attach a persistent enterprise store.
+    pub fn with_store(mut self, store: Arc<dyn EnterpriseStore>) -> Self {
+        self.store = Some(store);
+        self
     }
 }
 

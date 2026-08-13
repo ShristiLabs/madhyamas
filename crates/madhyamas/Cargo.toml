@@ -16,7 +16,7 @@ wasm-runtime = ["madhyamas-core/wasm-runtime"]
 ## Enterprise tier. Pulls in the `madhyamas-enterprise` crate which provides
 ## authentication, RBAC, audit logging, and user management. Kept in the
 ## default feature set so the standard build includes enterprise routes.
-enterprise = ["dep:madhyamas-enterprise"]
+enterprise = ["dep:madhyamas-enterprise", "dep:sqlx"]
 ## Embed web UI assets at compile time (requires web/dist/ in workspace root)
 ## Enabled by the release workflow, not by default (cargo install from
 ## crates.io won't have web/dist/)
@@ -32,6 +32,7 @@ madhyamas-api.workspace = true
 madhyamas-cli.workspace = true
 madhyamas-mcp.workspace = true
 madhyamas-enterprise = { path = "../madhyamas-enterprise", optional = true }
+sqlx = { workspace = true, optional = true }
 tokio.workspace = true
 axum.workspace = true
 tower-http.workspace = true

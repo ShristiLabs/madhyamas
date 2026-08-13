@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// User role
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum UserRole {
     #[default]
     Admin,
@@ -54,6 +55,7 @@ impl UserRole {
 
 /// User status
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UserStatus {
     #[default]
     Active,

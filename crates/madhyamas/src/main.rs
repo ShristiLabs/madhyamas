@@ -9,6 +9,8 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+#[cfg(feature = "enterprise")]
+use std::str::FromStr;
 use std::sync::Arc;
 
 use madhyamas_api::{create_router, RateLimitConfig};
@@ -875,12 +877,40 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                 license_path
             );
         }
-        let enterprise = madhyamas_enterprise::EnterpriseState::new(auth_config);
+        // Construct the persistent enterprise store backed by a SQLite pool.
+        // The database file lives alongside traffic.db under ~/.madhyamas/.
+        let enterprise_db_path =
+            std::path::Path::new(&config.db_path).with_file_name("enterprise.db");
+        let enterprise_db_dir = enterprise_db_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        std::fs::create_dir_all(&enterprise_db_dir).ok();
+        let db_url = format!("sqlite://{}", enterprise_db_path.display());
+        let connect_options = sqlx::sqlite::SqliteConnectOptions::from_str(&db_url)
+            .map_err(|e| anyhow::anyhow!("failed to parse enterprise db url: {e}"))?
+            .create_if_missing(true);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(connect_options)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to open enterprise db: {e}"))?;
+        tracing::info!(
+            "Enterprise store opened at {}",
+            enterprise_db_path.display()
+        );
+        let store = madhyamas_enterprise::SqliteEnterpriseStore::new(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to initialize enterprise store: {e}"))?;
+        let store: std::sync::Arc<dyn madhyamas_enterprise::EnterpriseStore> =
+            std::sync::Arc::new(store);
+        let enterprise =
+            madhyamas_enterprise::EnterpriseState::new(auth_config).with_store(store.clone());
         let api_state = api_state
             .with_auth_provider(enterprise.auth.clone())
             .with_authorizer(enterprise.rbac.clone())
             .with_audit_sink(enterprise.audit.clone());
-        let router = madhyamas_enterprise::create_enterprise_router(Some(enterprise.auth.clone()));
+        let router = madhyamas_enterprise::create_enterprise_router(store, enterprise.auth.clone());
         (api_state, Some(router))
     };
     #[cfg(not(feature = "enterprise"))]

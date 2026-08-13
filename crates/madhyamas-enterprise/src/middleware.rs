@@ -120,6 +120,13 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
+    // When strict auth is not required, let requests through (the auth system
+    // is still available for login/token endpoints). This allows bootstrap
+    // (e.g. creating the first admin user) before any credentials exist.
+    if !state.require_auth() {
+        return next.run(request).await;
+    }
+
     // Extract the bearer token, producing an owned value so the immutable
     // borrow of `request.headers()` is released before we mutate extensions.
     let token = request
@@ -152,7 +159,7 @@ pub async fn auth_middleware(
 pub struct AuthUser(pub JwtClaims);
 
 impl axum::extract::FromRequestParts<Arc<AppState>> for AuthUser {
-    type Rejection = Response;
+    type Rejection = StatusCode;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
@@ -163,7 +170,7 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for AuthUser {
             .get::<JwtClaims>()
             .cloned()
             .map(AuthUser)
-            .ok_or_else(|| unauthorized("Authentication required"))
+            .ok_or(StatusCode::UNAUTHORIZED)
     }
 }
 

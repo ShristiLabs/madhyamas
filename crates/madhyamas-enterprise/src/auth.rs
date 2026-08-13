@@ -191,6 +191,13 @@ impl AuthManager {
         self.config.enabled
     }
 
+    /// Check whether all requests must be authenticated. When false the auth
+    /// middleware lets requests through even though the auth system is
+    /// available (e.g. for bootstrap before any users exist).
+    pub fn require_auth(&self) -> bool {
+        self.config.require_auth
+    }
+
     /// Validate an API key
     pub fn validate_api_key(&self, key: &str) -> Result<String, EnterpriseError> {
         let keys = self.api_keys.read();
