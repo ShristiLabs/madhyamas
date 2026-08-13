@@ -9,7 +9,9 @@ Phase 1: Extract madhyamas-enterprise crate (next)
 | 0 | #28 | done | n/a (doc-only) | approved | done (baselines=regression) | committed | done |
 | 1a | #29 | done | skipped (no-test rule) | approved (w/ minor improvements applied) | done (build/test/clippy pass) | committed | done |
 | 1b | #30 | done | skipped (no-test rule) | approved (spot-checked trait impls) | done (build/test/clippy pass) | committed | done |
-| 1c | #31 | — | — | — | — | — | pending |
+| 1c | #31 | done | skipped | approved | done | committed (04b0db3) | done |
+| 1d | #32 | done | skipped | approved | done | committed (6948ac6) | done |
+| 1e | #33 | — | — | — | — | — | pending |
 
 ## Agent Log
 
@@ -63,4 +65,14 @@ Phase 1: Extract madhyamas-enterprise crate (next)
 
 ### 2026-08-13 — enterprise-committer (Phase 1b, #30)
 - Committed new enterprise crate
+- Status: completed
+
+### 2026-08-13 — enterprise-developer (Phase 1c+1d, #31+#32)
+- Deleted core/src/enterprise/ (6 files) + api enterprise_handlers.rs + middleware.rs
+- Removed enterprise feature from core+api Cargo.toml; removed jsonwebtoken from core
+- Simplified api routes to single create_routes_inner() (no enterprise params)
+- Main binary enterprise feature made no-op placeholder (routes deferred to 1e)
+- Reworded broken intra-doc links in auth.rs
+- BUILD_OSS: pass, BUILD_ENTERPRISE: pass, CLIPPY: pass, TESTS: 487 pass
+- Two commits: 04b0db3 (1c), 6948ac6 (1d)
 - Status: completed
