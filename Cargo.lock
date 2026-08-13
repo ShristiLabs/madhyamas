@@ -2458,6 +2458,7 @@ dependencies = [
  "madhyamas-core",
  "mime_guess",
  "parking_lot",
+ "regex",
  "rust-embed",
  "serde",
  "serde_json",

@@ -11,6 +11,8 @@ import { TrafficTimeline } from "./TrafficTimeline"
 import { TrafficDetail } from "./TrafficDetail"
 import { TrafficToolbar } from "./TrafficToolbar"
 import { FocusPanel } from "./FocusPanel"
+import { TrafficActionBar } from "./TrafficActionBar"
+import { TrafficContextMenu } from "./TrafficContextMenu"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -38,8 +40,9 @@ import type { ActiveFilter } from "@/types/filters"
 import { applyFilters } from "@/types/filters"
 import { cn } from "@/lib/utils"
 import { apiPostVoid, apiGet } from "@/lib/api/client"
-import { useFocusHosts, useAddFocusHost } from "@/lib/api/intercept"
+import { useFocusHosts, useAddFocusHost, useCreateMockFromTraffic, useSaveRequestsFromTraffic } from "@/lib/api/intercept"
 import { hostMatchesAnyPattern } from "@/lib/focus"
+import { useToast } from "@/components/ui/use-toast"
 
 const STORAGE_KEY_LIST_WIDTH = "madhyamas-next-list-width"
 const DEFAULT_LIST_WIDTH = 40
@@ -56,6 +59,12 @@ export function TrafficView() {
   const [showFocusPanel, setShowFocusPanel] = useState(false)
   const [showOnlyFocused, setShowOnlyFocused] = useState(false)
   const [viewMode, setViewMode] = useState<"list" | "timeline">("list")
+  // Right-click context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    id: string
+    x: number
+    y: number
+  } | null>(null)
 
   const [listWidth, setListWidth] = useState(() => {
     if (typeof window !== "undefined") {
@@ -78,6 +87,9 @@ export function TrafficView() {
   const importHar = useImportHar()
   const { data: focusHosts } = useFocusHosts()
   const addFocusHost = useAddFocusHost()
+  const createMockFromTraffic = useCreateMockFromTraffic()
+  const saveRequestsFromTraffic = useSaveRequestsFromTraffic()
+  const { toast } = useToast()
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -264,8 +276,89 @@ export function TrafficView() {
     [addFocusHost],
   )
 
+  // --- Context menu + bulk action handlers ---
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, id: string) => {
+      e.preventDefault()
+      setContextMenu({ id, x: e.clientX, y: e.clientY })
+    },
+    [],
+  )
+
+  const handleSaveSingleToReplay = useCallback(
+    async (id: string) => {
+      try {
+        const result = await saveRequestsFromTraffic.mutateAsync({
+          entry_ids: [id],
+        })
+        toast({
+          title: "Saved to Replay",
+          description: `Saved ${result.saved} request to Replay.`,
+        })
+      } catch (e) {
+        toast({ title: "Save Failed", description: String(e), variant: "destructive" })
+      }
+    },
+    [saveRequestsFromTraffic, toast],
+  )
+
+  const handleCreateSingleMock = useCallback(
+    async (id: string) => {
+      try {
+        const result = await createMockFromTraffic.mutateAsync({
+          entry_ids: [id],
+        })
+        toast({
+          title: "Mock Created",
+          description: `Created ${result.created} mock from traffic.`,
+        })
+      } catch (e) {
+        toast({ title: "Mock Creation Failed", description: String(e), variant: "destructive" })
+      }
+    },
+    [createMockFromTraffic, toast],
+  )
+
+  const handleCopyAsCurl = useCallback(
+    async (id: string) => {
+      try {
+        const entry = await apiGet<TrafficEntry>(`/traffic/${id}`)
+        const req = entry.request
+        const parts = [`curl -X ${req.method}`]
+        for (const [k, v] of Object.entries(req.headers || {})) {
+          parts.push(`-H '${k}: ${v}'`)
+        }
+        if (req.body) {
+          parts.push(`-d '${req.body.replace(/'/g, "'\\''")}'`)
+        }
+        parts.push(`'${req.url}'`)
+        await navigator.clipboard.writeText(parts.join(" \\\n  "))
+        toast({ title: "Copied", description: "cURL command copied to clipboard." })
+      } catch (e) {
+        toast({ title: "Copy Failed", description: String(e), variant: "destructive" })
+      }
+    },
+    [toast],
+  )
+
+  const handleExportSingleHar = useCallback(
+    (id: string) => {
+      // Temporarily select just this entry, then export
+      const prevIds = selectedIds
+      setSelectedIds(new Set([id]))
+      // Use setTimeout to let the state update flush before export reads it
+      setTimeout(() => {
+        handleExportHar(false)
+        // Restore previous selection
+        setSelectedIds(prevIds)
+      }, 0)
+    },
+    [handleExportHar, selectedIds],
+  )
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
       <TrafficToolbar
         search={search}
         onSearchChange={setSearch}
@@ -441,6 +534,7 @@ export function TrafficView() {
                     onSelectAll={handleSelectAll}
                     focusHosts={focusHosts}
                     onFocusHost={handleFocusHost}
+                    onContextMenu={handleContextMenu}
                   />
                 )}
               </div>
@@ -516,6 +610,25 @@ export function TrafficView() {
           </div>
         </div>
       )}
+
+      {/* Bulk action bar — appears when 1+ entries are selected */}
+      <TrafficActionBar
+        selectedIds={selectedIds}
+        onClear={() => setSelectedIds(new Set())}
+        onExport={() => handleExportHar(false)}
+        onClearEntries={() => handleClear(false)}
+      />
+
+      {/* Right-click context menu */}
+      <TrafficContextMenu
+        entryId={contextMenu?.id ?? null}
+        position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
+        onSaveToReplay={handleSaveSingleToReplay}
+        onCreateMock={handleCreateSingleMock}
+        onCopyAsCurl={handleCopyAsCurl}
+        onExportHar={handleExportSingleHar}
+        onClose={() => setContextMenu(null)}
+      />
     </div>
   )
 }

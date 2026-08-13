@@ -151,6 +151,10 @@ fn create_routes_inner(
             "/mocks/batch-toggle",
             post(intercept_handlers::batch_toggle_mocks),
         )
+        .route(
+            "/mocks/from-traffic",
+            post(intercept_handlers::create_mock_from_traffic),
+        )
         // Mock Collections
         .route(
             "/mocks/collections",
@@ -279,6 +283,10 @@ fn create_routes_inner(
         // Replay endpoints
         .route("/replay/saved", get(intercept_handlers::get_saved_requests))
         .route("/replay/saved", post(intercept_handlers::save_request))
+        .route(
+            "/replay/saved/from-traffic",
+            post(intercept_handlers::batch_save_requests_from_traffic),
+        )
         .route(
             "/replay/saved/{id}",
             get(intercept_handlers::get_saved_request),

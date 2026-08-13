@@ -15,7 +15,6 @@ import {
 } from '@/components/ui/dialog';
 import {
   useSavedRequests,
-  useSaveRequest,
   useDeleteSavedRequest,
   useReplayRequest,
   useReplayRequestBatch,
@@ -27,29 +26,21 @@ import {
   type RequestModifications,
 } from '@/lib/api/intercept';
 import { useToast } from '@/components/ui/use-toast';
-import type { TrafficEntry } from '@/lib/api';
 import { RequestEditor } from '@/features/traffic/RequestEditor';
 import { Pencil } from 'lucide-react';
 
-interface ReplayPanelProps {
-  selectedEntry?: TrafficEntry | null;
-}
-
-export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
+export function ReplayPanel() {
   const { data: savedRequests, isLoading } = useSavedRequests();
   const { data: replayHistory } = useReplayHistory();
-  const saveRequest = useSaveRequest();
   const deleteSavedRequest = useDeleteSavedRequest();
   const replayRequest = useReplayRequest();
   const replayRequestBatch = useReplayRequestBatch();
   const { toast } = useToast();
 
-  const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [showReplayDialog, setShowReplayDialog] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [selectedSaved, setSelectedSaved] = useState<SavedRequest | null>(null);
   const [editingSaved, setEditingSaved] = useState<SavedRequest | null>(null);
-  const [saveName, setSaveName] = useState('');
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
 
   // Advanced (batch) replay state
@@ -60,23 +51,6 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
   const [delayMs, setDelayMs] = useState('');
   const [useDelay, setUseDelay] = useState(false);
   const [batchResult, setBatchResult] = useState<ReplayBatchResult | null>(null);
-
-  const handleSave = async () => {
-    if (!selectedEntry || !saveName) return;
-
-    await saveRequest.mutateAsync({
-      entry_id: selectedEntry.id,
-      request: selectedEntry.request,
-      name: saveName,
-    });
-
-    setShowSaveDialog(false);
-    setSaveName('');
-    toast({
-      title: 'Request Saved',
-      description: `Saved as "${saveName}"`,
-    });
-  };
 
   const handleReplay = async (saved: SavedRequest) => {
     setSelectedSaved(saved);
@@ -157,11 +131,6 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between p-4 border-b">
         <h2 className="text-lg font-semibold">Request Replay</h2>
-        {selectedEntry && (
-          <Button size="sm" onClick={() => setShowSaveDialog(true)}>
-            Save Current
-          </Button>
-        )}
       </div>
 
       <ScrollArea className="flex-1">
@@ -172,7 +141,9 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
             <div className="space-y-2">
               {savedRequests?.length === 0 && (
                 <div className="text-center text-muted-foreground py-4 text-sm">
-                  No saved requests. Click "Save Current" to save a request from traffic.
+                  No saved requests. Select one or more requests in the{' '}
+                  <strong>Traffic</strong> view and choose "Save to Replay" from
+                  the action bar or right-click menu.
                 </div>
               )}
 
@@ -264,44 +235,6 @@ export function ReplayPanel({ selectedEntry }: ReplayPanelProps) {
           )}
         </div>
       </ScrollArea>
-
-      {/* Save Dialog */}
-      <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Save Request</DialogTitle>
-            <DialogDescription>
-              Save this request for later replay
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <label className="text-sm font-medium">Name</label>
-              <Input
-                placeholder="My Request"
-                value={saveName}
-                onChange={(e) => setSaveName(e.target.value)}
-              />
-            </div>
-            {selectedEntry && (
-              <div className="p-2 bg-muted rounded text-sm font-mono">
-                <div className="flex items-center gap-2">
-                  <span>{selectedEntry.request.method}</span>
-                  <span className="truncate">{selectedEntry.request.url}</span>
-                </div>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSaveDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave} disabled={!saveName || saveRequest.isPending}>
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Replay Dialog */}
       <Dialog open={showReplayDialog} onOpenChange={setShowReplayDialog}>

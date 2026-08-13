@@ -19,6 +19,7 @@ interface TrafficListProps {
   onSelectAll?: () => void
   focusHosts?: FocusHost[]
   onFocusHost?: (host: string) => void
+  onContextMenu?: (e: React.MouseEvent, id: string) => void
 }
 
 const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = {
@@ -104,6 +105,7 @@ export function TrafficList({
   onSelectAll,
   focusHosts,
   onFocusHost,
+  onContextMenu,
 }: TrafficListProps) {
   const [sortField, setSortField] = useState<SortField>("timestamp")
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
@@ -245,6 +247,7 @@ export function TrafficList({
                   isFocused={focusHosts ? hostMatchesAnyPattern(entry.request.host, focusHosts) : false}
                   hasFocusHosts={!!focusHosts && focusHosts.length > 0}
                   onFocusHost={onFocusHost ? () => onFocusHost(entry.request.host) : undefined}
+                  onContextMenu={onContextMenu ? (e) => onContextMenu(e, entry.id) : undefined}
                 />
               </div>
             )
@@ -265,6 +268,7 @@ interface TrafficListItemProps {
   isFocused: boolean
   hasFocusHosts: boolean
   onFocusHost?: () => void
+  onContextMenu?: (e: React.MouseEvent) => void
 }
 
 const TrafficListItem = memo(function TrafficListItem({
@@ -277,6 +281,7 @@ const TrafficListItem = memo(function TrafficListItem({
   isFocused,
   hasFocusHosts,
   onFocusHost,
+  onContextMenu,
 }: TrafficListItemProps) {
   const methodClass = `method-${entry.request.method.toLowerCase()}`
   const statusClass = entry.response
@@ -287,11 +292,18 @@ const TrafficListItem = memo(function TrafficListItem({
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
+      // If a custom context menu handler is provided, use it (shows
+      // Save to Replay / Create Mock / Copy as cURL / Export).
+      if (onContextMenu) {
+        onContextMenu(e)
+        return
+      }
+      // Fallback: focus host on right-click (legacy behavior)
       if (!onFocusHost) return
       e.preventDefault()
       onFocusHost()
     },
-    [onFocusHost],
+    [onContextMenu, onFocusHost],
   )
 
   const time = new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })

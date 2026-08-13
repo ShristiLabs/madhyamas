@@ -299,6 +299,105 @@ pub async fn batch_toggle_mocks(
     .into_response()
 }
 
+// ============================================================================
+// Create mocks from captured traffic
+// ============================================================================
+
+/// Create a mock rule from one or more captured traffic entries.
+/// The mock's condition matches the request URL (regex-escaped) and the
+/// response is replayed from the captured response.
+#[derive(Debug, Deserialize)]
+pub struct CreateMockFromTrafficRequest {
+    /// Traffic entry IDs to create mocks from.
+    pub entry_ids: Vec<String>,
+    /// Optional name prefix. If omitted, uses "Mock: {METHOD} {URL}".
+    pub name_prefix: Option<String>,
+    /// Whether the created mock rules should be enabled (default: true).
+    pub enabled: Option<bool>,
+}
+
+pub async fn create_mock_from_traffic(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateMockFromTrafficRequest>,
+) -> impl IntoResponse {
+    if req.entry_ids.is_empty() {
+        return super::error::ApiError::bad_request("entry_ids cannot be empty").into_response();
+    }
+
+    let mut created_ids: Vec<String> = Vec::new();
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    let enabled = req.enabled.unwrap_or(true);
+
+    for entry_id in &req.entry_ids {
+        match state.traffic_store.get_by_id(entry_id) {
+            Ok(Some(entry)) => {
+                let request = &entry.request;
+                let response = match &entry.response {
+                    Some(r) => r,
+                    None => {
+                        errors.push(serde_json::json!({
+                            "entry_id": entry_id,
+                            "error": "No response captured for this entry",
+                        }));
+                        continue;
+                    }
+                };
+
+                let name = match &req.name_prefix {
+                    Some(prefix) => format!("{}: {} {}", prefix, request.method, request.url),
+                    None => format!("Mock: {} {}", request.method, request.url),
+                };
+
+                let condition = MatchCondition::UrlPattern {
+                    pattern: regex::escape(&request.url),
+                };
+
+                let mock_response = MockResponse {
+                    status_code: response.status_code,
+                    headers: response.headers.clone(),
+                    body: response.body.as_ref().and_then(|b| String::from_utf8(b.clone()).ok()),
+                    ..Default::default()
+                };
+
+                let mut rule = MockRule::new(name, condition, mock_response);
+                rule.enabled = enabled;
+
+                let id = state.mock_manager.add_rule(rule);
+                created_ids.push(id);
+            }
+            Ok(None) => {
+                errors.push(serde_json::json!({
+                    "entry_id": entry_id,
+                    "error": "Traffic entry not found",
+                }));
+            }
+            Err(e) => {
+                errors.push(serde_json::json!({
+                    "entry_id": entry_id,
+                    "error": e.to_string(),
+                }));
+            }
+        }
+    }
+
+    let status = if created_ids.is_empty() {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::CREATED
+    };
+
+    (
+        status,
+        Json(serde_json::json!({
+            "created": created_ids.len(),
+            "ids": created_ids,
+            "errors": errors,
+            "total": req.entry_ids.len(),
+        })),
+    )
+        .into_response()
+}
+
 /// Batch toggle multiple rewrite rules at once
 pub async fn batch_toggle_rewrites(
     State(state): State<Arc<AppState>>,
@@ -1159,6 +1258,75 @@ pub async fn save_request(
 
     let id = state.replay_manager.save_request(saved);
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
+}
+
+/// Save multiple traffic entries as replay requests in one batch.
+#[derive(Debug, Deserialize)]
+pub struct BatchSaveFromTrafficRequest {
+    /// Traffic entry IDs to save.
+    pub entry_ids: Vec<String>,
+    /// Optional name prefix. If omitted, uses "{METHOD} {URL}".
+    pub name_prefix: Option<String>,
+}
+
+pub async fn batch_save_requests_from_traffic(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BatchSaveFromTrafficRequest>,
+) -> impl IntoResponse {
+    if req.entry_ids.is_empty() {
+        return super::error::ApiError::bad_request("entry_ids cannot be empty").into_response();
+    }
+
+    let mut saved_ids: Vec<String> = Vec::new();
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+
+    for entry_id in &req.entry_ids {
+        match state.traffic_store.get_by_id(entry_id) {
+            Ok(Some(entry)) => {
+                let name = match &req.name_prefix {
+                    Some(prefix) => format!(
+                        "{}: {} {}",
+                        prefix, entry.request.method, entry.request.url
+                    ),
+                    None => format!("{} {}", entry.request.method, entry.request.url),
+                };
+                let saved = SavedRequest::from_traffic(entry_id, entry.request.clone());
+                let mut saved = saved;
+                saved.name = Some(name);
+                let id = state.replay_manager.save_request(saved);
+                saved_ids.push(id);
+            }
+            Ok(None) => {
+                errors.push(serde_json::json!({
+                    "entry_id": entry_id,
+                    "error": "Traffic entry not found",
+                }));
+            }
+            Err(e) => {
+                errors.push(serde_json::json!({
+                    "entry_id": entry_id,
+                    "error": e.to_string(),
+                }));
+            }
+        }
+    }
+
+    let status = if saved_ids.is_empty() {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::CREATED
+    };
+
+    (
+        status,
+        Json(serde_json::json!({
+            "saved": saved_ids.len(),
+            "ids": saved_ids,
+            "errors": errors,
+            "total": req.entry_ids.len(),
+        })),
+    )
+        .into_response()
 }
 
 /// Get a specific saved request

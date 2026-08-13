@@ -31,22 +31,29 @@ For common scenarios, you don't have to configure rewrites by hand. Madhyamas sh
 
 | Field | Description |
 |-------|-------------|
-| **URL Pattern** | Wildcard pattern to match (e.g., `*/api/v1/*`) |
+| **URL Pattern** | Regex pattern to match the request URL (e.g., `https://api\.example\.com`). Empty matches **all** traffic — use with care. |
 | **Method** | HTTP method to match — leave empty for any |
 | **Phase** | Apply on **Request** or **Response** (or both) |
 
+::: tip Escape regex metacharacters
+The URL pattern and the URL rewrite pattern are both **regular expressions**, not glob/wildcard patterns. If you want to match a literal dot in a hostname, use `\.` — an unescaped `.` matches any character. For example, use `https://api\.example\.com` to match the literal host, not `https://api.example.com`.
+:::
+
 ### Rewrite Actions
 
-| Action | Description |
-|--------|-------------|
-| **Redirect URL** | Change the request URL to a different host or path |
-| **Add Header** | Add a new header to the request or response |
-| **Remove Header** | Remove a specific header |
-| **Replace Header** | Replace a header's value |
-| **Replace Body** | Replace the entire request or response body |
-| **Replace URL** | Replace part of the URL using a pattern |
-| **Map Remote** | Map requests from one host to another |
-| **Map Local** | Serve a local file instead of the remote resource |
+| Action | Direction | Description |
+|--------|-----------|-------------|
+| **Set Header** | Request / Response | Add or overwrite a header |
+| **Remove Header** | Request / Response | Remove a specific header |
+| **URL Rewrite** | Request | Replace part of the URL using a regex pattern and replacement string |
+| **Body Rewrite** | Request / Response | Replace text in the body using a regex pattern and replacement string |
+
+The backend also supports two additional actions via the [REST API](./rest-api) and [CLI](./cli) that are not yet exposed in the web UI:
+
+| Action | Direction | Description |
+|--------|-----------|-------------|
+| **Map to URL** (`map_to_url`) | Request | Replace the entire request URL with a fixed target |
+| **Map to File** (`map_to_file`) | Response | Replace the response body with the contents of a local file |
 
 4. Click **Save** to activate the rewrite
 

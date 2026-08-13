@@ -782,6 +782,51 @@ export function useDeleteSavedRequest() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Bulk actions: create mocks / save replay requests from captured traffic
+// ---------------------------------------------------------------------------
+
+export interface BulkActionResult {
+  created?: number;
+  saved?: number;
+  ids: string[];
+  errors: Array<{ entry_id: string; error: string }>;
+  total: number;
+}
+
+/** Create mock rules from one or more captured traffic entries. */
+export function useCreateMockFromTraffic() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      entry_ids: string[];
+      name_prefix?: string;
+      enabled?: boolean;
+    }): Promise<BulkActionResult> => {
+      return apiPost<BulkActionResult>('/mocks/from-traffic', data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mocks'] });
+    },
+  });
+}
+
+/** Save multiple captured traffic entries as replay requests. */
+export function useSaveRequestsFromTraffic() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      entry_ids: string[];
+      name_prefix?: string;
+    }): Promise<BulkActionResult> => {
+      return apiPost<BulkActionResult>('/replay/saved/from-traffic', data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['saved-requests'] });
+    },
+  });
+}
+
 export function useReplayRequest() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -104,7 +104,7 @@ export default function App() {
                 {activeView === "throttle" && <ThrottlePanel />}
                 {activeView === "mocks" && <MocksPanel />}
                 {activeView === "rewrites" && <RewritesPanel />}
-                {activeView === "replay" && <ReplayPanel selectedEntry={null} />}
+                {activeView === "replay" && <ReplayPanel />}
                 {activeView === "mirror" && <MirrorPanel />}
                 {activeView === "grpc" && <GrpcPanel />}
                 {activeView === "scripts" && <ScriptsPanel />}

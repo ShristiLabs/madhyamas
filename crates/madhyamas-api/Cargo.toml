@@ -44,3 +44,4 @@ mime_guess.workspace = true
 url.workspace = true
 parking_lot.workspace = true
 validator.workspace = true
+regex.workspace = true

@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button'
 import { BreakpointsPanel } from '@/features/tools/BreakpointsPanel'
 import { ThrottlePanel } from '@/features/tools/ThrottlePanel'
 import { RewritesPanel } from '@/features/tools/RewritesPanel'
-import type { TrafficEntry } from '@/lib/api'
 
 // Lazy-load the heavier panels to keep the initial bundle small.
 const MocksPanel = lazy(() => import('@/features/tools/MocksPanel').then((m) => ({ default: m.MocksPanel })))
@@ -29,7 +28,6 @@ import {
 import { cn } from '@/lib/utils'
 
 interface ToolsSidebarProps {
-  selectedEntry?: TrafficEntry | null
   isOpen: boolean
   onClose: () => void
 }
@@ -64,7 +62,7 @@ const categoryLabels: Record<string, string> = {
   extend: 'Extend',
 }
 
-export function ToolsSidebar({ selectedEntry, isOpen, onClose }: ToolsSidebarProps) {
+export function ToolsSidebar({ isOpen, onClose }: ToolsSidebarProps) {
   const [activeTab, setActiveTab] = useState<TabValue>('mocks')
 
   if (!isOpen) return null
@@ -132,7 +130,7 @@ export function ToolsSidebar({ selectedEntry, isOpen, onClose }: ToolsSidebarPro
           {activeTab === 'mocks' && <MocksPanel />}
           {activeTab === 'rewrites' && <RewritesPanel />}
           {activeTab === 'throttle' && <ThrottlePanel />}
-          {activeTab === 'replay' && <ReplayPanel selectedEntry={selectedEntry} />}
+          {activeTab === 'replay' && <ReplayPanel />}
           {activeTab === 'mirror' && <MirrorPanel />}
           {activeTab === 'grpc' && <GrpcPanel />}
           {activeTab === 'scripts' && <ScriptsPanel />}

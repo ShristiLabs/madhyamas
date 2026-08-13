@@ -51,6 +51,10 @@ const REWRITE_TEMPLATES: {
   headerName: string;
   headerValue?: string;
   direction: 'request' | 'response' | 'both';
+  // Condition regex. When omitted, the rule matches all traffic. For
+  // url_rewrite templates this should default to the source host so the
+  // rule only rewrites requests to that host, not every request.
+  urlPattern?: string;
   // Optional multi-action preset. When present, `handleCreate` uses these
   // actions directly instead of the single-action form fields.
   actions?: RewriteAction[];
@@ -78,9 +82,15 @@ const REWRITE_TEMPLATES: {
   {
     name: 'Redirect to Localhost',
     actionType: 'url_rewrite',
-    headerName: 'https://api.example.com',
+    // Escape the dots so the regex matches the literal host, not any
+    // character. Without escaping, `api.example.com` also matches
+    // `apiXexampleXcom`.
+    headerName: 'https://api\\.example\\.com',
     headerValue: 'http://localhost:3000',
     direction: 'request',
+    // Only apply to requests targeting the source host — without this,
+    // the condition defaults to "all" and EVERY request gets redirected.
+    urlPattern: 'https://api\\.example\\.com',
   },
   {
     name: 'No Caching',
@@ -376,6 +386,10 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
       headerName: template.headerName,
       headerValue: template.headerValue ?? '',
       direction: template.direction,
+      // Pre-fill the condition so url_rewrite templates only match the
+      // source host, not all traffic. Templates without a urlPattern
+      // keep the existing value (empty → matches all).
+      urlPattern: template.urlPattern ?? newRewrite.urlPattern,
     });
   };
 
@@ -530,12 +544,15 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <label className="text-sm font-medium">URL Pattern (Regex, optional)</label>
+                    <label className="text-sm font-medium">URL Pattern (Regex)</label>
                     <Input
-                      placeholder=".*api/.*"
+                      placeholder="https://api\\.example\\.com"
                       value={newRewrite.urlPattern}
                       onChange={(e) => setNewRewrite({ ...newRewrite, urlPattern: e.target.value })}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Matches which requests this rule applies to. Empty = all traffic.
+                    </p>
                   </div>
                   <div className="grid gap-2">
                     <label className="text-sm font-medium">Direction</label>
@@ -711,12 +728,15 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
               />
             </div>
             <div className="grid gap-2">
-              <label className="text-sm font-medium">URL Pattern (Regex, optional)</label>
+              <label className="text-sm font-medium">URL Pattern (Regex)</label>
               <Input
-                placeholder=".*api/.*"
+                placeholder="https://api\\.example\\.com"
                 value={editRewrite.urlPattern}
                 onChange={(e) => setEditRewrite({ ...editRewrite, urlPattern: e.target.value })}
               />
+              <p className="text-xs text-muted-foreground">
+                Matches which requests this rule applies to. Empty = all traffic.
+              </p>
             </div>
             <div className="grid gap-2">
               <label className="text-sm font-medium">Direction</label>
