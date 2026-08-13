@@ -130,7 +130,9 @@ pub use performance::{
 pub use storage::PluginStoreBackend;
 #[cfg(feature = "scripting")]
 pub use storage::ScriptStoreBackend;
-pub use storage::{ConfigStoreBackend, InterceptStoreBackend, TrafficStoreBackend};
+pub use storage::{
+    ConfigStoreBackend, InterceptStoreBackend, SqliteConfigStore, TrafficStoreBackend,
+};
 
 /// Result type
 pub type Result<T> = std::result::Result<T, Error>;
@@ -146,6 +148,8 @@ pub enum Error {
     Certificate(String),
     #[error("Database error: {0}")]
     Database(#[from] rusqlite::Error),
+    #[error("SQLx database error: {0}")]
+    Sqlx(#[from] sqlx::Error),
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
     #[error("Proxy error: {0}")]

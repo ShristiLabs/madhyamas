@@ -21,6 +21,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+pub mod sqlite;
+
+pub use sqlite::SqliteConfigStore;
+
 use crate::intercept::{BlockListEntry, BreakpointRule, MockRule, RewriteRule, ThrottleProfile};
 use crate::mirror::MirrorWriter;
 use crate::persistence::PersistedConfig;

@@ -60,6 +60,7 @@ impl AppError for crate::Error {
             crate::Error::Tls(_) => "CORE_TLS",
             crate::Error::Certificate(_) => "CORE_CERTIFICATE",
             crate::Error::Database(_) => "CORE_DATABASE",
+            crate::Error::Sqlx(_) => "CORE_DATABASE",
             crate::Error::Serialization(_) => "CORE_SERIALIZATION",
             crate::Error::Proxy(_) => "CORE_PROXY",
             crate::Error::Config(_) => "CORE_CONFIG",
@@ -76,6 +77,7 @@ impl AppError for crate::Error {
             crate::Error::Tls(_)
             | crate::Error::Certificate(_)
             | crate::Error::Database(_)
+            | crate::Error::Sqlx(_)
             | crate::Error::Serialization(_)
             | crate::Error::Proxy(_)
             | crate::Error::Config(_) => false,

@@ -3,7 +3,7 @@
 mod config_store;
 mod intercept_store;
 
-pub use config_store::{ConfigStore, PersistedConfig};
+pub use config_store::PersistedConfig;
 pub use intercept_store::InterceptStore;
 
 /// Common persistence interface for in-memory managers.
