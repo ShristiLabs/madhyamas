@@ -17,9 +17,39 @@ errors=0
 
 echo "Checking internal links and source path references in docs/..."
 
+# Docs that are design/analysis documents referencing proposed files that
+# don't exist yet. Internal markdown links are still checked; only source
+# path references (crates/..., web/src/...) are exempted for these docs.
+DESIGN_DOCS="
+ENTERPRISE_OVERVIEW.md
+ENTERPRISE_AUTH_RBAC.md
+ENTERPRISE_CICD.md
+ENTERPRISE_LICENSING_SERVER.md
+ENTERPRISE_MULTI_INSTANCE.md
+ENTERPRISE_PERF_SECURITY.md
+ENTERPRISE_STORAGE_TRAITS.md
+ENTERPRISE_WEB_UI.md
+ENTERPRISE_OSS_COMPARISON.md
+ENTERPRISE_AI_AGENTS.md
+ENTERPRISE_CRATE_MIGRATION.md
+ENTERPRISE_IMPLEMENTATION_PLAN.md
+"
+
+is_design_doc() {
+    local name="$1"
+    echo "$DESIGN_DOCS" | grep -qx "$name"
+}
+
 for doc in "$DOCS_DIR"/*.md; do
     # Skip TEMPLATE.md — it contains example links by design
     [ "$(basename "$doc")" = "TEMPLATE.md" ] && continue
+    doc_name="$(basename "$doc")"
+    # Design docs: skip source path check (they reference proposed files),
+    # but still check internal markdown links.
+    skip_paths=0
+    if is_design_doc "$doc_name"; then
+        skip_paths=1
+    fi
     # 1. Check internal markdown links: [text](something.md)
     #    Extract .md targets (ignore http/https URLs and anchors)
     while IFS= read -r target; do
@@ -40,6 +70,8 @@ for doc in "$DOCS_DIR"/*.md; do
     # 2. Check source path references: `crates/...` or `web/src/...`
     #    Skip paths inside fenced code blocks (``` ... ```) since those are
     #    often illustrative examples, not real file references.
+    #    Skip entirely for design docs (they reference proposed files).
+    [ "$skip_paths" = "1" ] && continue
     while IFS= read -r ref_path; do
         full="$REPO_ROOT/${ref_path%/}"
         if [ ! -e "$full" ]; then

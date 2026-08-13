@@ -41,6 +41,15 @@ traffic.db-journal
 *.db
 *.db-journal
 
+# Enterprise: license keys, signing keys, secrets
+*.lic
+*.license
+license.key
+signing-key.pem
+signing-pub.pem
+.env.enterprise
+.env.enterprise.*
+
 # Logs
 logs/
 *.log
