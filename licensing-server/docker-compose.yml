@@ -1,0 +1,77 @@
+# Docker Compose for local development of the licensing server.
+#
+# Brings up: PostgreSQL (database), Redis (session cache, optional), and the
+# licensing server itself.
+#
+# Usage:
+#   1. Generate an Ed25519 keypair:
+#      docker compose run licensing-server generate-keys --output-dir /keys
+#   2. Start all services:
+#      docker compose up
+#   3. The licensing server is available at http://localhost:8080
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: madhyamas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-madhyamas_dev}
+      POSTGRES_DB: madhyamas
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U madhyamas"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  licensing-server:
+    build:
+      context: ..
+      dockerfile: licensing-server/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: "postgres://madhyamas:${POSTGRES_PASSWORD:-madhyamas_dev}@postgres:5432/madhyamas"
+      PORT: "8080"
+      BIND_ADDR: "0.0.0.0"
+      ADMIN_KEY: "${ADMIN_KEY:-dev}"
+      RUST_LOG: "info"
+      # Ed25519 key files — mount a volume containing ed25519_private.key and
+      # ed25519_public.key. If omitted, a fresh keypair is generated on startup
+      # (development mode only).
+      ED25519_PRIVATE_KEY_FILE: "${ED25519_PRIVATE_KEY_FILE:-}"
+      ED25519_PUBLIC_KEY_FILE: "${ED25519_PUBLIC_KEY_FILE:-}"
+    volumes:
+      - ./keys:/keys:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command:
+      - "./madhyamas-licensing"
+      - "--database-url"
+      - "postgres://madhyamas:${POSTGRES_PASSWORD:-madhyamas_dev}@postgres:5432/madhyamas"
+      - "--port"
+      - "8080"
+      - "--admin-key"
+      - "${ADMIN_KEY:-dev}"
+
+volumes:
+  pgdata:
+  redisdata:

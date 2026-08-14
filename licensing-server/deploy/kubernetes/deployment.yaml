@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: licensing-server
+  namespace: madhyamas-licensing
+  labels:
+    app.kubernetes.io/name: madhyamas-licensing
+    app.kubernetes.io/part-of: madhyamas
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: madhyamas-licensing
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: madhyamas-licensing
+    spec:
+      containers:
+        - name: licensing-server
+          image: madhyamas/licensing-server:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: licensing-config
+            - secretRef:
+                name: licensing-secrets
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: licensing-secrets
+                  key: database-url
+            - name: ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: licensing-secrets
+                  key: admin-key
+          volumeMounts:
+            - name: ed25519-keys
+              mountPath: /keys
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: ed25519-keys
+          secret:
+            secretName: licensing-secrets
+            items:
+              - key: ed25519-private-key
+                path: ed25519_private.key
+              - key: ed25519-public-key
+                path: ed25519_public.key

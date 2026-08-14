@@ -1,0 +1,35 @@
+[package]
+name = "madhyamas-licensing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "BSL-1.1"
+publish = false
+authors.workspace = true
+description = "Madhyamas enterprise licensing server: issues, verifies, and manages Ed25519-signed licenses"
+
+[features]
+default = []
+
+[dependencies]
+axum.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+ed25519-dalek.workspace = true
+base64 = "0.22"
+chrono.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+rand = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
+madhyamas-enterprise = { path = "../crates/madhyamas-enterprise" }
+rand_core = { version = "0.6", default-features = false, features = ["std"] }
