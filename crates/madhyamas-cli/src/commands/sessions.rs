@@ -68,20 +68,20 @@ pub enum SessionCommands {
 }
 
 impl SessionCommands {
-    pub async fn execute(&self, api_url: String) -> Result<()> {
+    pub async fn execute(&self, api_url: String, auth: super::CliAuth) -> Result<()> {
         match self {
             SessionCommands::List => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("sessions").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             SessionCommands::Get(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get(&format!("sessions/{}", args.id)).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             SessionCommands::Create(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let mut body = json!({});
                 if let Some(ref n) = args.name {
                     body["name"] = Value::String(n.clone());
@@ -98,12 +98,12 @@ impl SessionCommands {
                 }
             }
             SessionCommands::Delete(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.delete(&format!("sessions/{}", args.id)).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             SessionCommands::Switch(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client
                     .post(&format!("sessions/{}/switch", args.id), json!({}))
                     .await?;
@@ -114,7 +114,7 @@ impl SessionCommands {
                 }
             }
             SessionCommands::Export(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client
                     .get(&format!(
                         "sessions/{}/export?format={}",

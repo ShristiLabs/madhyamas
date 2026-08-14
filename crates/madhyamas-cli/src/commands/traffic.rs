@@ -86,10 +86,10 @@ pub enum TrafficCommands {
 }
 
 impl TrafficCommands {
-    pub async fn execute(&self, api_url: String) -> Result<()> {
+    pub async fn execute(&self, api_url: String, auth: super::CliAuth) -> Result<()> {
         match self {
             TrafficCommands::List(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let mut query_parts: Vec<String> = Vec::new();
 
                 if let Some(ref filter) = args.filter {
@@ -117,7 +117,7 @@ impl TrafficCommands {
                 }
             }
             TrafficCommands::Get(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get(&format!("traffic/{}", args.id)).await?;
                 if args.json {
                     println!("{}", serde_json::to_string_pretty(&result)?);
@@ -126,7 +126,7 @@ impl TrafficCommands {
                 }
             }
             TrafficCommands::Search(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client
                     .get(&format!("traffic/search?q={}", args.query))
                     .await?;
@@ -137,12 +137,12 @@ impl TrafficCommands {
                 }
             }
             TrafficCommands::Count => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("traffic/count").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             TrafficCommands::Clear => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.delete("traffic").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
@@ -159,7 +159,7 @@ impl TrafficCommands {
                     "switch_session": args.switch,
                 });
 
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.post("traffic/import/har", body).await?;
                 if args.json {
                     println!("{}", serde_json::to_string_pretty(&result)?);
@@ -190,7 +190,7 @@ impl TrafficCommands {
                 }
             }
             TrafficCommands::ScriptTraces(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client
                     .get(&format!("traffic/{}/script-traces", args.id))
                     .await?;

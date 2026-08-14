@@ -333,15 +333,15 @@ pub enum MockCommands {
 }
 
 impl MockCommands {
-    pub async fn execute(&self, api_url: String) -> Result<()> {
+    pub async fn execute(&self, api_url: String, auth: super::CliAuth) -> Result<()> {
         match self {
             MockCommands::List => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("mocks").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::Create(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let mut body = json!({
                     "url_pattern": args.url_pattern,
                 });
@@ -369,7 +369,7 @@ impl MockCommands {
                 }
             }
             MockCommands::Update(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let mut body = json!({});
                 if let Some(ref p) = args.url_pattern {
                     body["url_pattern"] = Value::String(p.clone());
@@ -397,12 +397,12 @@ impl MockCommands {
                 }
             }
             MockCommands::Delete(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.delete(&format!("mocks/{}", args.id)).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::Toggle(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let body = json!({ "enabled": args.enabled });
                 let result = client
                     .post(&format!("mocks/{}/toggle", args.id), body)
@@ -410,14 +410,14 @@ impl MockCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::BatchToggle(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let ids: Vec<&str> = args.ids.split(',').map(|s| s.trim()).collect();
                 let body = json!({ "ids": ids, "enabled": args.enabled });
                 let result = client.post("mocks/batch-toggle", body).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::Duplicate(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let mut body = json!({});
                 if let Some(ref name) = args.new_name {
                     body["new_name"] = Value::String(name.clone());
@@ -428,7 +428,7 @@ impl MockCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::Rollback(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let body = if let Some(v) = args.version {
                     json!({ "version": v })
                 } else {
@@ -440,7 +440,7 @@ impl MockCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::Versions(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get(&format!("mocks/{}/versions", args.id)).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
@@ -453,12 +453,12 @@ impl MockCommands {
                     anyhow::bail!("Either --config or --config-file is required");
                 };
                 let config: Value = serde_json::from_str(&config_str)?;
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.post("mocks/advanced", config).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::Analytics(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = if let Some(ref id) = args.id {
                     client.get(&format!("mocks/{}/analytics", id)).await?
                 } else {
@@ -467,7 +467,7 @@ impl MockCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::History(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let id = args
                     .id
                     .as_ref()
@@ -476,7 +476,7 @@ impl MockCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::Preview(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let mut request = json!({});
                 if let Some(ref m) = args.method {
                     request["method"] = Value::String(m.clone());
@@ -496,7 +496,7 @@ impl MockCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::Test(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let mut request = json!({});
                 if let Some(ref m) = args.method {
                     request["method"] = Value::String(m.clone());
@@ -518,7 +518,7 @@ impl MockCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::Export(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("mocks/export").await?;
                 let pretty = serde_json::to_string_pretty(&result)?;
                 if let Some(ref path) = args.output {
@@ -530,36 +530,36 @@ impl MockCommands {
             }
             MockCommands::Import(args) => {
                 let data = std::fs::read_to_string(&args.input)?;
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let body = json!({ "format": args.format, "data": data });
                 let result = client.post("mocks/import", body).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::Templates => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("mocks/templates").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::ClearRecording => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 client.post_void("mocks/recording/clear", json!({})).await?;
                 println!("Cleared all recorded mock candidates.");
             }
             MockCommands::ClearAnalytics => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 client.post_void("mocks/history/clear", json!({})).await?;
                 println!("Cleared all mock hit history.");
             }
             MockCommands::Get(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get(&format!("mocks/{}", args.id)).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCommands::Recording(cmd) => {
-                cmd.execute(api_url).await?;
+                cmd.execute(api_url, auth).await?;
             }
             MockCommands::Collections(cmd) => {
-                cmd.execute(api_url).await?;
+                cmd.execute(api_url, auth).await?;
             }
         }
         Ok(())
@@ -567,26 +567,26 @@ impl MockCommands {
 }
 
 impl MockRecordingCommands {
-    pub async fn execute(&self, api_url: String) -> Result<()> {
+    pub async fn execute(&self, api_url: String, auth: super::CliAuth) -> Result<()> {
         match self {
             MockRecordingCommands::Set(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let body = json!({ "enabled": args.enabled });
                 let result = client.post("mocks/recording", body).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockRecordingCommands::Status => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("mocks/recording/status").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockRecordingCommands::List => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("mocks/recording/recorded").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockRecordingCommands::Promote => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.post("mocks/recording/promote", json!({})).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
@@ -596,15 +596,15 @@ impl MockRecordingCommands {
 }
 
 impl MockCollectionCommands {
-    pub async fn execute(&self, api_url: String) -> Result<()> {
+    pub async fn execute(&self, api_url: String, auth: super::CliAuth) -> Result<()> {
         match self {
             MockCollectionCommands::List => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("mocks/collections").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCollectionCommands::Create(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let mut body = json!({ "name": args.name });
                 if let Some(ref desc) = args.description {
                     body["description"] = Value::String(desc.clone());
@@ -613,14 +613,14 @@ impl MockCollectionCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCollectionCommands::Get(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client
                     .get(&format!("mocks/collections/{}", args.id))
                     .await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCollectionCommands::Delete(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let body = json!({ "delete_rules": args.delete_rules });
                 let result = client
                     .delete_with_body(&format!("mocks/collections/{}", args.id), body)
@@ -628,7 +628,7 @@ impl MockCollectionCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCollectionCommands::Toggle(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let body = json!({ "enabled": args.enabled });
                 let result = client
                     .post(&format!("mocks/collections/{}/toggle", args.id), body)
@@ -636,7 +636,7 @@ impl MockCollectionCommands {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             MockCollectionCommands::Update(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let mut body = json!({});
                 if let Some(ref name) = args.name {
                     body["name"] = Value::String(name.clone());

@@ -38,7 +38,7 @@ use tracing::{debug, info, Level};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 // Re-export CLI commands from the madhyamas-cli library
-use madhyamas_cli::Commands as CliCommands;
+use madhyamas_cli::{CliAuth, Commands as CliCommands};
 
 // Re-export MCP server from the madhyamas-mcp library
 use madhyamas_mcp::{McpAuth, McpConfig, McpServer};
@@ -302,6 +302,25 @@ struct Args {
     /// behavior). The path is normalized to not have a trailing slash.
     #[arg(long, env = "MADHYAMAS_BASE_PATH", global = true)]
     base_path: Option<String>,
+
+    /// API key for authenticating MCP/CLI requests against an enterprise
+    /// API server with `--enable-auth`. Sent as the `X-API-Key` header.
+    /// Overrides the `MADHYAMAS_API_KEY` environment variable. When both
+    /// `--api-key` and `--token` are provided, the API key takes
+    /// precedence. In OSS mode (or when auth is disabled) this is accepted
+    /// but ignored by the API server.
+    #[arg(long, env = "MADHYAMAS_API_KEY", global = true)]
+    api_key: Option<String>,
+
+    /// JWT token for authenticating MCP/CLI requests against an enterprise
+    /// API server with `--enable-auth`. Sent as the
+    /// `Authorization: Bearer <token>` header. Overrides the
+    /// `MADHYAMAS_TOKEN` environment variable. When both `--api-key` and
+    /// `--token` are provided, the API key takes precedence. In OSS mode
+    /// (or when auth is disabled) this is accepted but ignored by the API
+    /// server.
+    #[arg(long, env = "MADHYAMAS_TOKEN", global = true)]
+    token: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -363,16 +382,7 @@ async fn main() -> Result<()> {
             info!("Starting Madhyamas MCP Server");
             info!("API URL: {}", api_url);
 
-            // Resolve auth from env vars (API key takes precedence over JWT).
-            let api_key = std::env::var("MADHYAMAS_API_KEY").ok();
-            let token = std::env::var("MADHYAMAS_TOKEN").ok();
-            let auth = if let Some(key) = api_key {
-                McpAuth::ApiKey(key)
-            } else if let Some(t) = token {
-                McpAuth::Jwt(t)
-            } else {
-                McpAuth::None
-            };
+            let auth = resolve_mcp_auth(&args.api_key, &args.token);
             let config = McpConfig {
                 api_url,
                 timeout_secs,
@@ -393,7 +403,8 @@ async fn main() -> Result<()> {
 
             let api_url = std::env::var("MADHYAMAS_API_URL")
                 .unwrap_or_else(|_| format!("http://{}:{}", args.host, args.api_port));
-            cli_cmd.execute(api_url).await
+            let auth = resolve_cli_auth(&args.api_key, &args.token);
+            cli_cmd.execute(api_url, auth).await
         }
 
         Some(Command::Serve) | None => {
@@ -421,6 +432,39 @@ async fn main() -> Result<()> {
             run_proxy_server(args, log_handle).await
         }
     }
+}
+
+/// Resolve MCP authentication credentials from CLI flags / env vars.
+///
+/// Precedence (matches the enterprise auth middleware's acceptance order):
+/// 1. `--api-key` (or `MADHYAMAS_API_KEY` env var) → [`McpAuth::ApiKey`]
+/// 2. `--token` (or `MADHYAMAS_TOKEN` env var) → [`McpAuth::Jwt`]
+/// 3. Neither set → [`McpAuth::None`] (OSS mode or auth disabled)
+///
+/// When both are provided, the API key takes precedence. clap already
+/// populates the `Option`s from their env vars, so the caller passes the
+/// resolved values directly.
+fn resolve_mcp_auth(api_key: &Option<String>, token: &Option<String>) -> McpAuth {
+    if let Some(key) = api_key {
+        return McpAuth::ApiKey(key.clone());
+    }
+    if let Some(t) = token {
+        return McpAuth::Jwt(t.clone());
+    }
+    McpAuth::None
+}
+
+/// Resolve CLI authentication credentials from CLI flags / env vars.
+///
+/// Same precedence as [`resolve_mcp_auth`]: API key > JWT > none.
+fn resolve_cli_auth(api_key: &Option<String>, token: &Option<String>) -> CliAuth {
+    if let Some(key) = api_key {
+        return CliAuth::ApiKey(key.clone());
+    }
+    if let Some(t) = token {
+        return CliAuth::Jwt(t.clone());
+    }
+    CliAuth::None
 }
 
 /// Build the [`UpstreamProxyConfig`] from CLI args, falling back to the

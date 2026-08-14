@@ -5,4 +5,4 @@
 
 pub mod commands;
 
-pub use commands::{ApiClient, Commands};
+pub use commands::{ApiClient, CliAuth, Commands};

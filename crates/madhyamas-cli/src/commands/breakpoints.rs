@@ -70,20 +70,20 @@ pub enum BreakpointCommands {
 }
 
 impl BreakpointCommands {
-    pub async fn execute(&self, api_url: String) -> Result<()> {
+    pub async fn execute(&self, api_url: String, auth: super::CliAuth) -> Result<()> {
         match self {
             BreakpointCommands::List => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("breakpoints").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             BreakpointCommands::Get(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get(&format!("breakpoints/{}", args.id)).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             BreakpointCommands::Create(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let mut body = json!({
                     "url_pattern": args.url_pattern,
                 });
@@ -105,12 +105,12 @@ impl BreakpointCommands {
                 }
             }
             BreakpointCommands::Delete(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.delete(&format!("breakpoints/{}", args.id)).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             BreakpointCommands::Paused => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("breakpoints/paused").await?;
                 if let Some(items) = result.as_array() {
                     if items.is_empty() {
@@ -134,14 +134,14 @@ impl BreakpointCommands {
                 }
             }
             BreakpointCommands::PausedGet(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client
                     .get(&format!("breakpoints/paused/{}", args.id))
                     .await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             BreakpointCommands::PausedResume(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let body = json!({ "action": args.action });
                 let _ = client
                     .post(&format!("breakpoints/paused/{}/resume", args.id), body)
