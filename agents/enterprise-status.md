@@ -42,6 +42,8 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 10a+10b DB optimization | #60,61 | done | skipped | approved | done (tiered body storage, zstd, session counters, cursor pagination, lazy bodies, write batching, 587 tests) | committed (1890982) | done |
 | 10c+10d DB scale+HA | #62,63 | done | skipped | approved | done (partitioning docs, PgBouncer docs, read/write split, --database-read-url, PGBOUNCER.md, POSTGRES_HA.md) | committed (9b4fb25) | done |
 | 11 CI/CD two-tier | #64 | done | skipped | approved | done (OSS+enterprise matrix, Docker BUILD_TIER, release artifacts, SBOM, BSL-leak check, 587 tests) | committed (76289d3) | done |
+| 12a+12e Licensing core+deploy | #65,69 | done | skipped | approved | done (licensing-server crate, Ed25519 signing, license issuance/verification/seat APIs, Dockerfile, K8s, KEY_MANAGEMENT.md, BACKUP.md, DEPLOYMENT.md, 600 tests) | committed (8172b32) | done |
+| 12b+12c+12d Customer+Stripe+Admin | #66,67,68 | done | skipped | approved | done (JWT auth, customer portal React frontend, Stripe Checkout+webhooks, admin portal, revenue dashboard, 604 tests) | committed (039a8ad) | done |
 
 ## Agent Log
 
