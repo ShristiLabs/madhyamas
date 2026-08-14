@@ -76,11 +76,16 @@ impl PostgresPluginStore {
     /// Create a new store over the given pool, ensuring all plugin tables
     /// and indexes exist.
     pub async fn new(pool: PgPool) -> Result<Self> {
-        sqlx::query(SCHEMA_PLUGIN_STATE).execute(&pool).await?;
-        sqlx::query(SCHEMA_PLUGIN_INVOCATIONS)
-            .execute(&pool)
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(0x4D414448)")
+            .execute(&mut *tx)
             .await?;
-        sqlx::query(SCHEMA_INDEX).execute(&pool).await?;
+        sqlx::query(SCHEMA_PLUGIN_STATE).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_PLUGIN_INVOCATIONS)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(SCHEMA_INDEX).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(Self { pool })
     }
 
@@ -210,7 +215,8 @@ impl PluginStoreBackend for PostgresPluginStore {
         sqlx::query(
             "INSERT INTO plugin_invocations
                 (id, plugin_id, hook, duration_ms, fuel_consumed, success, error, logs, modified, timestamp)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (id) DO NOTHING",
         )
         .bind(&row.id)
         .bind(&row.plugin_id)

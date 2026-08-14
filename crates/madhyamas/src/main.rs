@@ -1635,8 +1635,16 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             .with_audit_sink(audit.clone());
         // Wire the Redis event publisher into AppState so API handlers can
         // publish config/intercept change notifications cross-instance.
+        // Also create a separate broadcast channel for cross-instance traffic
+        // events to prevent an infinite event loop (local → Redis → local
+        // broadcast → Redis → …). The Redis→local bridge sends to this
+        // separate channel instead of the traffic store's broadcast.
+        let (cross_instance_tx, _cross_instance_rx_dummy) =
+            tokio::sync::broadcast::channel::<madhyamas_core::TrafficEvent>(256);
         let api_state = if let Some(ref rs) = redis_state {
-            api_state.with_event_publisher(rs.clone())
+            api_state
+                .with_event_publisher(rs.clone())
+                .with_cross_instance_sender(cross_instance_tx.clone())
         } else {
             api_state
         };
@@ -1646,7 +1654,6 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         if let Some(ref rs) = redis_state {
             // WS event bridge: local broadcast → Redis publish.
             let rs_pub = rs.clone();
-            let local_sender = api_state.traffic_store.event_sender();
             let mut local_rx = api_state.traffic_store.subscribe();
             let pub_instance_id = instance_id.clone();
             tokio::spawn(async move {
@@ -1675,9 +1682,16 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                     }
                 }
             });
-            // WS event bridge: Redis subscribe → local broadcast.
+            // WS event bridge: Redis subscribe → cross-instance channel.
+            // Events from other instances are sent to the cross_instance_tx
+            // channel (NOT the traffic store's local broadcast) to prevent
+            // an infinite loop: the local→Redis bridge subscribes to the
+            // traffic store's broadcast, so if we re-broadcast Redis events
+            // there, they would be re-published to Redis and bounce forever.
+            // The WebSocket handler subscribes to both the local broadcast
+            // and this cross-instance channel.
             let rs_sub = rs.clone();
-            let local_sender_clone = local_sender;
+            let cross_tx = cross_instance_tx.clone();
             let sub_instance_id = instance_id.clone();
             tokio::spawn(async move {
                 use futures::StreamExt;
@@ -1694,7 +1708,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                                         if wrapper.instance_id == sub_instance_id {
                                             continue;
                                         }
-                                        let _ = local_sender_clone.send(wrapper.event);
+                                        let _ = cross_tx.send(wrapper.event);
                                     }
                                 }
                             }
@@ -1779,6 +1793,18 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                         }
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            });
+            // Periodic session sync: check shared state for current session
+            // changes made by other instances so this instance records new
+            // traffic against the correct session.
+            let sync_store = api_state.traffic_store.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    if let Err(e) = sync_store.sync_current_session().await {
+                        tracing::debug!("Session sync failed: {e}");
+                    }
                 }
             });
         }
@@ -2135,6 +2161,10 @@ async fn bootstrap_admin_user(
 ) -> Result<()> {
     use madhyamas_enterprise::{hash_password, User, UserRole, UserStatus};
 
+    // Fast path: if users already exist, another instance (or a prior
+    // run) has already bootstrapped. This is an optimization only — the
+    // real race-safety comes from `ON CONFLICT DO NOTHING` in
+    // `create_user` plus the post-insert lookup below.
     let existing = store
         .list_users()
         .await
@@ -2170,19 +2200,50 @@ async fn bootstrap_admin_user(
         username.clone(),
         UserStatus::Active,
     );
+    // Try to create the admin user. If a racing instance already inserted
+    // the same username, `ON CONFLICT (username) DO NOTHING` makes this a
+    // no-op instead of crashing with a unique-constraint violation.
     store
         .create_user(&user, &password_hash)
         .await
         .map_err(|e| anyhow::anyhow!("bootstrap: failed to create admin user: {e}"))?;
-    if auto_generated {
-        tracing::warn!(
-            "Bootstrap: created admin user '{}'. \
-             Auto-generated password (CHANGE IMMEDIATELY): {}",
-            username,
-            password
-        );
-    } else {
-        tracing::info!("Bootstrap: created admin user '{}'", username);
+
+    // Determine whether we actually created the user or whether a racing
+    // instance beat us to it. We look the user up by username and compare
+    // the stored id against the one we just attempted to insert.
+    let stored = store
+        .get_user_by_username(&username)
+        .await
+        .map_err(|e| anyhow::anyhow!("bootstrap: failed to look up admin user: {e}"))?;
+    match stored {
+        Some(u) if u.id == user.id => {
+            // We won the race and created the admin user.
+            if auto_generated {
+                tracing::warn!(
+                    "Bootstrap: created admin user '{}'. \
+                     Auto-generated password (CHANGE IMMEDIATELY): {}",
+                    username,
+                    password
+                );
+            } else {
+                tracing::info!("Bootstrap: created admin user '{}'", username);
+            }
+        }
+        Some(_) => {
+            // Another instance created the admin user first. Don't log
+            // credentials — we don't know them. The user is ready to use.
+            tracing::info!(
+                "Bootstrap: admin user '{}' already exists (created by another instance); skipping",
+                username
+            );
+        }
+        None => {
+            // Should not happen given the INSERT above, but be resilient.
+            tracing::warn!(
+                "Bootstrap: admin user '{}' not found after create attempt; skipping",
+                username
+            );
+        }
     }
     Ok(())
 }

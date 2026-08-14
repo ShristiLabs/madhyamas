@@ -87,11 +87,16 @@ impl PostgresScriptStore {
     /// Create a new store over the given pool, ensuring all script tables
     /// and indexes exist.
     pub async fn new(pool: PgPool) -> Result<Self> {
-        sqlx::query(SCHEMA_SCRIPTS).execute(&pool).await?;
-        sqlx::query(SCHEMA_SCRIPT_EXECUTIONS).execute(&pool).await?;
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(0x4D414448)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(SCHEMA_SCRIPTS).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_SCRIPT_EXECUTIONS).execute(&mut *tx).await?;
         for stmt in SCHEMA_INDEX_STMTS {
-            sqlx::query(stmt).execute(&pool).await?;
+            sqlx::query(stmt).execute(&mut *tx).await?;
         }
+        tx.commit().await?;
         Ok(Self { pool })
     }
 
@@ -207,7 +212,8 @@ impl ScriptStoreBackend for PostgresScriptStore {
         sqlx::query(
             "INSERT INTO script_executions
                 (id, script_id, duration_ms, success, error, console, timestamp, traffic_entry_id, hook)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (id) DO NOTHING",
         )
         .bind(&id)
         .bind(&exec.script_id)

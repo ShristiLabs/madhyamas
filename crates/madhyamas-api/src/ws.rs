@@ -3,7 +3,8 @@
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
 use madhyamas_core::{
-    TrafficEntrySnapshot, TrafficFilter, TrafficStoreBackend, WsClientMessage, WsServerMessage,
+    TrafficEntrySnapshot, TrafficEvent, TrafficFilter, TrafficStoreBackend, WsClientMessage,
+    WsServerMessage,
 };
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -14,14 +15,17 @@ use uuid::Uuid;
 pub async fn handle_ws(
     socket: WebSocket,
     traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
+    cross_instance_rx: Option<broadcast::Receiver<TrafficEvent>>,
 ) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let client_id = Uuid::new_v4().to_string();
 
     info!("WebSocket client connected: {}", client_id);
 
-    // Subscribe to traffic events
+    // Subscribe to local traffic events
     let mut event_rx = traffic_store.subscribe();
+    // Optionally subscribe to cross-instance events (relayed via Redis)
+    let mut cross_rx = cross_instance_rx;
 
     // Send connection acknowledgment
     let connected_msg = WsServerMessage::Connected {
@@ -57,7 +61,7 @@ pub async fn handle_ws(
                         debug!("Event forwarder shutting down for client: {}", client_id);
                         break;
                     }
-                    // Forward traffic events
+                    // Forward local traffic events
                     event = event_rx.recv() => {
                         match event {
                             Ok(traffic_event) => {
@@ -71,11 +75,43 @@ pub async fn handle_ws(
                             }
                             Err(broadcast::error::RecvError::Lagged(n)) => {
                                 warn!("Client {} lagged behind by {} events", client_id, n);
-                                // Continue receiving - we'll catch up
                             }
                             Err(broadcast::error::RecvError::Closed) => {
                                 debug!("Event channel closed for client: {}", client_id);
                                 break;
+                            }
+                        }
+                    }
+                    // Forward cross-instance traffic events (relayed via Redis)
+                    event = async {
+                        if let Some(ref mut rx) = cross_rx {
+                            rx.recv().await
+                        } else {
+                            // No cross-instance channel — block forever
+                            std::future::pending::<
+                                Result<TrafficEvent, broadcast::error::RecvError>,
+                            >()
+                            .await
+                        }
+                    } => {
+                        if let Some(ref _cross_rx) = cross_rx {
+                            match event {
+                                Ok(traffic_event) => {
+                                    let msg = WsServerMessage::Traffic(Box::new(traffic_event));
+                                    if let Ok(json) = serde_json::to_string(&msg) {
+                                        if ws_tx.send(Message::Text(json.into())).await.is_err() {
+                                            debug!("Client disconnected while sending cross-instance event: {}", client_id);
+                                            break;
+                                        }
+                                    }
+                                }
+                                Err(broadcast::error::RecvError::Lagged(n)) => {
+                                    warn!("Client {} lagged behind by {} cross-instance events", client_id, n);
+                                }
+                                Err(broadcast::error::RecvError::Closed) => {
+                                    debug!("Cross-instance event channel closed for client: {}", client_id);
+                                    // Don't break — local events may still flow
+                                }
                             }
                         }
                     }

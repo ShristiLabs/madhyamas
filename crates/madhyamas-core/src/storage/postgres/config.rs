@@ -34,7 +34,12 @@ impl PostgresConfigStore {
     /// Create a new store over the given pool, ensuring the `config` table
     /// exists.
     pub async fn new(pool: PgPool) -> Result<Self> {
-        sqlx::query(SCHEMA_CONFIG).execute(&pool).await?;
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(0x4D414448)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(SCHEMA_CONFIG).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(Self { pool })
     }
 

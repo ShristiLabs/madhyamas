@@ -54,6 +54,16 @@ const INSTANCES_KEY: &str = "madhyamas:instances";
 /// older than this are considered dead and excluded from the active count.
 const HEARTBEAT_TTL_SECS: i64 = 120;
 
+/// Lua script for atomic ZADD + EXPIRE. Redis executes Lua scripts
+/// atomically (single-threaded), preventing a crash between ZADD and
+/// EXPIRE from leaving stale instance entries that cause seat
+/// over-counting.
+const ZADD_WITH_EXPIRE_SCRIPT: &str = r#"
+redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return 1
+"#;
+
 /// Wrapper for traffic events published over Redis, carrying the originating
 /// instance ID so subscribers can skip their own echoes (deduplication).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,9 +211,17 @@ impl RedisState {
         let member =
             serde_json::to_string(&info).map_err(|e| RedisError::from(io_error(e.to_string())))?;
         let mut conn = self.client.get_multiplexed_async_connection().await?;
-        conn.zadd::<_, _, _, ()>(INSTANCES_KEY, &member, now)
-            .await?;
-        conn.expire::<_, ()>(INSTANCES_KEY, HEARTBEAT_TTL_SECS)
+        // Use a Lua script for atomic ZADD + EXPIRE to prevent a crash
+        // between the two operations from leaving stale entries that cause
+        // seat over-counting.
+        redis::cmd("EVAL")
+            .arg(ZADD_WITH_EXPIRE_SCRIPT)
+            .arg(1) // number of keys
+            .arg(INSTANCES_KEY)
+            .arg(now)
+            .arg(&member)
+            .arg(HEARTBEAT_TTL_SECS)
+            .query_async::<()>(&mut conn)
             .await?;
         Ok(())
     }
@@ -224,14 +242,22 @@ impl RedisState {
                     };
                     let new_member = serde_json::to_string(&updated)
                         .map_err(|e| RedisError::from(io_error(e.to_string())))?;
-                    conn.zadd::<_, _, _, ()>(INSTANCES_KEY, &new_member, now)
+                    // Use a Lua script for atomic ZADD + EXPIRE to prevent a
+                    // crash between the two operations from leaving stale
+                    // entries that cause seat over-counting.
+                    redis::cmd("EVAL")
+                        .arg(ZADD_WITH_EXPIRE_SCRIPT)
+                        .arg(1) // number of keys
+                        .arg(INSTANCES_KEY)
+                        .arg(now)
+                        .arg(&new_member)
+                        .arg(HEARTBEAT_TTL_SECS)
+                        .query_async::<()>(&mut conn)
                         .await?;
                     break;
                 }
             }
         }
-        conn.expire::<_, ()>(INSTANCES_KEY, HEARTBEAT_TTL_SECS)
-            .await?;
         Ok(())
     }
 
@@ -298,9 +324,17 @@ impl RedisState {
         let member =
             serde_json::to_string(&info).map_err(|e| RedisError::from(io_error(e.to_string())))?;
         let mut conn = self.client.get_multiplexed_async_connection().await?;
-        conn.zadd::<_, _, _, ()>(INSTANCES_KEY, &member, now)
-            .await?;
-        conn.expire::<_, ()>(INSTANCES_KEY, HEARTBEAT_TTL_SECS)
+        // Use a Lua script for atomic ZADD + EXPIRE to prevent a crash
+        // between the two operations from leaving stale entries that cause
+        // seat over-counting.
+        redis::cmd("EVAL")
+            .arg(ZADD_WITH_EXPIRE_SCRIPT)
+            .arg(1) // number of keys
+            .arg(INSTANCES_KEY)
+            .arg(now)
+            .arg(&member)
+            .arg(HEARTBEAT_TTL_SECS)
+            .query_async::<()>(&mut conn)
             .await?;
         Ok(())
     }
@@ -327,14 +361,22 @@ impl RedisState {
                     };
                     let new_member = serde_json::to_string(&updated)
                         .map_err(|e| RedisError::from(io_error(e.to_string())))?;
-                    conn.zadd::<_, _, _, ()>(INSTANCES_KEY, &new_member, now)
+                    // Use a Lua script for atomic ZADD + EXPIRE to prevent a
+                    // crash between the two operations from leaving stale
+                    // entries that cause seat over-counting.
+                    redis::cmd("EVAL")
+                        .arg(ZADD_WITH_EXPIRE_SCRIPT)
+                        .arg(1) // number of keys
+                        .arg(INSTANCES_KEY)
+                        .arg(now)
+                        .arg(&new_member)
+                        .arg(HEARTBEAT_TTL_SECS)
+                        .query_async::<()>(&mut conn)
                         .await?;
                     break;
                 }
             }
         }
-        conn.expire::<_, ()>(INSTANCES_KEY, HEARTBEAT_TTL_SECS)
-            .await?;
         Ok(())
     }
 

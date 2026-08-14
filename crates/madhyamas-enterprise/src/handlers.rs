@@ -259,16 +259,22 @@ pub async fn get_instances(
 /// tier is active (Phase 3) and dependency checks (database, Redis, license)
 /// for load-balancer health probes (Phase 6d).
 pub async fn get_health_check(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Extension(license): Extension<Option<License>>,
     Extension(redis): Extension<Option<Arc<crate::RedisState>>>,
     Extension(auth): Extension<Arc<AuthManager>>,
 ) -> Json<HealthCheck> {
-    // Database: always "ok" — the store is initialized at startup; if it
-    // were down the server would not have started. A live probe would
-    // require a trait method on the store; we report "ok" as the store is
-    // verified at startup.
-    let db_status = "ok".to_string();
+    // Database: ping the traffic store to verify the connection is alive
+    // and the schema is initialized. This prevents the load balancer from
+    // routing traffic to an instance whose schema initialization has not
+    // completed (issue #10).
+    let db_status = match state.traffic_store.ping().await {
+        Ok(()) => "ok".to_string(),
+        Err(e) => {
+            tracing::warn!("Health check database ping failed: {e}");
+            "error".to_string()
+        }
+    };
 
     // Redis: "ok" if connected and PING succeeds, "error" on failure,
     // "not_configured" when --redis-url was not provided.

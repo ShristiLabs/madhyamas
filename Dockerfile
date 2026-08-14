@@ -34,9 +34,10 @@ COPY crates/madhyamas-cli/Cargo.toml ./crates/madhyamas-cli/
 COPY crates/madhyamas-mcp/Cargo.toml ./crates/madhyamas-mcp/
 COPY crates/madhyamas-plugin-sdk/Cargo.toml ./crates/madhyamas-plugin-sdk/
 COPY crates/madhyamas-enterprise/Cargo.toml ./crates/madhyamas-enterprise/
+COPY licensing-server/Cargo.toml ./licensing-server/
 
 # Create dummy files to build dependencies
-RUN mkdir -p crates/madhyamas/src crates/madhyamas-core/src crates/madhyamas-api/src crates/madhyamas-cli/src crates/madhyamas-mcp/src crates/madhyamas-plugin-sdk/src crates/madhyamas-enterprise/src
+RUN mkdir -p crates/madhyamas/src crates/madhyamas-core/src crates/madhyamas-api/src crates/madhyamas-cli/src crates/madhyamas-mcp/src crates/madhyamas-plugin-sdk/src crates/madhyamas-enterprise/src licensing-server/src
 RUN echo "fn main() {}" > crates/madhyamas/src/main.rs
 RUN echo "fn main() {}" > crates/madhyamas-core/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-api/src/lib.rs
@@ -46,16 +47,20 @@ RUN echo "pub fn dummy() {}" > crates/madhyamas-mcp/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-mcp/src/main.rs
 RUN echo "pub fn dummy() {}" > crates/madhyamas-plugin-sdk/src/lib.rs
 RUN echo "pub fn dummy() {}" > crates/madhyamas-enterprise/src/lib.rs
+RUN echo "pub fn dummy() {}" > licensing-server/src/lib.rs
+RUN echo "fn main() {}" > licensing-server/src/main.rs
 
 # Copy web dist for rust-embed (needed at compile time)
 COPY --from=frontend-builder /app/web/dist ./web/dist
 
 # Build dependencies (only the madhyamas package, not all crates)
-# Tier-aware: oss disables default features (drops enterprise crate)
+# Tier-aware: oss disables default features (drops enterprise crate).
+# --features embedded-assets embeds the web UI (web/dist) into the binary
+# via rust-embed so the runtime image doesn't need web/dist on disk.
 RUN if [ "$BUILD_TIER" = "oss" ]; then \
-      cargo build --release --no-default-features -p madhyamas --locked; \
+      cargo build --release --no-default-features --features embedded-assets -p madhyamas --locked; \
     else \
-      cargo build --release -p madhyamas --locked; \
+      cargo build --release --features embedded-assets -p madhyamas --locked; \
     fi
 
 # Copy actual source files
@@ -74,9 +79,9 @@ RUN find crates -name "*.rs" -exec touch {} \;
 # Build the unified binary (includes proxy + web UI + MCP + CLI)
 # Tier-aware: oss disables default features (drops enterprise crate)
 RUN if [ "$BUILD_TIER" = "oss" ]; then \
-      cargo build --release --no-default-features -p madhyamas --locked; \
+      cargo build --release --no-default-features --features embedded-assets -p madhyamas --locked; \
     else \
-      cargo build --release -p madhyamas --locked; \
+      cargo build --release --features embedded-assets -p madhyamas --locked; \
     fi
 
 # Runtime stage

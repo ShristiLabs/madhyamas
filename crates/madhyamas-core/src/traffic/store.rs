@@ -158,6 +158,12 @@ CREATE TABLE IF NOT EXISTS session_counters (
     session_id TEXT PRIMARY KEY,
     entry_count INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS instance_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 "#;
 
 impl TrafficStore {
@@ -310,36 +316,41 @@ impl TrafficStore {
                 .await?;
         }
 
+        // Migration safety net: ensure a unique constraint exists on
+        // focus_hosts.pattern even for databases created before the column
+        // was declared `UNIQUE` in `SCHEMA_CORE`. This prevents duplicate
+        // focus host patterns (race condition #8) when two callers insert the
+        // same pattern simultaneously. `INSERT OR IGNORE` in
+        // `add_focus_host` relies on this constraint to resolve races
+        // deterministically.
+        sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_focus_hosts_pattern ON focus_hosts (pattern)")
+            .execute(&self.pool)
+            .await?;
+
         Ok(())
     }
 
-    /// Ensure a session exists
+    /// Ensure a session exists.
+    ///
+    /// Uses a deterministic session ID ("default-session") so that all
+    /// instances in a multi-instance deployment sharing the same database
+    /// operate on the same session.
     async fn ensure_session(&self) -> crate::Result<()> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
-            .fetch_one(&self.pool)
-            .await
-            .unwrap_or(0);
+        const DEFAULT_SESSION_ID: &str = "default-session";
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO sessions (id, name, created_at, updated_at) \
+             VALUES (?, ?, ?, ?) \
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(DEFAULT_SESSION_ID)
+        .bind("Default Session")
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
 
-        if count == 0 {
-            let session = Session::new(Some("Default Session"));
-            sqlx::query(
-                "INSERT INTO sessions (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            )
-            .bind(&session.id)
-            .bind(&session.name)
-            .bind(session.created_at.timestamp())
-            .bind(session.updated_at.timestamp())
-            .execute(&self.pool)
-            .await?;
-            *self.current_session_id.lock() = session.id;
-        } else {
-            let session_id: String =
-                sqlx::query_scalar("SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 1")
-                    .fetch_one(&self.pool)
-                    .await
-                    .unwrap_or_default();
-            *self.current_session_id.lock() = session_id;
-        }
+        *self.current_session_id.lock() = DEFAULT_SESSION_ID.to_string();
 
         Ok(())
     }
@@ -534,6 +545,12 @@ impl TrafficStore {
     /// Prune the oldest `count` entries from the current session. Deletes
     /// associated responses first to avoid orphaned rows, then emits a
     /// `Deleted` event so the web UI updates via WebSocket.
+    ///
+    /// Note: [`enforce_entry_limit`](Self::enforce_entry_limit) now uses an
+    /// atomic `DELETE ... RETURNING` within a transaction instead of calling
+    /// this method, to fix race condition #4. This method is retained as a
+    /// utility for explicit pruning (e.g. via API/CLI).
+    #[allow(dead_code)]
     async fn prune_oldest(&self, count: usize) -> crate::Result<()> {
         if count == 0 {
             return Ok(());
@@ -572,34 +589,139 @@ impl TrafficStore {
 
     /// Enforce the entry-count limit: if the current session has more
     /// entries than `max_entries`, prune the oldest surplus.
+    ///
+    /// The count check and prune are performed inside a single transaction
+    /// so they are atomic with respect to other operations on the pool.
+    /// SQLite is single-instance (no advisory lock needed), but the
+    /// transaction ensures the count and delete are not interleaved with
+    /// concurrent inserts on other pool connections. This mirrors the
+    /// PostgreSQL fix for race condition #4.
     async fn enforce_entry_limit(&self) -> crate::Result<()> {
         let max = self.max_entries.load(Ordering::Relaxed);
         if max == 0 {
             return Ok(());
         }
-        let count = self.get_entry_count().await?;
-        if count > max {
-            self.prune_oldest(count - max).await?;
+
+        let mut tx = self.pool.begin().await?;
+        let session_id = self.current_session_id.lock().clone();
+
+        // Compute the excess count from session_counters (O(1)) within the
+        // transaction, so the count and delete are atomic.
+        let excess: i64 = sqlx::query_scalar(
+            "SELECT MAX(0, \
+                (SELECT COALESCE(entry_count, 0) FROM session_counters WHERE session_id = ?) - ? \
+            )",
+        )
+        .bind(&session_id)
+        .bind(max as i64)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        if excess == 0 {
+            tx.commit().await?;
+            return Ok(());
         }
+
+        // Collect the IDs of the oldest entries to prune (for event +
+        // deletion order). Responses must be deleted before requests to
+        // satisfy the FOREIGN KEY (request_id → requests.id) constraint.
+        let pruned_ids: Vec<String> = sqlx::query(
+            "SELECT id FROM requests WHERE session_id = ? \
+             ORDER BY timestamp ASC LIMIT ?",
+        )
+        .bind(&session_id)
+        .bind(excess)
+        .map(|row: sqlx::sqlite::SqliteRow| row.try_get::<String, _>(0).unwrap_or_default())
+        .fetch_all(&mut *tx)
+        .await?;
+
+        if pruned_ids.is_empty() {
+            tx.commit().await?;
+            return Ok(());
+        }
+
+        // Delete responses first, then requests (FK constraint: no ON DELETE
+        // CASCADE on the responses table).
+        let placeholders = (0..pruned_ids.len()).map(|_| "?").collect::<Vec<_>>().join(",");
+        let delete_responses_sql = format!(
+            "DELETE FROM responses WHERE request_id IN ({})",
+            placeholders
+        );
+        let mut q = sqlx::query(&delete_responses_sql);
+        for id in &pruned_ids {
+            q = q.bind(id);
+        }
+        q.execute(&mut *tx).await?;
+
+        let delete_requests_sql =
+            format!("DELETE FROM requests WHERE id IN ({})", placeholders);
+        let mut q = sqlx::query(&delete_requests_sql);
+        for id in &pruned_ids {
+            q = q.bind(id);
+        }
+        q.execute(&mut *tx).await?;
+
+        // Update the session counter to reflect the prune.
+        let _ = sqlx::query(
+            "UPDATE session_counters SET entry_count = MAX(0, entry_count - ?) WHERE session_id = ?",
+        )
+        .bind(pruned_ids.len() as i64)
+        .bind(&session_id)
+        .execute(&mut *tx)
+        .await;
+
+        tx.commit().await?;
+
+        // Emit the Deleted event after the transaction commits.
+        self.emit_event(TrafficEvent::Deleted(pruned_ids));
+
         Ok(())
     }
 
     /// Enforce the total-size limit: if the sum of all stored bodies
     /// exceeds `max_total_size_bytes`, prune oldest entries until under
     /// the limit. Only runs when `max_total_size_bytes` is non-zero.
+    ///
+    /// The size check and prune are performed inside a single transaction
+    /// so they are atomic. This mirrors the PostgreSQL fix for race
+    /// condition #4 — SQLite is single-instance so no advisory lock is
+    /// needed, but the transaction prevents interleaving with concurrent
+    /// inserts on other pool connections.
     async fn enforce_size_limit(&self) -> crate::Result<()> {
         let max = self.max_total_size_bytes.load(Ordering::Relaxed);
         if max == 0 {
             return Ok(());
         }
-        let mut total = self.get_total_size().await?;
+
+        let mut tx = self.pool.begin().await?;
+        let session_id = self.current_session_id.lock().clone();
+
+        // Compute the total body size within the transaction so the value
+        // is consistent with the subsequent prune.
+        let req_size: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(LENGTH(body)), 0) FROM requests WHERE session_id = ?",
+        )
+        .bind(&session_id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap_or(0);
+        let resp_size: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(LENGTH(body)), 0) FROM responses WHERE request_id IN \
+             (SELECT id FROM requests WHERE session_id = ?)",
+        )
+        .bind(&session_id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap_or(0);
+        let mut total = (req_size + resp_size) as usize;
+
         if total <= max {
+            tx.commit().await?;
             return Ok(());
         }
-        // Prune oldest entries in batches until under the limit.
-        let session_id = self.current_session_id.lock().clone();
-        // Gather oldest entries with their body sizes so we can prune
-        // just enough to get under the limit.
+
+        // Gather oldest entries with their body sizes so we can prune just
+        // enough to get under the limit — all within the transaction.
         let entries: Vec<(String, i64)> = sqlx::query(
             "SELECT r.id, \
              COALESCE(LENGTH(r.body), 0) + COALESCE(\
@@ -615,7 +737,7 @@ impl TrafficStore {
                 row.try_get::<i64, _>(1).unwrap_or(0),
             )
         })
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
 
         let mut to_prune: Vec<String> = Vec::new();
@@ -626,10 +748,45 @@ impl TrafficStore {
             to_prune.push(id);
             total = total.saturating_sub(size as usize);
         }
+
         if !to_prune.is_empty() {
-            delete_requests_and_responses(&self.pool, &to_prune).await?;
+            // Delete responses first, then requests (no ON DELETE CASCADE).
+            let placeholders = (0..to_prune.len()).map(|_| "?").collect::<Vec<_>>().join(",");
+            let delete_responses_sql = format!(
+                "DELETE FROM responses WHERE request_id IN ({})",
+                placeholders
+            );
+            let mut q = sqlx::query(&delete_responses_sql);
+            for id in &to_prune {
+                q = q.bind(id);
+            }
+            q.execute(&mut *tx).await?;
+
+            let delete_requests_sql =
+                format!("DELETE FROM requests WHERE id IN ({})", placeholders);
+            let mut q = sqlx::query(&delete_requests_sql);
+            for id in &to_prune {
+                q = q.bind(id);
+            }
+            q.execute(&mut *tx).await?;
+
+            // Update the session counter to reflect the prune.
+            let _ = sqlx::query(
+                "UPDATE session_counters SET entry_count = MAX(0, entry_count - ?) WHERE session_id = ?",
+            )
+            .bind(to_prune.len() as i64)
+            .bind(&session_id)
+            .execute(&mut *tx)
+            .await;
+        }
+
+        tx.commit().await?;
+
+        // Emit the Deleted event after the transaction commits.
+        if !to_prune.is_empty() {
             self.emit_event(TrafficEvent::Deleted(to_prune));
         }
+
         Ok(())
     }
 
@@ -716,7 +873,7 @@ impl TrafficStore {
         // UPDATE) — eliminates the expensive COUNT(*) on every stats request.
         let _ = sqlx::query(
             "INSERT INTO session_counters (session_id, entry_count) VALUES (?, 1) \
-             ON CONFLICT(session_id) DO UPDATE SET entry_count = entry_count + 1",
+             ON CONFLICT(session_id) DO UPDATE SET entry_count = session_counters.entry_count + 1",
         )
         .bind(&entry.session_id)
         .execute(&self.pool)
@@ -1178,6 +1335,54 @@ impl TrafficStore {
         }
 
         *self.current_session_id.lock() = session_id.to_string();
+        // Persist to shared state so other instances can sync.
+        self.set_shared_state("current_session_id", session_id).await?;
+        Ok(())
+    }
+
+    /// Get a value from the shared instance state table. Returns `None`
+    /// when the key is absent or the table does not exist yet.
+    pub async fn get_shared_state(&self, key: &str) -> crate::Result<Option<String>> {
+        let value: Option<String> =
+            match sqlx::query_scalar("SELECT value FROM instance_state WHERE key = ?")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await
+            {
+                Ok(v) => v,
+                Err(sqlx::Error::Database(ref e)) => {
+                    tracing::debug!("instance_state table missing, returning None: {e}");
+                    None
+                }
+                Err(e) => return Err(e.into()),
+            };
+        Ok(value)
+    }
+
+    /// Set a value in the shared instance state table (upsert).
+    pub async fn set_shared_state(&self, key: &str, value: &str) -> crate::Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO instance_state (key, value, updated_at) VALUES (?, ?, ?) \
+             ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
+        )
+        .bind(key)
+        .bind(value)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Sync the local `current_session_id` from the shared instance state.
+    pub async fn sync_current_session(&self) -> crate::Result<()> {
+        if let Some(session_id) = self.get_shared_state("current_session_id").await? {
+            let current = self.current_session_id.lock().clone();
+            if current != session_id {
+                *self.current_session_id.lock() = session_id.clone();
+                tracing::info!("Synced current session from shared state: {}", session_id);
+            }
+        }
         Ok(())
     }
 
@@ -1243,29 +1448,42 @@ impl TrafficStore {
             ));
         }
 
-        // Check for an existing entry with the same pattern.
-        let existing: Option<FocusHostRow> = sqlx::query_as::<_, FocusHostRow>(
-            "SELECT id, pattern, created_at FROM focus_hosts WHERE pattern = ?",
-        )
-        .bind(&normalized)
-        .fetch_optional(&self.pool)
-        .await?;
-        if let Some(row) = existing {
-            return Ok(FocusHost {
-                id: row.id,
-                pattern: row.pattern,
-                created_at: parse_timestamp(row.created_at),
-            });
-        }
-
         let host = FocusHost::new(&normalized);
-        sqlx::query("INSERT INTO focus_hosts (id, pattern, created_at) VALUES (?, ?, ?)")
-            .bind(&host.id)
-            .bind(&host.pattern)
-            .bind(host.created_at.timestamp())
-            .execute(&self.pool)
+
+        // Atomic insert-or-ignore. `INSERT OR IGNORE` relies on the unique
+        // constraint on `pattern` (declared in `SCHEMA_CORE` and backed by the
+        // implicit unique index) to silently skip the insert when the pattern
+        // already exists. This eliminates the check-then-insert race
+        // condition (#8) where two callers could both see no existing entry
+        // and both insert with different UUIDs. `rows_affected()` tells us
+        // whether we actually inserted (1) or it was ignored (0); in the
+        // latter case we fetch the existing row.
+        let result = sqlx::query(
+            "INSERT OR IGNORE INTO focus_hosts (id, pattern, created_at) VALUES (?, ?, ?)",
+        )
+        .bind(&host.id)
+        .bind(&host.pattern)
+        .bind(host.created_at.timestamp())
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() > 0 {
+            // We inserted it.
+            Ok(host)
+        } else {
+            // Already existed (race with another caller) — fetch it.
+            let existing: FocusHostRow = sqlx::query_as::<_, FocusHostRow>(
+                "SELECT id, pattern, created_at FROM focus_hosts WHERE pattern = ?",
+            )
+            .bind(&normalized)
+            .fetch_one(&self.pool)
             .await?;
-        Ok(host)
+            Ok(FocusHost {
+                id: existing.id,
+                pattern: existing.pattern,
+                created_at: parse_timestamp(existing.created_at),
+            })
+        }
     }
 
     /// Remove a focus host by ID. Returns `true` if a row was deleted.
@@ -1370,7 +1588,24 @@ impl TrafficStoreBackend for TrafficStore {
     async fn clear_focus_hosts(&self) -> crate::Result<()> {
         self.clear_focus_hosts().await
     }
+    async fn get_shared_state(&self, key: &str) -> crate::Result<Option<String>> {
+        self.get_shared_state(key).await
+    }
+    async fn set_shared_state(&self, key: &str, value: &str) -> crate::Result<()> {
+        self.set_shared_state(key, value).await
+    }
+    async fn sync_current_session(&self) -> crate::Result<()> {
+        self.sync_current_session().await
+    }
     async fn flush(&self) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn ping(&self) -> crate::Result<()> {
+        sqlx::query("SELECT 1")
+            .execute(&self.pool)
+            .await
+            .map_err(crate::Error::Sqlx)?;
         Ok(())
     }
 

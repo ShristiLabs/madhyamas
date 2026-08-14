@@ -30,10 +30,14 @@ use madhyamas_core::ScriptRuntime;
 use madhyamas_core::{
     AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager,
     InterceptStoreBackend, LogHandle, MirrorWriter, MockManager, ProxyConfig, ReplayManager,
-    RewriteManager, SessionManager, ThrottleManager, TrafficStoreBackend, WsManager,
+    RewriteManager, SessionManager, ThrottleManager, TrafficEvent, TrafficStoreBackend, WsManager,
 };
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use parking_lot::RwLock;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -116,6 +120,13 @@ pub struct AppState {
     /// (config changes, intercept rule changes). `None` in single-instance
     /// mode (no Redis); `Some` in multi-instance mode backed by Redis.
     pub event_publisher: Option<Arc<dyn EventPublisher + Send + Sync>>,
+    /// Cross-instance traffic event sender. When Redis pub/sub is enabled,
+    /// traffic events relayed from other instances are sent on this separate
+    /// channel (NOT the traffic store's local broadcast) to prevent an
+    /// infinite event loop (local → Redis → local → Redis …). The WebSocket
+    /// handler subscribes to both the local traffic store events and this
+    /// cross-instance channel. `None` in single-instance mode.
+    pub cross_instance_sender: Option<broadcast::Sender<TrafficEvent>>,
 }
 
 impl AppState {
@@ -149,6 +160,7 @@ impl AppState {
             authorizer: None,
             audit_sink: None,
             event_publisher: None,
+            cross_instance_sender: None,
         }
     }
 
@@ -284,6 +296,18 @@ impl AppState {
         self.event_publisher = Some(publisher);
         self
     }
+
+    /// Attach a cross-instance traffic event sender. Events relayed from
+    /// other instances via Redis are sent on this channel so the WebSocket
+    /// handler can forward them to connected clients without creating an
+    /// infinite loop (local broadcast → Redis → local broadcast → …).
+    pub fn with_cross_instance_sender(
+        mut self,
+        sender: broadcast::Sender<TrafficEvent>,
+    ) -> Self {
+        self.cross_instance_sender = Some(sender);
+        self
+    }
 }
 
 /// Rate-limiting configuration for the API server.
@@ -399,8 +423,27 @@ pub fn create_router(
     }
 
     let inner = Router::new()
-        // Top-level health check for quick status
-        .route("/health", axum::routing::get(|| async { "OK" }))
+        // Top-level health check for quick status. Verifies database
+        // connectivity so the load balancer (nginx) does not route traffic
+        // to an instance whose schema initialization has not completed.
+        // This endpoint is unauthenticated — it must be reachable by
+        // Docker/nginx health probes without credentials.
+        .route(
+            "/health",
+            axum::routing::get(|State(state): State<Arc<AppState>>| async move {
+                match state.traffic_store.ping().await {
+                    Ok(()) => (StatusCode::OK, "OK").into_response(),
+                    Err(e) => {
+                        tracing::error!("Health check failed: database not ready: {e}");
+                        (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "Database not ready",
+                        )
+                            .into_response()
+                    }
+                }
+            }),
+        )
         .nest("/api", api_routes)
         // Serve embedded web assets (compiled into the binary via rust-embed).
         // Falls back to disk-based serving via MADHYAMAS_WEB_DIR for dev.

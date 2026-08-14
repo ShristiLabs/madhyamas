@@ -54,8 +54,9 @@ fn create_routes_inner() -> Router<Arc<AppState>> {
         .route("/capture", get(handlers::get_capture_status))
         .route("/capture/toggle", post(handlers::toggle_capture))
         .route("/capture/stats", get(handlers::get_capture_stats))
-        // Health check
-        .route("/health", get(|| async { "OK" }))
+        // Health check — verifies database connectivity (unauthenticated,
+        // for Docker/nginx health probes)
+        .route("/health", get(handlers::health_check))
         // === WebSocket Traffic ===
         .route("/ws-traffic/connections", get(handlers::get_ws_connections))
         .route(

@@ -25,11 +25,24 @@ pub struct PostgresEnterpriseStore {
 
 impl PostgresEnterpriseStore {
     /// Create a new store over the given pool, ensuring the schema exists.
+    ///
+    /// All DDL is wrapped in a single advisory-lock transaction to prevent
+    /// concurrent schema initialization across multi-instance deployments.
+    /// The lock key `0x4D414448` ("MADH") matches the one used by
+    /// `run_pg_migrations()` in the main binary and by
+    /// `PostgresTrafficStore::create_tables()`, so all DDL across the
+    /// application is serialized. The lock is transaction-scoped, so it is
+    /// released on commit/rollback and does not block normal operations.
     pub async fn new(pool: PgPool) -> Result<Self> {
-        sqlx::query(SCHEMA_USERS).execute(&pool).await?;
-        sqlx::query(SCHEMA_API_KEYS).execute(&pool).await?;
-        sqlx::query(SCHEMA_AUTH_SESSIONS).execute(&pool).await?;
-        sqlx::query(SCHEMA_AUDIT_EVENTS).execute(&pool).await?;
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(0x4D414448)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(SCHEMA_USERS).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_API_KEYS).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_AUTH_SESSIONS).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_AUDIT_EVENTS).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(Self { pool })
     }
 
@@ -94,7 +107,8 @@ impl EnterpriseStore for PostgresEnterpriseStore {
         sqlx::query(
             "INSERT INTO users \
              (id, username, email, display_name, password_hash, role, status, created_at, last_login, preferences) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+             ON CONFLICT (username) DO NOTHING",
         )
         .bind(&rec.id)
         .bind(&rec.username)
@@ -232,7 +246,8 @@ impl EnterpriseStore for PostgresEnterpriseStore {
         sqlx::query(
             "INSERT INTO api_keys \
              (id, user_id, name, key_hash, key_prefix, scopes, expires_at, last_used_at, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+             ON CONFLICT (id) DO NOTHING",
         )
         .bind(&key.id)
         .bind(&key.user_id)
@@ -289,7 +304,8 @@ impl EnterpriseStore for PostgresEnterpriseStore {
         sqlx::query(
             "INSERT INTO auth_sessions \
              (id, user_id, jwt_jti, created_at, expires_at, last_activity, revoked) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             ON CONFLICT (id) DO NOTHING",
         )
         .bind(&session.id)
         .bind(&session.user_id)
@@ -340,11 +356,40 @@ impl EnterpriseStore for PostgresEnterpriseStore {
     }
 
     async fn log_audit_event(&self, event: &AuditEvent) -> Result<()> {
-        let rec = AuditEventRecord::from(event);
+        // Use a transaction-scoped advisory lock to serialize audit event
+        // insertion. This ensures the hash chain remains consistent across
+        // concurrent inserts from multiple instances: the "read last hash"
+        // and "insert new event" steps are atomic within the locked
+        // transaction, so two concurrent inserts can never reference the
+        // same `prev_hash`.
+        // Lock key: 0x4D414450 ("MADP" for Madhyamas audit chain), distinct
+        // from the DDL lock (0x4D414448) and the prune lock (0x4D414449).
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(0x4D414450)")
+            .execute(&mut *tx)
+            .await?;
+
+        // Get the last event's hash within the locked transaction. Order by
+        // timestamp then id to break ties deterministically.
+        let prev_hash: Option<String> = sqlx::query_scalar(
+            "SELECT hash FROM audit_events ORDER BY timestamp DESC, id DESC LIMIT 1",
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        // Recompute the hash chain based on the authoritative last hash read
+        // under the lock, rather than trusting the (possibly stale) hash
+        // computed by the in-memory ring buffer.
+        let mut event = event.clone();
+        event.prev_hash = prev_hash.clone();
+        event.hash = Some(crate::audit::AuditLogger::compute_hash(&event));
+
+        let rec = AuditEventRecord::from(&event);
         sqlx::query(
             "INSERT INTO audit_events \
              (id, event_type, timestamp, user_id, api_key_id, client_ip, description, metadata, prev_hash, hash) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+             ON CONFLICT (id) DO NOTHING",
         )
         .bind(&rec.id)
         .bind(&rec.event_type)
@@ -356,8 +401,10 @@ impl EnterpriseStore for PostgresEnterpriseStore {
         .bind(&rec.metadata)
         .bind(&rec.prev_hash)
         .bind(&rec.hash)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+
+        tx.commit().await?;
         Ok(())
     }
 

@@ -81,10 +81,34 @@ pub trait TrafficStoreBackend: Send + Sync {
     async fn list_focus_hosts(&self) -> Result<Vec<FocusHost>>;
     async fn clear_focus_hosts(&self) -> Result<()>;
 
+    /// Get a value from the shared instance state table (cross-instance
+    /// key/value store). Returns `None` if the key does not exist or the
+    /// table is not yet present. Used to coordinate state across multiple
+    /// instances (e.g. the current session ID).
+    async fn get_shared_state(&self, key: &str) -> Result<Option<String>>;
+
+    /// Set a value in the shared instance state table. Performs an upsert
+    /// so the row is created if missing, updated otherwise.
+    async fn set_shared_state(&self, key: &str, value: &str) -> Result<()>;
+
+    /// Sync the local `current_session_id` from the shared instance state.
+    /// Other instances may have switched the active session; this method
+    /// pulls the latest value from the shared store so this instance
+    /// records new traffic against the correct session. No-op when the
+    /// shared state has no `current_session_id` or it already matches the
+    /// local value.
+    async fn sync_current_session(&self) -> Result<()>;
+
     /// Flush any pending buffered writes (Phase 10b.1 write batching).
     /// For backends without write batching (SQLite), this is a no-op.
     /// Called on graceful shutdown to avoid data loss.
     async fn flush(&self) -> Result<()>;
+
+    /// Check if the database connection is alive and ready.
+    /// Used by the health check endpoint to verify readiness before
+    /// the instance is marked healthy by the load balancer (nginx).
+    /// Returns `Ok(())` when the database accepts queries, `Err` otherwise.
+    async fn ping(&self) -> Result<()>;
 
     fn subscribe(&self) -> broadcast::Receiver<TrafficEvent>;
     fn event_sender(&self) -> broadcast::Sender<TrafficEvent>;

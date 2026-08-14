@@ -117,10 +117,14 @@ how to *use* Madhyamas as a debugging proxy. They do not overlap.
 ./startup.sh           # Build and start with Docker Compose
 ./stop.sh              # Stop containers
 
-# Local development (runs directly on host)
-./startup-local.sh     # Build and run locally
-./startup-local.sh --clean  # Clean rebuild
-./stop-local.sh        # Stop local instance
+# Local development
+./startup-local.sh                    # Enterprise: Docker multi-instance stack
+                                      # (PostgreSQL + Redis + 2x Madhyamas + nginx LB)
+./startup-local.sh --tier oss         # OSS: local binary (SQLite, single instance)
+./startup-local.sh --clean            # Clean rebuild (current tier)
+./stop-local.sh                       # Stop all instances (local + Docker)
+./stop-local.sh --tier oss            # Stop OSS local binary only
+./stop-local.sh --tier enterprise     # Stop enterprise Docker stack + local binary
 
 # Manual commands
 cargo build --release -p madhyamas   # Build unified binary

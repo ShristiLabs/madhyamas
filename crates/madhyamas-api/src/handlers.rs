@@ -206,6 +206,21 @@ pub async fn get_traffic_count(State(state): State<Arc<AppState>>) -> impl IntoR
     }
 }
 
+/// Health check handler for `/api/health`. Verifies database connectivity
+/// via `TrafficStoreBackend::ping` so the instance is not reported healthy
+/// before schema initialization completes. Returns `200 "OK"` when the
+/// database is ready, `503 "Database not ready"` otherwise. Unauthenticated
+/// — intended for Docker/nginx health probes.
+pub async fn health_check(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.traffic_store.ping().await {
+        Ok(()) => (StatusCode::OK, "OK").into_response(),
+        Err(e) => {
+            tracing::error!("Health check failed: database not ready: {e}");
+            (StatusCode::SERVICE_UNAVAILABLE, "Database not ready").into_response()
+        }
+    }
+}
+
 /// Session response
 #[derive(Debug, Serialize)]
 pub struct SessionResponse {
@@ -1228,7 +1243,13 @@ pub async fn ws_handler(
         }
     }
 
-    ws.on_upgrade(move |socket| handle_ws(socket, state.traffic_store.clone()))
+    ws.on_upgrade(move |socket| {
+        let cross_rx = state
+            .cross_instance_sender
+            .as_ref()
+            .map(|s| s.subscribe());
+        handle_ws(socket, state.traffic_store.clone(), cross_rx)
+    })
         .into_response()
 }
 

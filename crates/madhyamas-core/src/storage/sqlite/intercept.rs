@@ -275,7 +275,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
     }
 
     async fn increment_mock_hit_count(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE mock_rules SET hit_count = hit_count + 1 WHERE id = ?")
+        sqlx::query("UPDATE mock_rules SET hit_count = mock_rules.hit_count + 1 WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -496,7 +496,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
     }
 
     async fn increment_block_list_hit_count(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE block_list_entries SET hit_count = hit_count + 1 WHERE id = ?")
+        sqlx::query("UPDATE block_list_entries SET hit_count = block_list_entries.hit_count + 1 WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await?;

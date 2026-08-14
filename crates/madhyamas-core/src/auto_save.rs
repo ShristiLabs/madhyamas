@@ -188,9 +188,44 @@ impl AutoSaveManager {
     ///
     /// The new session becomes the active session; subsequent traffic is
     /// recorded against it.
+    ///
+    /// Uses the shared instance state as a distributed lock to prevent both
+    /// instances from rotating simultaneously: if another instance rotated
+    /// within the last 30 seconds, this instance skips rotation and syncs
+    /// the current session from shared state instead.
     async fn rotate_session(&self) -> crate::Result<()> {
+        // Use shared state as a distributed lock to prevent both instances
+        // from rotating simultaneously.
+        let lock_key = "autosave_rotation_lock";
+        let lock_value = format!("{}", Utc::now().timestamp());
+
+        // If another instance just rotated (within the last 30 seconds),
+        // skip and sync the current session from shared state instead.
+        if let Ok(Some(existing)) = self.traffic_store.get_shared_state(lock_key).await {
+            let existing_ts: i64 = existing.parse().unwrap_or(0);
+            let now = Utc::now().timestamp();
+            if now - existing_ts < 30 {
+                info!(
+                    "Auto Save: skipping rotation, another instance rotated recently"
+                );
+                // Sync our local session id from shared state so we record
+                // new traffic against the session the other instance just
+                // created.
+                if let Err(e) = self.traffic_store.sync_current_session().await {
+                    debug!("Auto Save: session sync after skipped rotation failed: {e}");
+                }
+                return Ok(());
+            }
+        }
+
+        // Perform the rotation.
         let new_session = self.session_manager.create_session(None).await?;
         self.traffic_store.switch_session(&new_session.id).await?;
+
+        // Record the rotation timestamp so the other instance skips if its
+        // timer fires within the lock window.
+        let _ = self.traffic_store.set_shared_state(lock_key, &lock_value).await;
+
         info!("Auto Save: rotated to new session {}", new_session.id);
         Ok(())
     }

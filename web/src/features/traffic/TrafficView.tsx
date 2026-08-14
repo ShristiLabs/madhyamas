@@ -367,10 +367,10 @@ export function TrafficView() {
         count={filteredTraffic.length}
       />
 
-      <div className="flex flex-1 overflow-hidden border-t border-border" ref={containerRef}>
+      <div className="flex flex-1 overflow-hidden border-t border-border" ref={containerRef} style={{ contain: "strict" }}>
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Sub-toolbar: count + connection + actions */}
-          <div className="flex items-center justify-between border-b border-border bg-muted/30 px-2 py-1">
+          <div className="flex items-center justify-between border-b border-border bg-muted/30 px-2 py-1" style={{ contain: "layout paint" }}>
             <div className="flex items-center gap-2">
               <span className="text-2xs text-muted-foreground">{count ?? 0} req</span>
               {isWebSocketMode ? (

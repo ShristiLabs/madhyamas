@@ -171,16 +171,21 @@ impl PostgresInterceptStore {
     /// Create a new store over the given pool, ensuring all intercept tables
     /// and indexes exist.
     pub async fn new(pool: PgPool) -> Result<Self> {
-        sqlx::query(SCHEMA_MOCK_RULES).execute(&pool).await?;
-        sqlx::query(SCHEMA_REWRITE_RULES).execute(&pool).await?;
-        sqlx::query(SCHEMA_BREAKPOINT_RULES).execute(&pool).await?;
-        sqlx::query(SCHEMA_THROTTLE_PROFILE).execute(&pool).await?;
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(0x4D414448)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(SCHEMA_MOCK_RULES).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_REWRITE_RULES).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_BREAKPOINT_RULES).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_THROTTLE_PROFILE).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_BLOCK_LIST_ENTRIES)
-            .execute(&pool)
+            .execute(&mut *tx)
             .await?;
         for stmt in SCHEMA_INDEX_STMTS {
-            sqlx::query(stmt).execute(&pool).await?;
+            sqlx::query(stmt).execute(&mut *tx).await?;
         }
+        tx.commit().await?;
         Ok(Self { pool })
     }
 
@@ -286,7 +291,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
     }
 
     async fn increment_mock_hit_count(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE mock_rules SET hit_count = hit_count + 1 WHERE id = $1")
+        sqlx::query("UPDATE mock_rules SET hit_count = mock_rules.hit_count + 1 WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -528,7 +533,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
     }
 
     async fn increment_block_list_hit_count(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE block_list_entries SET hit_count = hit_count + 1 WHERE id = $1")
+        sqlx::query("UPDATE block_list_entries SET hit_count = block_list_entries.hit_count + 1 WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;
