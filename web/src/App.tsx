@@ -4,6 +4,9 @@ import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { AppHeader } from "@/features/shell/AppHeader"
 import { NavRail, type NavView } from "@/features/shell/NavRail"
 import { TrafficView } from "@/features/traffic/TrafficView"
+import { TierProvider, useTier } from "@/contexts/TierContext"
+import { AuthProvider } from "@/features/auth/AuthContext"
+import { ProtectedApp } from "@/features/auth/ProtectedApp"
 import { lazy, Suspense, useEffect, useState } from "react"
 import { Loader2 } from "lucide-react"
 
@@ -19,6 +22,15 @@ const ScriptsPanel = lazy(() => import("@/features/tools/ScriptsPanel").then((m)
 const PluginsPanel = lazy(() => import("@/features/tools/PluginsPanel").then((m) => ({ default: m.PluginsPanel })))
 const MirrorPanel = lazy(() => import("@/features/tools/MirrorPanel").then((m) => ({ default: m.MirrorPanel })))
 const SessionsPanel = lazy(() => import("@/features/sessions/SessionsPanel").then((m) => ({ default: m.SessionsPanel })))
+
+// Lazy-load enterprise admin panels (separate chunks, only loaded when tier is enterprise).
+const UsersPanel = lazy(() => import("@/features/admin/UsersPanel").then((m) => ({ default: m.UsersPanel })))
+const AuditPanel = lazy(() => import("@/features/admin/AuditPanel").then((m) => ({ default: m.AuditPanel })))
+const MetricsPanel = lazy(() => import("@/features/admin/MetricsPanel").then((m) => ({ default: m.MetricsPanel })))
+const LicensePanel = lazy(() => import("@/features/admin/LicensePanel").then((m) => ({ default: m.LicensePanel })))
+const ApiKeysPanel = lazy(() => import("@/features/admin/ApiKeysPanel").then((m) => ({ default: m.ApiKeysPanel })))
+const InstancesPanel = lazy(() => import("@/features/admin/InstancesPanel").then((m) => ({ default: m.InstancesPanel })))
+const SessionTimeoutWarning = lazy(() => import("@/features/auth/SessionTimeoutWarning").then((m) => ({ default: m.SessionTimeoutWarning })))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -77,6 +89,15 @@ const TOOL_VIEWS: NavView[] = [
   { id: "sessions", label: "Sessions", icon: "FolderTree" },
 ]
 
+const ADMIN_VIEWS: NavView[] = [
+  { id: "users", label: "Users", icon: "Users" },
+  { id: "audit", label: "Audit Log", icon: "ScrollText" },
+  { id: "metrics", label: "Metrics", icon: "BarChart3" },
+  { id: "license", label: "License", icon: "KeyRound" },
+  { id: "apikeys", label: "API Keys", icon: "Key" },
+  { id: "instances", label: "Instances", icon: "Server" },
+]
+
 function PanelFallback() {
   return (
     <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -85,37 +106,84 @@ function PanelFallback() {
   )
 }
 
-export default function App() {
+function AppShell() {
   const { isDark, toggle } = useTheme()
+  const { tierInfo } = useTier()
   const [activeView, setActiveView] = useState<NavView["id"]>("traffic")
 
+  const isEnterprise = tierInfo?.tier === "enterprise"
+  const navViews = isEnterprise ? [...TOOL_VIEWS, ...ADMIN_VIEWS] : TOOL_VIEWS
+
+  return (
+    <div className="flex h-full flex-col bg-background text-foreground">
+      <AppHeader isDark={isDark} onToggleTheme={toggle} tierInfo={tierInfo} />
+      <div className="flex min-h-0 flex-1">
+        <NavRail views={navViews} activeView={activeView} onSelect={setActiveView} />
+        <main className="min-w-0 flex-1 overflow-hidden">
+          <ErrorBoundary label="Panel">
+            <Suspense fallback={<PanelFallback />}>
+              {activeView === "traffic" && <TrafficView />}
+              {activeView === "breakpoints" && <BreakpointsPanel />}
+              {activeView === "blocklist" && <BlockListPanel />}
+              {activeView === "throttle" && <ThrottlePanel />}
+              {activeView === "mocks" && <MocksPanel />}
+              {activeView === "rewrites" && <RewritesPanel />}
+              {activeView === "replay" && <ReplayPanel />}
+              {activeView === "mirror" && <MirrorPanel />}
+              {activeView === "grpc" && <GrpcPanel />}
+              {activeView === "scripts" && <ScriptsPanel />}
+              {activeView === "plugins" && <PluginsPanel />}
+              {activeView === "sessions" && <SessionsPanel />}
+              {isEnterprise && activeView === "users" && <UsersPanel />}
+              {isEnterprise && activeView === "audit" && <AuditPanel />}
+              {isEnterprise && activeView === "metrics" && <MetricsPanel />}
+              {isEnterprise && activeView === "license" && <LicensePanel />}
+              {isEnterprise && activeView === "apikeys" && <ApiKeysPanel />}
+              {isEnterprise && activeView === "instances" && <InstancesPanel />}
+            </Suspense>
+          </ErrorBoundary>
+        </main>
+      </div>
+      {isEnterprise && (
+        <Suspense fallback={null}>
+          <SessionTimeoutWarning />
+        </Suspense>
+      )}
+    </div>
+  )
+}
+
+export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="flex h-full flex-col bg-background text-foreground">
-        <AppHeader isDark={isDark} onToggleTheme={toggle} />
-        <div className="flex min-h-0 flex-1">
-          <NavRail views={TOOL_VIEWS} activeView={activeView} onSelect={setActiveView} />
-          <main className="min-w-0 flex-1 overflow-hidden">
-            <ErrorBoundary label="Traffic View">
-              <Suspense fallback={<PanelFallback />}>
-                {activeView === "traffic" && <TrafficView />}
-                {activeView === "breakpoints" && <BreakpointsPanel />}
-                {activeView === "blocklist" && <BlockListPanel />}
-                {activeView === "throttle" && <ThrottlePanel />}
-                {activeView === "mocks" && <MocksPanel />}
-                {activeView === "rewrites" && <RewritesPanel />}
-                {activeView === "replay" && <ReplayPanel />}
-                {activeView === "mirror" && <MirrorPanel />}
-                {activeView === "grpc" && <GrpcPanel />}
-                {activeView === "scripts" && <ScriptsPanel />}
-                {activeView === "plugins" && <PluginsPanel />}
-                {activeView === "sessions" && <SessionsPanel />}
-              </Suspense>
-            </ErrorBoundary>
-          </main>
-        </div>
-      </div>
+      <TierProvider>
+        <AppGate />
+      </TierProvider>
       <Toaster />
     </QueryClientProvider>
   )
+}
+
+function AppGate() {
+  const { tierInfo, isLoading } = useTier()
+
+  if (isLoading || !tierInfo) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (tierInfo.tier === "enterprise") {
+    return (
+      <AuthProvider>
+        <ProtectedApp tierInfo={tierInfo}>
+          <AppShell />
+        </ProtectedApp>
+      </AuthProvider>
+    )
+  }
+
+  return <AppShell />
 }

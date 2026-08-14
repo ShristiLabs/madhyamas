@@ -81,6 +81,12 @@ pub struct HealthCheck {
     /// Dependency health statuses (Phase 6d).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dependencies: Option<Dependencies>,
+    /// Deployment tier: "enterprise" or "community" (Phase 7a).
+    pub tier: String,
+    /// Authentication mode: "none", "local", "oidc", "header", or "ldap".
+    pub auth_mode: String,
+    /// Whether authentication is required for API access.
+    pub auth_required: bool,
 }
 
 /// Dependency health statuses for the detailed health check (Phase 6d).
@@ -103,6 +109,9 @@ impl Default for HealthCheck {
             license: None,
             status: None,
             dependencies: None,
+            tier: "enterprise".to_string(),
+            auth_mode: "local".to_string(),
+            auth_required: false,
         }
     }
 }
@@ -253,6 +262,7 @@ pub async fn get_health_check(
     State(_state): State<Arc<AppState>>,
     Extension(license): Extension<Option<License>>,
     Extension(redis): Extension<Option<Arc<crate::RedisState>>>,
+    Extension(auth): Extension<Arc<AuthManager>>,
 ) -> Json<HealthCheck> {
     // Database: always "ok" — the store is initialized at startup; if it
     // were down the server would not have started. A live probe would
@@ -311,6 +321,9 @@ pub async fn get_health_check(
         license: Some(license_health(&license)),
         status: Some(overall.to_string()),
         dependencies: Some(deps),
+        tier: "enterprise".to_string(),
+        auth_mode: "local".to_string(),
+        auth_required: auth.require_auth(),
     })
 }
 
@@ -1269,6 +1282,7 @@ pub async fn import_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AuthConfig;
     use madhyamas_api::AppState;
     use madhyamas_core::{TrafficStore, WsManager};
 
@@ -1282,9 +1296,15 @@ mod tests {
     #[tokio::test]
     async fn test_health_check_without_redis() {
         let state = make_state().await;
-        let resp = get_health_check(State(state.clone()), Extension(None), Extension(None))
-            .await
-            .0;
+        let auth = Arc::new(AuthManager::new(AuthConfig::default()));
+        let resp = get_health_check(
+            State(state.clone()),
+            Extension(None),
+            Extension(None),
+            Extension(auth),
+        )
+        .await
+        .0;
         let deps = resp.dependencies.expect("dependencies");
         assert_eq!(deps.redis, "not_configured");
         assert_eq!(deps.license, "not_configured");
@@ -1301,9 +1321,15 @@ mod tests {
                 .await
                 .expect("connect redis"),
         );
-        let resp = get_health_check(State(state.clone()), Extension(None), Extension(Some(rs)))
-            .await
-            .0;
+        let auth = Arc::new(AuthManager::new(AuthConfig::default()));
+        let resp = get_health_check(
+            State(state.clone()),
+            Extension(None),
+            Extension(Some(rs)),
+            Extension(auth),
+        )
+        .await
+        .0;
         let deps = resp.dependencies.expect("dependencies");
         assert_eq!(deps.redis, "ok");
         assert_eq!(resp.status, Some("ok".to_string()));

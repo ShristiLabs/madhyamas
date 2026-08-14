@@ -376,6 +376,26 @@ pub fn create_router(
     let mut api_routes = routes::create_routes();
     if let Some(ent) = enterprise_router {
         api_routes = api_routes.merge(ent);
+    } else {
+        // OSS build: provide a community-tier detailed health endpoint.
+        // The enterprise build gets its richer handler from the enterprise
+        // router (which includes tier/auth/license info).
+        api_routes = api_routes.route(
+            "/health/detailed",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "healthy": true,
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "uptime_secs": 0u64,
+                    "memory_usage_mb": 0u64,
+                    "active_connections": 0u64,
+                    "details": {},
+                    "tier": "community",
+                    "auth_mode": "none",
+                    "auth_required": false,
+                }))
+            }),
+        );
     }
 
     let inner = Router::new()
