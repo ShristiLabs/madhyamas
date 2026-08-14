@@ -54,6 +54,11 @@ pub async fn create_breakpoint_rule(
     }
 
     let id = state.breakpoint_manager.add_rule(rule).await;
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "breakpoint-created",
+    );
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -81,6 +86,11 @@ pub async fn delete_breakpoint_rule(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     if state.breakpoint_manager.remove_rule(&id).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "breakpoint-deleted",
+        );
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -179,6 +189,11 @@ pub async fn create_mock_rule(
     }
 
     let id = state.mock_manager.add_rule(rule).await;
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "mock-created",
+    );
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -217,6 +232,11 @@ pub async fn update_mock_rule(
         return super::error::ApiError::bad_request(e.to_string()).into_response();
     }
     if state.mock_manager.update_rule(&id, rule) {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "mock-updated",
+        );
         StatusCode::OK.into_response()
     } else {
         (
@@ -235,6 +255,11 @@ pub async fn delete_mock_rule(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     if state.mock_manager.remove_rule(&id).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "mock-deleted",
+        );
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -259,6 +284,11 @@ pub async fn toggle_mock_rule(
     Json(req): Json<ToggleRequest>,
 ) -> impl IntoResponse {
     if state.mock_manager.toggle_rule(&id, req.enabled) {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "mock-toggled",
+        );
         StatusCode::OK.into_response()
     } else {
         (
@@ -978,6 +1008,11 @@ pub async fn create_rewrite_rule(
     }
 
     let id = state.rewrite_manager.add_rule(rule).await;
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "rewrite-created",
+    );
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -1026,6 +1061,11 @@ pub async fn update_rewrite_rule(
     rule.priority = req.priority.unwrap_or(existing.priority);
 
     if state.rewrite_manager.update_rule(&id, rule).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "rewrite-updated",
+        );
         StatusCode::OK.into_response()
     } else {
         (
@@ -1061,6 +1101,11 @@ pub async fn delete_rewrite_rule(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     if state.rewrite_manager.remove_rule(&id).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "rewrite-deleted",
+        );
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -1201,6 +1246,11 @@ pub async fn set_throttle_profile(
     if let Some(enabled) = req.enabled {
         state.throttle_manager.set_enabled(enabled).await;
     }
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "throttle-updated",
+    );
     StatusCode::OK.into_response()
 }
 
@@ -1210,6 +1260,11 @@ pub async fn set_throttle_enabled(
     Json(req): Json<ToggleRequest>,
 ) -> impl IntoResponse {
     state.throttle_manager.set_enabled(req.enabled).await;
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "throttle-toggled",
+    );
     StatusCode::OK
 }
 
@@ -1466,6 +1521,11 @@ pub async fn create_block_list_entry(
     }
 
     let id = state.block_list_manager.add_entry(entry).await;
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "blocklist-created",
+    );
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -1496,6 +1556,11 @@ pub async fn update_block_list_entry(
         return super::error::ApiError::bad_request("pattern cannot be empty").into_response();
     }
     if state.block_list_manager.update_entry(&id, entry).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "blocklist-updated",
+        );
         StatusCode::OK.into_response()
     } else {
         (
@@ -1514,6 +1579,11 @@ pub async fn delete_block_list_entry(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     if state.block_list_manager.remove_entry(&id).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "blocklist-deleted",
+        );
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -1537,6 +1607,11 @@ pub async fn toggle_block_list_entry(
         .toggle_entry(&id, req.enabled)
         .await
     {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "blocklist-toggled",
+        );
         StatusCode::OK.into_response()
     } else {
         (

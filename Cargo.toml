@@ -123,6 +123,12 @@ ed25519-dalek = { version = "2", default-features = false, features = [
 argon2 = "0.5"
 password-hash = "0.5"
 
+# Redis client for enterprise multi-instance state synchronization (Phase 6a).
+# `tokio-comp` enables the async (tokio) runtime; `tokio-rustls-comp` enables
+# TLS support for `rediss://` URLs. Auth (`redis://:password@host:port`) is
+# handled natively by the URL parser — no extra feature needed.
+redis = { version = "1.4", features = ["tokio-comp", "tokio-rustls-comp"] }
+
 # Internal crates
 madhyamas-core = { path = "crates/madhyamas-core", version = "0.1.6" }
 madhyamas-api = { path = "crates/madhyamas-api", version = "0.1.6", default-features = false }

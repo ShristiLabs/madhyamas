@@ -894,6 +894,14 @@ pub async fn patch_config(
         tracing::warn!("Failed to persist config to disk: {}", e);
     }
 
+    // Notify other instances (multi-instance mode) that config changed so
+    // they can reload from the shared store. No-op in single-instance mode.
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_CONFIG_EVENT,
+        "config-changed",
+    );
+
     (StatusCode::OK, Json(resp)).into_response()
 }
 

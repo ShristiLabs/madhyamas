@@ -5,6 +5,7 @@ pub mod embedded_assets;
 pub mod error;
 pub mod handlers;
 pub mod intercept_handlers;
+pub mod pubsub;
 pub mod routes;
 #[cfg(any(feature = "grpc", feature = "scripting", feature = "plugins"))]
 pub mod tools_handlers;
@@ -15,6 +16,7 @@ pub use auth::{
     AuditError, AuditEvent, AuditEventType, AuditFilter, AuditSink, AuthError, AuthMethod,
     AuthProvider, Authorizer, Identity, Permission, ResourceType,
 };
+pub use pubsub::{notify, EventPublisher};
 
 use axum::Router;
 #[cfg(feature = "plugins")]
@@ -110,6 +112,10 @@ pub struct AppState {
     /// enterprise crate injects its `AuditLogger`-backed implementation
     /// (Phase 1b).
     pub audit_sink: Option<Arc<dyn AuditSink + Send + Sync>>,
+    /// Pluggable event publisher for cross-instance pub/sub notifications
+    /// (config changes, intercept rule changes). `None` in single-instance
+    /// mode (no Redis); `Some` in multi-instance mode backed by Redis.
+    pub event_publisher: Option<Arc<dyn EventPublisher + Send + Sync>>,
 }
 
 impl AppState {
@@ -142,6 +148,7 @@ impl AppState {
             auth_provider: None,
             authorizer: None,
             audit_sink: None,
+            event_publisher: None,
         }
     }
 
@@ -263,6 +270,18 @@ impl AppState {
     /// on enterprise concrete types. When unset, audit events are dropped.
     pub fn with_audit_sink(mut self, sink: Arc<dyn AuditSink + Send + Sync>) -> Self {
         self.audit_sink = Some(sink);
+        self
+    }
+
+    /// Attach a pluggable event publisher for cross-instance pub/sub
+    /// notifications. When set, config and intercept rule changes are
+    /// published to Redis so other instances reload from the shared store.
+    /// When unset, changes are local-only (single-instance mode).
+    pub fn with_event_publisher(
+        mut self,
+        publisher: Arc<dyn EventPublisher + Send + Sync>,
+    ) -> Self {
+        self.event_publisher = Some(publisher);
         self
     }
 }

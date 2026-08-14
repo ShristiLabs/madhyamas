@@ -47,3 +47,4 @@ reqwest.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 uuid.workspace = true
+futures.workspace = true

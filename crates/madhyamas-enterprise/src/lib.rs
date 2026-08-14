@@ -21,6 +21,7 @@ pub mod handlers;
 pub mod license;
 pub mod middleware;
 pub mod rbac;
+pub mod redis_state;
 pub mod router;
 pub mod store;
 pub mod user;
@@ -31,6 +32,10 @@ pub use credentials::{hash_password, verify_password};
 pub use enterprise_error::EnterpriseError;
 pub use license::{License, LicenseClaims, LicenseError, LicenseFile, LicenseVerifier};
 pub use rbac::{Permission, RbacManager, Resource, ResourceType};
+pub use redis_state::{
+    InstanceInfo, RedisState, RedisTrafficEvent, CHANNEL_CONFIG, CHANNEL_EVENTS, CHANNEL_INTERCEPT,
+    CHANNEL_SEATS,
+};
 pub use router::create_enterprise_router;
 pub use store::{ApiKeyRecord, AuditStats, AuthSession, UserUpdate};
 pub use store::{EnterpriseStore, PostgresEnterpriseStore, SqliteEnterpriseStore, StoreError};
@@ -58,6 +63,10 @@ pub struct EnterpriseState {
     /// mode (auth/RBAC/audit still functional; seat-count enforcement and
     /// feature gating arrive in later phases).
     pub license: Option<License>,
+    /// Redis cross-instance state coordinator. `None` when `--redis-url` is
+    /// not provided (single-instance mode). When set, pub/sub event
+    /// broadcasting and license seat tracking are active.
+    pub redis: Option<Arc<RedisState>>,
 }
 
 impl EnterpriseState {
@@ -69,6 +78,7 @@ impl EnterpriseState {
             audit: Arc::new(AuditLogger::default()),
             store: None,
             license: None,
+            redis: None,
         }
     }
 
@@ -81,6 +91,13 @@ impl EnterpriseState {
     /// Attach a verified license (or `None` for unlicensed enterprise mode).
     pub fn with_license(mut self, license: Option<License>) -> Self {
         self.license = license;
+        self
+    }
+
+    /// Attach a Redis cross-instance state coordinator (or `None` for
+    /// single-instance mode).
+    pub fn with_redis(mut self, redis: Option<Arc<RedisState>>) -> Self {
+        self.redis = redis;
         self
     }
 }

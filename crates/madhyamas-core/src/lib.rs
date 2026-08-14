@@ -143,6 +143,20 @@ pub use storage::{
     PostgresTrafficStore, SqliteConfigStore, SqliteInterceptStore, TrafficStoreBackend,
 };
 
+/// Redis pub/sub channel for cross-instance WebSocket traffic event broadcasting.
+pub const CHANNEL_EVENTS: &str = "madhyamas:events";
+
+/// Redis pub/sub channel for config-change notifications (notification-only;
+/// each instance reloads from the shared store on receipt).
+pub const CHANNEL_CONFIG_EVENT: &str = "madhyamas:config";
+
+/// Redis pub/sub channel for intercept-rule-change notifications
+/// (notification-only; each instance reloads rules from the shared store).
+pub const CHANNEL_INTERCEPT_EVENT: &str = "madhyamas:intercept";
+
+/// Redis pub/sub channel for license seat-count updates.
+pub const CHANNEL_SEATS: &str = "madhyamas:seats";
+
 /// Result type
 pub type Result<T> = std::result::Result<T, Error>;
 
