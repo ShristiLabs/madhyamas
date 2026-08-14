@@ -2,6 +2,23 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Authentication method for MCP tool API calls.
+///
+/// In enterprise mode (with `--enable-auth`), the Madhyamas API rejects
+/// unauthenticated requests with HTTP 401. The MCP server attaches the
+/// configured credentials to every outbound request so tools continue to
+/// work behind the auth middleware. In OSS mode (or when auth is disabled),
+/// [`McpAuth::None`] sends no credentials — the API server ignores them.
+#[derive(Debug, Clone)]
+pub enum McpAuth {
+    /// No authentication (OSS mode or auth disabled).
+    None,
+    /// API key authentication (`X-API-Key` header).
+    ApiKey(String),
+    /// JWT authentication (`Authorization: Bearer` header).
+    Jwt(String),
+}
+
 /// MCP server configuration
 #[derive(Debug, Clone)]
 pub struct McpConfig {
@@ -9,6 +26,8 @@ pub struct McpConfig {
     pub api_url: String,
     /// Request timeout in seconds
     pub timeout_secs: u64,
+    /// Authentication method for API calls.
+    pub auth: McpAuth,
 }
 
 impl Default for McpConfig {
@@ -16,6 +35,25 @@ impl Default for McpConfig {
         Self {
             api_url: "http://127.0.0.1:3001".to_string(),
             timeout_secs: 30,
+            auth: McpAuth::None,
+        }
+    }
+}
+
+impl McpConfig {
+    /// Build the HTTP auth header pairs for this configuration.
+    ///
+    /// Returns an empty vector when no authentication is configured
+    /// ([`McpAuth::None`]). The returned pairs are applied as default
+    /// headers on the MCP server's HTTP client so every tool request
+    /// carries the credentials automatically.
+    pub fn auth_headers(&self) -> Vec<(String, String)> {
+        match &self.auth {
+            McpAuth::None => vec![],
+            McpAuth::ApiKey(key) => vec![("X-API-Key".to_string(), key.clone())],
+            McpAuth::Jwt(token) => {
+                vec![("Authorization".to_string(), format!("Bearer {}", token))]
+            }
         }
     }
 }
@@ -210,4 +248,55 @@ pub struct ListResourcesResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadResourceResult {
     pub contents: Vec<ResourceContents>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mcp_auth_none_headers() {
+        let config = McpConfig {
+            api_url: "http://localhost".to_string(),
+            timeout_secs: 5,
+            auth: McpAuth::None,
+        };
+        assert!(config.auth_headers().is_empty());
+        assert!(matches!(McpAuth::None, McpAuth::None));
+    }
+
+    #[test]
+    fn test_mcp_auth_api_key_headers() {
+        let config = McpConfig {
+            api_url: "http://localhost".to_string(),
+            timeout_secs: 5,
+            auth: McpAuth::ApiKey("secret-key-123".to_string()),
+        };
+        let headers = config.auth_headers();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0, "X-API-Key");
+        assert_eq!(headers[0].1, "secret-key-123");
+        assert!(!matches!(McpAuth::ApiKey("x".to_string()), McpAuth::None));
+    }
+
+    #[test]
+    fn test_mcp_auth_jwt_headers() {
+        let config = McpConfig {
+            api_url: "http://localhost".to_string(),
+            timeout_secs: 5,
+            auth: McpAuth::Jwt("jwt-token-456".to_string()),
+        };
+        let headers = config.auth_headers();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0, "Authorization");
+        assert_eq!(headers[0].1, "Bearer jwt-token-456");
+        assert!(!matches!(McpAuth::Jwt("x".to_string()), McpAuth::None));
+    }
+
+    #[test]
+    fn test_mcp_config_default_auth_none() {
+        let config = McpConfig::default();
+        assert!(config.auth_headers().is_empty());
+        assert!(matches!(config.auth, McpAuth::None));
+    }
 }

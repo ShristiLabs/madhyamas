@@ -27,8 +27,23 @@ pub struct McpServer {
 impl McpServer {
     /// Create a new MCP server
     pub fn new(config: McpConfig) -> Result<Self, McpError> {
+        // Build default auth headers from the configured credentials so
+        // every outbound request (tools + resource reads) carries them
+        // automatically. In OSS mode / when auth is disabled, no headers
+        // are added and the client behaves exactly as before.
+        let mut default_headers = reqwest::header::HeaderMap::new();
+        for (name, value) in config.auth_headers() {
+            if let (Ok(header_name), Ok(header_value)) = (
+                reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+                reqwest::header::HeaderValue::from_str(&value),
+            ) {
+                default_headers.insert(header_name, header_value);
+            }
+        }
+
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .default_headers(default_headers)
             .build()
             .map_err(|e| McpError::Http(e.to_string()))?;
 
@@ -401,5 +416,106 @@ impl McpServer {
             .flush()
             .map_err(|e| McpError::JsonRpc(e.to_string()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Spawn a minimal mock HTTP server that captures the raw request
+    /// headers from a single connection and returns a JSON `[]` body.
+    /// Returns the bound address and a channel receiving the raw request
+    /// text. No external mock-server crate is required.
+    async fn spawn_mock_server() -> (String, tokio::sync::oneshot::Receiver<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let url = format!("http://{}", addr);
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = vec![0u8; 8192];
+            let n = socket.read(&mut buf).await.unwrap();
+            let request_text = String::from_utf8_lossy(&buf[..n]).to_string();
+            let _ = tx.send(request_text);
+            let body =
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n[]";
+            socket.write_all(body).await.unwrap();
+            socket.flush().await.unwrap();
+        });
+
+        (url, rx)
+    }
+
+    #[tokio::test]
+    async fn test_mcp_server_sends_api_key_header() {
+        let (url, rx) = spawn_mock_server().await;
+        let config = McpConfig {
+            api_url: url,
+            timeout_secs: 5,
+            auth: McpAuth::ApiKey("test-api-key-abc".to_string()),
+        };
+        let server = McpServer::new(config).unwrap();
+        // Use the server's internal client (private field, accessible within
+        // this module) to make a request — this verifies that McpServer::new
+        // applied the auth headers as default headers on the client.
+        let _ = server.http_client.get(&server.api_url).send().await;
+        // McpServer owns a tokio Runtime; dropping it inside an async context
+        // panics, so forget it to avoid the drop-time panic in tests.
+        std::mem::forget(server);
+        let request = rx.await.unwrap();
+        let lower = request.to_ascii_lowercase();
+        assert!(
+            lower.contains("x-api-key: test-api-key-abc"),
+            "request missing X-API-Key header: {}",
+            request
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_server_sends_jwt_header() {
+        let (url, rx) = spawn_mock_server().await;
+        let config = McpConfig {
+            api_url: url,
+            timeout_secs: 5,
+            auth: McpAuth::Jwt("my-jwt-token".to_string()),
+        };
+        let server = McpServer::new(config).unwrap();
+        let _ = server.http_client.get(&server.api_url).send().await;
+        std::mem::forget(server);
+        let request = rx.await.unwrap();
+        let lower = request.to_ascii_lowercase();
+        assert!(
+            lower.contains("authorization: bearer my-jwt-token"),
+            "request missing Authorization header: {}",
+            request
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_server_without_auth_sends_no_auth_headers() {
+        let (url, rx) = spawn_mock_server().await;
+        let config = McpConfig {
+            api_url: url,
+            timeout_secs: 5,
+            auth: McpAuth::None,
+        };
+        let server = McpServer::new(config).unwrap();
+        let _ = server.http_client.get(&server.api_url).send().await;
+        std::mem::forget(server);
+        let request = rx.await.unwrap();
+        let lower = request.to_ascii_lowercase();
+        assert!(
+            !lower.contains("x-api-key"),
+            "unexpected X-API-Key header: {}",
+            request
+        );
+        assert!(
+            !lower.contains("authorization:"),
+            "unexpected Authorization header: {}",
+            request
+        );
     }
 }

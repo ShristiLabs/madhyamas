@@ -41,7 +41,7 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 use madhyamas_cli::Commands as CliCommands;
 
 // Re-export MCP server from the madhyamas-mcp library
-use madhyamas_mcp::{McpConfig, McpServer};
+use madhyamas_mcp::{McpAuth, McpConfig, McpServer};
 
 #[derive(Parser, Debug)]
 #[command(name = "madhyamas")]
@@ -363,9 +363,20 @@ async fn main() -> Result<()> {
             info!("Starting Madhyamas MCP Server");
             info!("API URL: {}", api_url);
 
+            // Resolve auth from env vars (API key takes precedence over JWT).
+            let api_key = std::env::var("MADHYAMAS_API_KEY").ok();
+            let token = std::env::var("MADHYAMAS_TOKEN").ok();
+            let auth = if let Some(key) = api_key {
+                McpAuth::ApiKey(key)
+            } else if let Some(t) = token {
+                McpAuth::Jwt(t)
+            } else {
+                McpAuth::None
+            };
             let config = McpConfig {
                 api_url,
                 timeout_secs,
+                auth,
             };
             let server = McpServer::new(config).expect("Failed to create MCP server");
             if let Err(e) = server.run() {
