@@ -20,8 +20,9 @@ use crate::plugin::PluginManager;
 use crate::proxy::pipeline::{Pipeline, RequestOutcome};
 #[cfg(feature = "scripting")]
 use crate::scripting::ScriptRuntime;
+use crate::storage::TrafficStoreBackend;
 use crate::tls::CertificateManager;
-use crate::traffic::{RequestData, TrafficEntry, TrafficStore};
+use crate::traffic::{RequestData, TrafficEntry};
 use crate::websocket::{
     is_websocket_upgrade, WsDirection, WsFrameParser, WsManager, WsMessageType, WsPayload,
 };
@@ -44,7 +45,7 @@ pub struct ProxyEngine {
     /// added via the web UI) are immediately visible to the proxy engine.
     config: Arc<RwLock<ProxyConfig>>,
     cert_manager: Arc<CertificateManager>,
-    traffic_store: Arc<TrafficStore>,
+    traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
     /// Shared HTTP client for upstream forwarding. Reused across all requests
     /// for connection pooling, TLS session resumption, and HTTP/2 multiplexing.
     /// Creating a new client per request (as done previously) causes many
@@ -90,7 +91,7 @@ impl ProxyEngine {
     pub async fn new(
         config: Arc<RwLock<ProxyConfig>>,
         cert_manager: Arc<CertificateManager>,
-        traffic_store: Arc<TrafficStore>,
+        traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
     ) -> crate::Result<Arc<Self>> {
         let (traffic_tx, _) = broadcast::channel(1024);
 
@@ -190,7 +191,7 @@ impl ProxyEngine {
         Pipeline::new(
             config,
             self.http_client.clone(),
-            &self.traffic_store,
+            &*self.traffic_store,
             &self.traffic_tx,
             self.mock_manager.get(),
             self.rewrite_manager.get(),
@@ -1135,7 +1136,7 @@ impl ProxyEngine {
                 let pipeline = Pipeline::new(
                     config,
                     http_client,
-                    &traffic_store,
+                    &*traffic_store,
                     &traffic_tx,
                     mock_manager.as_ref(),
                     rewrite_manager.as_ref(),

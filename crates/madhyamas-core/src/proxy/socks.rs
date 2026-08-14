@@ -41,7 +41,8 @@
 //! ```
 
 use crate::config::ProxyConfig;
-use crate::traffic::{RequestData, TrafficEntry, TrafficStore};
+use crate::storage::TrafficStoreBackend;
+use crate::traffic::{RequestData, TrafficEntry};
 use crate::Error;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -365,7 +366,7 @@ pub fn build_connect_reply(reply: SocksReply, bind_addr: Option<SocketAddr>) -> 
 /// tasks without lifetime concerns.
 pub struct SocksContext {
     pub config: Arc<ProxyConfig>,
-    pub traffic_store: Arc<TrafficStore>,
+    pub traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
     pub traffic_tx: broadcast::Sender<TrafficEntry>,
 }
 
@@ -430,7 +431,7 @@ pub async fn serve_socks5(ctx: SocksContext) -> crate::Result<()> {
             debug!("SOCKS5 connection from {}", client_addr);
             if let Err(e) = handle_socks5_connection(
                 client_socket,
-                &traffic_store,
+                &*traffic_store,
                 &traffic_tx,
                 require_auth,
                 auth_user.as_deref(),
@@ -451,7 +452,7 @@ pub async fn serve_socks5(ctx: SocksContext) -> crate::Result<()> {
 /// invoked directly by tests with an already-connected stream.
 pub async fn handle_socks5_connection(
     mut client_socket: TcpStream,
-    traffic_store: &crate::traffic::TrafficStore,
+    traffic_store: &(dyn TrafficStoreBackend + Send + Sync),
     traffic_tx: &tokio::sync::broadcast::Sender<TrafficEntry>,
     require_auth: bool,
     auth_username: Option<&str>,
@@ -1132,7 +1133,7 @@ mod tests {
 
         let server_task = tokio::spawn(async move {
             let (sock, _) = proxy_listener.accept().await.unwrap();
-            handle_socks5_connection(sock, &store, &traffic_tx, false, None, None)
+            handle_socks5_connection(sock, &*store, &traffic_tx, false, None, None)
                 .await
                 .unwrap();
         });
@@ -1196,7 +1197,7 @@ mod tests {
             // Expect this to error out (no acceptable method).
             let _ = handle_socks5_connection(
                 sock,
-                &store,
+                &*store,
                 &traffic_tx,
                 true, // require auth
                 Some("user"),
@@ -1246,7 +1247,7 @@ mod tests {
             let (sock, _) = proxy_listener.accept().await.unwrap();
             handle_socks5_connection(
                 sock,
-                &store,
+                &*store,
                 &traffic_tx,
                 true,
                 Some("alice"),
@@ -1312,7 +1313,7 @@ mod tests {
             let (sock, _) = proxy_listener.accept().await.unwrap();
             let _ = handle_socks5_connection(
                 sock,
-                &store,
+                &*store,
                 &traffic_tx,
                 true,
                 Some("alice"),

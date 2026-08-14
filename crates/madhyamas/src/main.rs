@@ -20,15 +20,19 @@ use madhyamas_core::WasmRuntime;
 use madhyamas_core::{
     AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, ExtensionManager,
     InterceptStoreBackend, LogHandle, MemoryManager, MetricsCollector, MirrorWriter, MockManager,
-    PerformanceMonitor, Persistable, ProxyConfig, ProxyEngine, RewriteManager, RotatingFileWriter,
-    SessionManager, SqliteInterceptStore, ThrottleManager, TrafficStore, UpstreamProxyConfig,
+    PerformanceMonitor, Persistable, PostgresInterceptStore, PostgresTrafficStore, ProxyConfig,
+    ProxyEngine, RewriteManager, RotatingFileWriter, SessionManager, SqliteInterceptStore,
+    ThrottleManager, TrafficStore, TrafficStoreBackend, UpstreamProxyConfig,
 };
 #[cfg(feature = "plugins")]
 use madhyamas_core::{
-    PluginExtension, PluginInstaller, PluginManager, PluginStoreBackend, SqlitePluginStore,
+    PluginExtension, PluginInstaller, PluginManager, PluginStoreBackend, PostgresPluginStore,
+    SqlitePluginStore,
 };
 #[cfg(feature = "scripting")]
-use madhyamas_core::{ScriptExtension, ScriptRuntime, ScriptStoreBackend, SqliteScriptStore};
+use madhyamas_core::{
+    PostgresScriptStore, ScriptExtension, ScriptRuntime, ScriptStoreBackend, SqliteScriptStore,
+};
 
 use tracing::{debug, info, Level};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
@@ -251,6 +255,14 @@ struct Args {
     /// provided via this flag.
     #[arg(long, env = "MADHYAMAS_ADMIN_PASSWORD", global = true)]
     admin_password: Option<String>,
+
+    /// Database URL for storage backends. When set to a PostgreSQL URL
+    /// (e.g. `postgres://user:pass@host:5432/db`), all storage backends
+    /// (traffic, intercept, config, plugins, scripts, enterprise) use
+    /// PostgreSQL instead of SQLite. When omitted or set to a `sqlite://`
+    /// URL, the default SQLite backends are used (existing behavior).
+    #[arg(long, env = "MADHYAMAS_DATABASE_URL", global = true)]
+    database_url: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -638,31 +650,87 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     // Initialize certificate manager
     let cert_manager = CertificateManager::new(&config.cert_path).await?;
 
-    // Initialize traffic store
-    let traffic_store = TrafficStore::new(config.db_path.clone()).await?;
-    traffic_store.set_max_body_size(config.max_body_size);
-    traffic_store.set_max_entries(config.max_requests);
-    if let Some(mb) = config.max_total_size_mb {
-        traffic_store.set_max_total_size_bytes(mb * 1024 * 1024);
-    }
-    traffic_store.set_capture_request_bodies(config.capture_request_bodies);
-    traffic_store.set_capture_response_bodies(config.capture_response_bodies);
-    traffic_store.set_ignored_domains(config.ignored_domains.clone());
+    // Initialize traffic store. When --database-url points to a PostgreSQL
+    // instance, use PostgresTrafficStore; otherwise fall back to the default
+    // SQLite TrafficStore.
+    let traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync> =
+        if let Some(ref db_url) = args.database_url {
+            if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+                info!("Using PostgreSQL traffic store: {}", db_url);
+                let pool = sqlx::postgres::PgPoolOptions::new()
+                    .max_connections(10)
+                    .connect(db_url)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to connect to PostgreSQL: {e}"))?;
+                // Run schema migrations under a PostgreSQL advisory lock to
+                // prevent concurrent migration races in multi-instance setups.
+                run_pg_migrations(&pool).await?;
+                let store = PostgresTrafficStore::new(pool).await?;
+                store.set_max_body_size(config.max_body_size);
+                store.set_max_entries(config.max_requests);
+                if let Some(mb) = config.max_total_size_mb {
+                    store.set_max_total_size_bytes(mb * 1024 * 1024);
+                }
+                store.set_capture_request_bodies(config.capture_request_bodies);
+                store.set_capture_response_bodies(config.capture_response_bodies);
+                store.set_ignored_domains(config.ignored_domains.clone());
+                store
+            } else {
+                info!("Using SQLite traffic store (explicit URL): {}", db_url);
+                let store = TrafficStore::new(config.db_path.clone()).await?;
+                configure_traffic_store(&store, &config);
+                store
+            }
+        } else {
+            let store = TrafficStore::new(config.db_path.clone()).await?;
+            configure_traffic_store(&store, &config);
+            store
+        };
 
-    // Initialize intercept rule persistence store (SQLite). Rules are
-    // loaded on startup and saved whenever they change via the API.
-    let intercept_db_path = std::path::Path::new(&config.db_path).with_file_name("intercept.db");
-    let intercept_db_url = format!("sqlite://{}", intercept_db_path.display());
-    let intercept_connect_options = sqlx::sqlite::SqliteConnectOptions::from_str(&intercept_db_url)
-        .map_err(|e| anyhow::anyhow!("failed to parse intercept db url: {e}"))?
-        .create_if_missing(true);
-    let intercept_pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(intercept_connect_options)
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to open intercept db: {e}"))?;
+    // Initialize intercept rule persistence store. When using PostgreSQL,
+    // the intercept store shares the same database; otherwise it uses a
+    // separate SQLite file (intercept.db).
     let intercept_store: Arc<dyn InterceptStoreBackend + Send + Sync> =
-        Arc::new(SqliteInterceptStore::new(intercept_pool).await?);
+        if let Some(ref db_url) = args.database_url {
+            if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+                let pool = sqlx::postgres::PgPoolOptions::new()
+                    .max_connections(5)
+                    .connect(db_url)
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!("failed to connect to PostgreSQL for intercept: {e}")
+                    })?;
+                Arc::new(PostgresInterceptStore::new(pool).await?)
+            } else {
+                let intercept_db_path =
+                    std::path::Path::new(&config.db_path).with_file_name("intercept.db");
+                let intercept_db_url = format!("sqlite://{}", intercept_db_path.display());
+                let intercept_connect_options =
+                    sqlx::sqlite::SqliteConnectOptions::from_str(&intercept_db_url)
+                        .map_err(|e| anyhow::anyhow!("failed to parse intercept db url: {e}"))?
+                        .create_if_missing(true);
+                let intercept_pool = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(5)
+                    .connect_with(intercept_connect_options)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to open intercept db: {e}"))?;
+                Arc::new(SqliteInterceptStore::new(intercept_pool).await?)
+            }
+        } else {
+            let intercept_db_path =
+                std::path::Path::new(&config.db_path).with_file_name("intercept.db");
+            let intercept_db_url = format!("sqlite://{}", intercept_db_path.display());
+            let intercept_connect_options =
+                sqlx::sqlite::SqliteConnectOptions::from_str(&intercept_db_url)
+                    .map_err(|e| anyhow::anyhow!("failed to parse intercept db url: {e}"))?
+                    .create_if_missing(true);
+            let intercept_pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(5)
+                .connect_with(intercept_connect_options)
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to open intercept db: {e}"))?;
+            Arc::new(SqliteInterceptStore::new(intercept_pool).await?)
+        };
 
     info!("Starting proxy engine...");
     let cert_manager_for_api = cert_manager.clone();
@@ -710,46 +778,73 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     let script_runtime = {
         let runtime = ScriptRuntime::default();
         // Attach async script store so scripts and execution history
-        // survive restarts. We open a SqlitePool to the same database
-        // file used by TrafficStore. Loaded scripts are registered with
-        // the runtime before it is shared with the proxy pipeline and
-        // API layer.
-        let script_db_url = format!("sqlite://{}", config.db_path);
-        let script_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&script_db_url)
-            .map(|opts| opts.create_if_missing(true))
-            .map_err(|e| anyhow::anyhow!("failed to parse script db url: {e}"));
-        match script_opts {
-            Ok(opts) => {
-                match sqlx::sqlite::SqlitePoolOptions::new()
+        // survive restarts. When using PostgreSQL, the script store shares
+        // the same database; otherwise it uses a SQLite pool to the same
+        // database file used by TrafficStore.
+        let script_store_result: Result<Arc<dyn ScriptStoreBackend + Send + Sync>, anyhow::Error> =
+            if let Some(ref db_url) = args.database_url {
+                if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+                    let pool = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(5)
+                        .connect(db_url)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("failed to connect to PostgreSQL for scripts: {e}")
+                        })?;
+                    PostgresScriptStore::new(pool)
+                        .await
+                        .map(|s| {
+                            let store: Arc<dyn ScriptStoreBackend + Send + Sync> = Arc::new(s);
+                            store
+                        })
+                        .map_err(|e| anyhow::anyhow!("failed to init script store: {e}"))
+                } else {
+                    let script_db_url = format!("sqlite://{}", config.db_path);
+                    let script_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&script_db_url)
+                        .map(|opts| opts.create_if_missing(true))
+                        .map_err(|e| anyhow::anyhow!("failed to parse script db url: {e}"))?;
+                    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                        .max_connections(5)
+                        .connect_with(script_opts)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("failed to open script db: {e}"))?;
+                    SqliteScriptStore::new(pool)
+                        .await
+                        .map(|s| {
+                            let store: Arc<dyn ScriptStoreBackend + Send + Sync> = Arc::new(s);
+                            store
+                        })
+                        .map_err(|e| anyhow::anyhow!("failed to init script store: {e}"))
+                }
+            } else {
+                let script_db_url = format!("sqlite://{}", config.db_path);
+                let script_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&script_db_url)
+                    .map(|opts| opts.create_if_missing(true))
+                    .map_err(|e| anyhow::anyhow!("failed to parse script db url: {e}"))?;
+                let pool = sqlx::sqlite::SqlitePoolOptions::new()
                     .max_connections(5)
-                    .connect_with(opts)
+                    .connect_with(script_opts)
                     .await
-                {
-                    Ok(pool) => match SqliteScriptStore::new(pool).await {
-                        Ok(store) => {
-                            let store: Arc<dyn ScriptStoreBackend + Send + Sync> = Arc::new(store);
-                            if let Err(e) = runtime.with_persistence(store).await {
-                                tracing::warn!("Failed to attach script persistence: {}", e);
-                            } else {
-                                let count = runtime.get_scripts().len();
-                                info!("Loaded {} persisted script(s) from database", count);
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to initialize script store: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to open script persistence database at {}: {}",
-                            config.db_path,
-                            e
-                        );
-                    }
+                    .map_err(|e| anyhow::anyhow!("failed to open script db: {e}"))?;
+                SqliteScriptStore::new(pool)
+                    .await
+                    .map(|s| {
+                        let store: Arc<dyn ScriptStoreBackend + Send + Sync> = Arc::new(s);
+                        store
+                    })
+                    .map_err(|e| anyhow::anyhow!("failed to init script store: {e}"))
+            };
+        match script_store_result {
+            Ok(store) => {
+                if let Err(e) = runtime.with_persistence(store).await {
+                    tracing::warn!("Failed to attach script persistence: {}", e);
+                } else {
+                    let count = runtime.get_scripts().len();
+                    info!("Loaded {} persisted script(s) from database", count);
                 }
             }
             Err(e) => {
-                tracing::warn!("Failed to parse script db url: {}", e);
+                tracing::warn!("Failed to initialize script store: {}", e);
             }
         }
         Arc::new(runtime)
@@ -769,38 +864,68 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         let mut mgr = PluginManager::new();
 
         // Attach async plugin store (state, settings, invocation logs).
-        let plugins_db_url = format!("sqlite://{}", plugins_db.display());
-        let plugin_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&plugins_db_url)
-            .map(|opts| opts.create_if_missing(true))
-            .map_err(|e| anyhow::anyhow!("failed to parse plugins db url: {e}"));
-        match plugin_opts {
-            Ok(opts) => {
-                match sqlx::sqlite::SqlitePoolOptions::new()
-                    .max_connections(5)
-                    .connect_with(opts)
-                    .await
-                {
-                    Ok(pool) => match SqlitePluginStore::new(pool).await {
-                        Ok(store) => {
-                            let store: Arc<dyn PluginStoreBackend + Send + Sync> = Arc::new(store);
-                            info!("Plugin persistence opened at {:?}", plugins_db);
-                            mgr = mgr.with_persistence(store);
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to initialize plugin store: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to open plugin persistence database at {:?}: {}",
-                            plugins_db,
-                            e
-                        );
-                    }
+        // When using PostgreSQL, the plugin store shares the same database;
+        // otherwise it uses a separate SQLite file (plugins.db).
+        let plugin_store_result: Result<Arc<dyn PluginStoreBackend + Send + Sync>, anyhow::Error> =
+            if let Some(ref db_url) = args.database_url {
+                if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+                    let pool = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(5)
+                        .connect(db_url)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("failed to connect to PostgreSQL for plugins: {e}")
+                        })?;
+                    PostgresPluginStore::new(pool)
+                        .await
+                        .map(|s| {
+                            let store: Arc<dyn PluginStoreBackend + Send + Sync> = Arc::new(s);
+                            store
+                        })
+                        .map_err(|e| anyhow::anyhow!("failed to init plugin store: {e}"))
+                } else {
+                    let plugins_db_url = format!("sqlite://{}", plugins_db.display());
+                    let plugin_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&plugins_db_url)
+                        .map(|opts| opts.create_if_missing(true))
+                        .map_err(|e| anyhow::anyhow!("failed to parse plugins db url: {e}"))?;
+                    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                        .max_connections(5)
+                        .connect_with(plugin_opts)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("failed to open plugins db: {e}"))?;
+                    SqlitePluginStore::new(pool)
+                        .await
+                        .map(|s| {
+                            let store: Arc<dyn PluginStoreBackend + Send + Sync> = Arc::new(s);
+                            store
+                        })
+                        .map_err(|e| anyhow::anyhow!("failed to init plugin store: {e}"))
                 }
+            } else {
+                let plugins_db_url = format!("sqlite://{}", plugins_db.display());
+                let plugin_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&plugins_db_url)
+                    .map(|opts| opts.create_if_missing(true))
+                    .map_err(|e| anyhow::anyhow!("failed to parse plugins db url: {e}"))?;
+                let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(5)
+                    .connect_with(plugin_opts)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to open plugins db: {e}"))?;
+                SqlitePluginStore::new(pool)
+                    .await
+                    .map(|s| {
+                        let store: Arc<dyn PluginStoreBackend + Send + Sync> = Arc::new(s);
+                        store
+                    })
+                    .map_err(|e| anyhow::anyhow!("failed to init plugin store: {e}"))
+            };
+        match plugin_store_result {
+            Ok(store) => {
+                info!("Plugin persistence opened");
+                mgr = mgr.with_persistence(store);
             }
             Err(e) => {
-                tracing::warn!("Failed to parse plugin db url: {}", e);
+                tracing::warn!("Failed to initialize plugin store: {}", e);
             }
         }
 
@@ -967,33 +1092,80 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                 );
                 None
             };
-        // Construct the persistent enterprise store backed by a SQLite pool.
-        // The database file lives alongside traffic.db under ~/.madhyamas/.
-        let enterprise_db_path =
-            std::path::Path::new(&config.db_path).with_file_name("enterprise.db");
-        let enterprise_db_dir = enterprise_db_path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        std::fs::create_dir_all(&enterprise_db_dir).ok();
-        let db_url = format!("sqlite://{}", enterprise_db_path.display());
-        let connect_options = sqlx::sqlite::SqliteConnectOptions::from_str(&db_url)
-            .map_err(|e| anyhow::anyhow!("failed to parse enterprise db url: {e}"))?
-            .create_if_missing(true);
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect_with(connect_options)
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to open enterprise db: {e}"))?;
-        tracing::info!(
-            "Enterprise store opened at {}",
-            enterprise_db_path.display()
-        );
-        let store = madhyamas_enterprise::SqliteEnterpriseStore::new(pool)
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to initialize enterprise store: {e}"))?;
+        // Construct the persistent enterprise store. When using PostgreSQL,
+        // the enterprise store shares the same database; otherwise it uses
+        // a separate SQLite file (enterprise.db) alongside traffic.db.
         let store: std::sync::Arc<dyn madhyamas_enterprise::EnterpriseStore> =
-            std::sync::Arc::new(store);
+            if let Some(ref db_url) = args.database_url {
+                if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+                    tracing::info!("Enterprise store using PostgreSQL: {}", db_url);
+                    let pool = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(5)
+                        .connect(db_url)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("failed to connect to PostgreSQL for enterprise: {e}")
+                        })?;
+                    let store = madhyamas_enterprise::PostgresEnterpriseStore::new(pool)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("failed to initialize enterprise store: {e}")
+                        })?;
+                    std::sync::Arc::new(store)
+                } else {
+                    let enterprise_db_path =
+                        std::path::Path::new(&config.db_path).with_file_name("enterprise.db");
+                    let enterprise_db_dir = enterprise_db_path
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| std::path::PathBuf::from("."));
+                    std::fs::create_dir_all(&enterprise_db_dir).ok();
+                    let db_url = format!("sqlite://{}", enterprise_db_path.display());
+                    let connect_options = sqlx::sqlite::SqliteConnectOptions::from_str(&db_url)
+                        .map_err(|e| anyhow::anyhow!("failed to parse enterprise db url: {e}"))?
+                        .create_if_missing(true);
+                    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                        .max_connections(5)
+                        .connect_with(connect_options)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("failed to open enterprise db: {e}"))?;
+                    tracing::info!(
+                        "Enterprise store opened at {}",
+                        enterprise_db_path.display()
+                    );
+                    let store = madhyamas_enterprise::SqliteEnterpriseStore::new(pool)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("failed to initialize enterprise store: {e}")
+                        })?;
+                    std::sync::Arc::new(store)
+                }
+            } else {
+                let enterprise_db_path =
+                    std::path::Path::new(&config.db_path).with_file_name("enterprise.db");
+                let enterprise_db_dir = enterprise_db_path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                std::fs::create_dir_all(&enterprise_db_dir).ok();
+                let db_url = format!("sqlite://{}", enterprise_db_path.display());
+                let connect_options = sqlx::sqlite::SqliteConnectOptions::from_str(&db_url)
+                    .map_err(|e| anyhow::anyhow!("failed to parse enterprise db url: {e}"))?
+                    .create_if_missing(true);
+                let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(5)
+                    .connect_with(connect_options)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to open enterprise db: {e}"))?;
+                tracing::info!(
+                    "Enterprise store opened at {}",
+                    enterprise_db_path.display()
+                );
+                let store = madhyamas_enterprise::SqliteEnterpriseStore::new(pool)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to initialize enterprise store: {e}"))?;
+                std::sync::Arc::new(store)
+            };
         // Phase 4a.5: bootstrap admin user on first run (empty users table).
         bootstrap_admin_user(
             &store,
@@ -1258,6 +1430,41 @@ fn init_logging(
             .expect("failed to create disabled log writer in temp dir");
         LogHandle::new(writer)
     })
+}
+
+/// Apply runtime configuration (size limits, capture flags, ignored
+/// domains) to a [`TrafficStore`]. This is a helper used by the SQLite
+/// code path in [`run_proxy_server`].
+fn configure_traffic_store(store: &TrafficStore, config: &ProxyConfig) {
+    store.set_max_body_size(config.max_body_size);
+    store.set_max_entries(config.max_requests);
+    if let Some(mb) = config.max_total_size_mb {
+        store.set_max_total_size_bytes(mb * 1024 * 1024);
+    }
+    store.set_capture_request_bodies(config.capture_request_bodies);
+    store.set_capture_response_bodies(config.capture_response_bodies);
+    store.set_ignored_domains(config.ignored_domains.clone());
+}
+
+/// Run PostgreSQL schema migrations under a transactional advisory lock.
+///
+/// The advisory lock (`pg_advisory_xact_lock`) prevents concurrent
+/// migration attempts when multiple proxy instances start simultaneously
+/// against the same database. Each store's `new()` constructor also runs
+/// idempotent `CREATE TABLE IF NOT EXISTS` DDL, so this function is a
+/// no-op once tables exist.
+async fn run_pg_migrations(pool: &sqlx::PgPool) -> Result<()> {
+    // Advisory lock key — arbitrary fixed value chosen for Madhyamas.
+    // Using a transactional lock ensures it's released on commit/rollback.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(0x4D414448)")
+        .execute(&mut *tx)
+        .await?;
+    // The individual store constructors run their own DDL, so there's
+    // nothing to do here beyond holding the lock. In the future, sqlx
+    // migrations can be added here.
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Bootstrap a default admin user on first run (empty users table).

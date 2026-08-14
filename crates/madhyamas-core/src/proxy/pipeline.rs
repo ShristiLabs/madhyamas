@@ -30,7 +30,8 @@ use crate::performance::{MemoryManager, MemoryPressure, MetricsCollector};
 use crate::plugin::{PluginContext, PluginHook, PluginManager};
 #[cfg(feature = "scripting")]
 use crate::scripting::{ScriptContext, ScriptHook, ScriptRuntime};
-use crate::traffic::{RequestData, ResponseData, TrafficEntry, TrafficStore};
+use crate::storage::TrafficStoreBackend;
+use crate::traffic::{RequestData, ResponseData, TrafficEntry};
 use crate::Error;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -61,7 +62,7 @@ pub struct Pipeline<'a> {
     config: ProxyConfig,
     /// Shared, pooled HTTP client for upstream forwarding.
     http_client: reqwest::Client,
-    traffic_store: &'a TrafficStore,
+    traffic_store: &'a (dyn TrafficStoreBackend + Send + Sync),
     traffic_tx: &'a broadcast::Sender<TrafficEntry>,
     mock_manager: Option<&'a Arc<MockManager>>,
     rewrite_manager: Option<&'a Arc<RewriteManager>>,
@@ -88,7 +89,7 @@ impl<'a> Pipeline<'a> {
     pub fn new(
         config: ProxyConfig,
         http_client: reqwest::Client,
-        traffic_store: &'a TrafficStore,
+        traffic_store: &'a (dyn TrafficStoreBackend + Send + Sync),
         traffic_tx: &'a broadcast::Sender<TrafficEntry>,
         mock_manager: Option<&'a Arc<MockManager>>,
         rewrite_manager: Option<&'a Arc<RewriteManager>>,

@@ -41,15 +41,13 @@ const SCHEMA_SCRIPT_EXECUTIONS: &str = "CREATE TABLE IF NOT EXISTS script_execut
     hook TEXT
 )";
 
-/// Indexes for the `script_executions` table.
-const SCHEMA_INDEXES: &str = "
-CREATE INDEX IF NOT EXISTS idx_script_exec_script
-    ON script_executions(script_id);
-CREATE INDEX IF NOT EXISTS idx_script_exec_ts
-    ON script_executions(timestamp);
-CREATE INDEX IF NOT EXISTS idx_script_exec_traffic
-    ON script_executions(traffic_entry_id);
-";
+/// Indexes for the `script_executions` table. Each statement is executed
+/// individually.
+const SCHEMA_INDEX_STMTS: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS idx_script_exec_script ON script_executions(script_id)",
+    "CREATE INDEX IF NOT EXISTS idx_script_exec_ts ON script_executions(timestamp)",
+    "CREATE INDEX IF NOT EXISTS idx_script_exec_traffic ON script_executions(traffic_entry_id)",
+];
 
 /// Row shape for `scripts`.
 #[derive(Debug, FromRow)]
@@ -91,7 +89,9 @@ impl PostgresScriptStore {
     pub async fn new(pool: PgPool) -> Result<Self> {
         sqlx::query(SCHEMA_SCRIPTS).execute(&pool).await?;
         sqlx::query(SCHEMA_SCRIPT_EXECUTIONS).execute(&pool).await?;
-        sqlx::query(SCHEMA_INDEXES).execute(&pool).await?;
+        for stmt in SCHEMA_INDEX_STMTS {
+            sqlx::query(stmt).execute(&pool).await?;
+        }
         Ok(Self { pool })
     }
 

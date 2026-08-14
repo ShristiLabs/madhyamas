@@ -12,7 +12,7 @@
 
 use crate::config::AutoSaveConfig;
 use crate::session::SessionManager;
-use crate::traffic::TrafficStore;
+use crate::storage::TrafficStoreBackend;
 use crate::Error;
 use chrono::Utc;
 use parking_lot::RwLock;
@@ -36,7 +36,7 @@ use tracing::{debug, error, info};
 /// `start` again after `stop` is supported.
 pub struct AutoSaveManager {
     config: Arc<RwLock<AutoSaveConfig>>,
-    traffic_store: Arc<TrafficStore>,
+    traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
     session_manager: Arc<SessionManager>,
     stop_token: RwLock<Option<oneshot::Sender<()>>>,
 }
@@ -45,7 +45,7 @@ impl AutoSaveManager {
     /// Create a new AutoSaveManager.
     pub fn new(
         config: AutoSaveConfig,
-        traffic_store: Arc<TrafficStore>,
+        traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
         session_manager: Arc<SessionManager>,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -63,7 +63,7 @@ impl AutoSaveManager {
     /// without a restart.
     pub fn with_shared_config(
         config: Arc<RwLock<AutoSaveConfig>>,
-        traffic_store: Arc<TrafficStore>,
+        traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
         session_manager: Arc<SessionManager>,
     ) -> Arc<Self> {
         Arc::new(Self {

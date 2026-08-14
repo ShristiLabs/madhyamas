@@ -29,124 +29,43 @@ use tokio::sync::broadcast;
 /// How often (in inserts) to run the total-size pruning check.
 const SIZE_CHECK_INTERVAL: usize = 100;
 
-/// DDL for the core traffic tables (sessions, requests, responses, indexes).
-const SCHEMA_CORE: &str = r#"
-CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    created_at BIGINT,
-    updated_at BIGINT
-);
-
-CREATE TABLE IF NOT EXISTS requests (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    method TEXT NOT NULL,
-    url TEXT NOT NULL,
-    host TEXT NOT NULL,
-    path TEXT NOT NULL,
-    headers TEXT,
-    body BYTEA,
-    content_type TEXT,
-    timestamp BIGINT,
-    modified BOOLEAN DEFAULT FALSE,
-    notes TEXT,
-    is_passthrough BOOLEAN DEFAULT FALSE,
-    http_version TEXT,
-    script_intercepted BOOLEAN DEFAULT FALSE
-);
-
-CREATE TABLE IF NOT EXISTS responses (
-    request_id TEXT PRIMARY KEY,
-    status_code INTEGER NOT NULL,
-    status_message TEXT,
-    headers TEXT,
-    body BYTEA,
-    content_type TEXT,
-    duration_ms BIGINT,
-    http_version TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id);
-CREATE INDEX IF NOT EXISTS idx_requests_url ON requests(url);
-CREATE INDEX IF NOT EXISTS idx_requests_method ON requests(method);
-CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp);
-
-CREATE TABLE IF NOT EXISTS ws_connections (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    url TEXT NOT NULL,
-    host TEXT NOT NULL,
-    path TEXT NOT NULL,
-    state TEXT NOT NULL,
-    request_headers TEXT,
-    response_headers TEXT,
-    subprotocol TEXT,
-    created_at BIGINT NOT NULL,
-    closed_at BIGINT,
-    messages_sent BIGINT NOT NULL DEFAULT 0,
-    messages_received BIGINT NOT NULL DEFAULT 0,
-    bytes_sent BIGINT NOT NULL DEFAULT 0,
-    bytes_received BIGINT NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS ws_messages (
-    id TEXT PRIMARY KEY,
-    connection_id TEXT NOT NULL,
-    direction TEXT NOT NULL,
-    message_type TEXT NOT NULL,
-    payload_raw BYTEA,
-    payload_text TEXT,
-    opcode INTEGER NOT NULL,
-    is_final BOOLEAN NOT NULL DEFAULT TRUE,
-    mask BOOLEAN,
-    timestamp BIGINT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_ws_conn_session ON ws_connections(session_id);
-CREATE INDEX IF NOT EXISTS idx_ws_conn_state ON ws_connections(state);
-CREATE INDEX IF NOT EXISTS idx_ws_msg_conn ON ws_messages(connection_id);
-CREATE INDEX IF NOT EXISTS idx_ws_msg_timestamp ON ws_messages(timestamp);
-
-CREATE TABLE IF NOT EXISTS focus_hosts (
-    id TEXT PRIMARY KEY,
-    pattern TEXT NOT NULL UNIQUE,
-    created_at BIGINT NOT NULL
-);
-"#;
+/// DDL statements for the core traffic tables. PostgreSQL does not allow
+/// multiple statements in a single prepared statement, so each entry is
+/// executed individually.
+const SCHEMA_CORE_STMTS: &[&str] = &[
+    "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, name TEXT, created_at BIGINT, updated_at BIGINT)",
+    "CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, method TEXT NOT NULL, url TEXT NOT NULL, host TEXT NOT NULL, path TEXT NOT NULL, headers TEXT, body BYTEA, content_type TEXT, timestamp BIGINT, modified BOOLEAN DEFAULT FALSE, notes TEXT, is_passthrough BOOLEAN DEFAULT FALSE, http_version TEXT, script_intercepted BOOLEAN DEFAULT FALSE)",
+    "CREATE TABLE IF NOT EXISTS responses (request_id TEXT PRIMARY KEY, status_code INTEGER NOT NULL, status_message TEXT, headers TEXT, body BYTEA, content_type TEXT, duration_ms BIGINT, http_version TEXT)",
+    "CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_requests_url ON requests(url)",
+    "CREATE INDEX IF NOT EXISTS idx_requests_method ON requests(method)",
+    "CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp)",
+    "CREATE TABLE IF NOT EXISTS ws_connections (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, url TEXT NOT NULL, host TEXT NOT NULL, path TEXT NOT NULL, state TEXT NOT NULL, request_headers TEXT, response_headers TEXT, subprotocol TEXT, created_at BIGINT NOT NULL, closed_at BIGINT, messages_sent BIGINT NOT NULL DEFAULT 0, messages_received BIGINT NOT NULL DEFAULT 0, bytes_sent BIGINT NOT NULL DEFAULT 0, bytes_received BIGINT NOT NULL DEFAULT 0)",
+    "CREATE TABLE IF NOT EXISTS ws_messages (id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, direction TEXT NOT NULL, message_type TEXT NOT NULL, payload_raw BYTEA, payload_text TEXT, opcode INTEGER NOT NULL, is_final BOOLEAN NOT NULL DEFAULT TRUE, mask BOOLEAN, timestamp BIGINT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_ws_conn_session ON ws_connections(session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ws_conn_state ON ws_connections(state)",
+    "CREATE INDEX IF NOT EXISTS idx_ws_msg_conn ON ws_messages(connection_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ws_msg_timestamp ON ws_messages(timestamp)",
+    "CREATE TABLE IF NOT EXISTS focus_hosts (id TEXT PRIMARY KEY, pattern TEXT NOT NULL UNIQUE, created_at BIGINT NOT NULL)",
+];
 
 /// DDL for the `pg_trgm` extension and optimized indexes (GIN/BRIN/trigram).
-const SCHEMA_OPTIMIZED_INDEXES: &str = r#"
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-
-CREATE INDEX IF NOT EXISTS idx_traffic_req_headers_gin
-    ON requests USING GIN (headers gin_trgm_ops);
-
-CREATE INDEX IF NOT EXISTS idx_traffic_url_trgm
-    ON requests USING GIN (url gin_trgm_ops);
-
-CREATE INDEX IF NOT EXISTS idx_traffic_timestamp_brin
-    ON requests USING BRIN (timestamp);
-"#;
+/// Each statement is executed individually.
+const SCHEMA_OPTIMIZED_STMTS: &[&str] = &[
+    "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+    "CREATE INDEX IF NOT EXISTS idx_traffic_req_headers_gin ON requests USING GIN (headers gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS idx_traffic_url_trgm ON requests USING GIN (url gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS idx_traffic_timestamp_brin ON requests USING BRIN (timestamp)",
+];
 
 /// DDL for the tiered body storage table. Bodies larger than 1KB are stored
 /// here instead of inline in the `requests`/`responses` tables. The
 /// `compressed` flag indicates zstd compression (deferred — schema only for
-/// now).
-const SCHEMA_TRAFFIC_BODIES: &str = r#"
-CREATE TABLE IF NOT EXISTS traffic_bodies (
-    id TEXT PRIMARY KEY,
-    entry_id TEXT NOT NULL,
-    body_type TEXT NOT NULL,
-    body BYTEA NOT NULL,
-    size BIGINT NOT NULL,
-    compressed BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at BIGINT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_traffic_bodies_entry
-    ON traffic_bodies(entry_id);
-"#;
+/// now). Each statement is executed individually.
+const SCHEMA_TRAFFIC_BODIES_STMTS: &[&str] = &[
+    "CREATE TABLE IF NOT EXISTS traffic_bodies (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, body_type TEXT NOT NULL, body BYTEA NOT NULL, size BIGINT NOT NULL, compressed BOOLEAN NOT NULL DEFAULT FALSE, created_at BIGINT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_traffic_bodies_entry ON traffic_bodies(entry_id)",
+];
 
 /// Threshold (in bytes) for tiered body storage. Bodies larger than this are
 /// stored in the `traffic_bodies` table instead of inline.
@@ -207,18 +126,19 @@ impl PostgresTrafficStore {
 
     /// Create database tables and optimized indexes.
     async fn create_tables(&self) -> crate::Result<()> {
-        sqlx::query(SCHEMA_CORE).execute(&self.pool).await?;
-        sqlx::query(SCHEMA_TRAFFIC_BODIES)
-            .execute(&self.pool)
-            .await?;
+        for stmt in SCHEMA_CORE_STMTS {
+            sqlx::query(stmt).execute(&self.pool).await?;
+        }
+        for stmt in SCHEMA_TRAFFIC_BODIES_STMTS {
+            sqlx::query(stmt).execute(&self.pool).await?;
+        }
         // Optimized indexes (GIN/BRIN/trigram) — best-effort: if the
         // extension or index creation fails (e.g. insufficient privileges),
         // log a warning and continue. The core tables still work.
-        if let Err(e) = sqlx::query(SCHEMA_OPTIMIZED_INDEXES)
-            .execute(&self.pool)
-            .await
-        {
-            tracing::warn!("Failed to create optimized PostgreSQL indexes: {}", e);
+        for stmt in SCHEMA_OPTIMIZED_STMTS {
+            if let Err(e) = sqlx::query(stmt).execute(&self.pool).await {
+                tracing::warn!("Failed to create optimized PostgreSQL index: {}", e);
+            }
         }
         Ok(())
     }
@@ -1205,4 +1125,151 @@ async fn delete_requests_and_responses(pool: &PgPool, ids: &[String]) -> crate::
     q.execute(pool).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: connect to the test PostgreSQL instance and return a fresh
+    /// store. The database URL is read from `MADHYAMAS_PG_TEST_URL` (default:
+    /// `postgres://madhyamas:testpass@localhost:5432/madhyamas`). All tests
+    /// are `#[ignore]` so they only run with `cargo test -- --ignored` and a
+    /// running PostgreSQL instance.
+    async fn make_store() -> Arc<PostgresTrafficStore> {
+        let url = std::env::var("MADHYAMAS_PG_TEST_URL").unwrap_or_else(|_| {
+            "postgres://madhyamas:testpass@localhost:5432/madhyamas".to_string()
+        });
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
+            .await
+            .expect("failed to connect to PostgreSQL test instance");
+        PostgresTrafficStore::new(pool)
+            .await
+            .expect("failed to create PostgresTrafficStore")
+    }
+
+    /// Helper: create a simple traffic entry for testing.
+    fn make_entry(session_id: &str) -> TrafficEntry {
+        let req = RequestData {
+            method: crate::traffic::HttpMethod::Get,
+            url: "https://example.com/api/test".to_string(),
+            host: "example.com".to_string(),
+            path: "/api/test".to_string(),
+            headers: {
+                let mut m = HashMap::new();
+                m.insert("Accept".to_string(), "application/json".to_string());
+                m
+            },
+            body: Some(b"hello world".to_vec()),
+            content_type: Some("text/plain".to_string()),
+            http_version: Some("HTTP/1.1".to_string()),
+        };
+        let mut entry = TrafficEntry::new(session_id, req);
+        entry.response = Some(ResponseData {
+            status_code: 200,
+            status_message: Some("OK".to_string()),
+            headers: HashMap::new(),
+            body: Some(b"response body".to_vec()),
+            content_type: Some("application/json".to_string()),
+            duration_ms: 42,
+            http_version: Some("HTTP/1.1".to_string()),
+        });
+        entry
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_pg_traffic_store_request_response() {
+        let store = make_store().await;
+        let session = store.create_session(Some("test-session")).await.unwrap();
+        let entry = make_entry(&session.id);
+        store.store_request(&entry).await.unwrap();
+        store
+            .store_response(&entry.id, entry.response.as_ref().unwrap())
+            .await
+            .unwrap();
+
+        let fetched = store.get_by_id(&entry.id).await.unwrap().unwrap();
+        assert_eq!(fetched.request.url, entry.request.url);
+        assert_eq!(fetched.request.method, entry.request.method);
+        assert_eq!(fetched.response.as_ref().unwrap().status_code, 200);
+        assert_eq!(
+            fetched.response.as_ref().unwrap().body.as_deref(),
+            Some(b"response body" as &[u8])
+        );
+
+        // Clean up
+        store.delete_session(&session.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_pg_traffic_store_sessions() {
+        let store = make_store().await;
+        let session = store.create_session(Some("pg-session-test")).await.unwrap();
+        let sessions = store.list_sessions().await.unwrap();
+        assert!(sessions.iter().any(|s| s.id == session.id));
+
+        store.delete_session(&session.id).await.unwrap();
+        let sessions = store.list_sessions().await.unwrap();
+        assert!(!sessions.iter().any(|s| s.id == session.id));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_pg_traffic_store_focus_hosts() {
+        let store = make_store().await;
+        store.clear_focus_hosts().await.unwrap();
+
+        let host = store.add_focus_host("*.example.com").await.unwrap();
+        let hosts = store.list_focus_hosts().await.unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].pattern, "*.example.com");
+
+        assert!(store.remove_focus_host(&host.id).await.unwrap());
+        let hosts = store.list_focus_hosts().await.unwrap();
+        assert!(hosts.is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_pg_traffic_store_har_import() {
+        let store = make_store().await;
+        let har = serde_json::json!({
+            "log": {
+                "version": "1.2",
+                "entries": [{
+                    "startedDateTime": "2024-01-01T00:00:00Z",
+                    "time": 42.0,
+                    "request": {
+                        "method": "GET",
+                        "url": "https://example.com/api/users",
+                        "httpVersion": "HTTP/1.1",
+                        "headers": [{"name": "Accept", "value": "application/json"}]
+                    },
+                    "response": {
+                        "status": 200,
+                        "statusText": "OK",
+                        "httpVersion": "HTTP/1.1",
+                        "headers": [],
+                        "content": { "size": 17, "mimeType": "application/json", "text": "{\"users\":[]}" }
+                    }
+                }]
+            }
+        });
+
+        let result = store.import_har(&har, Some("pg-har-test")).await.unwrap();
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(result.skipped_count, 0);
+
+        let entries = store
+            .get_traffic_by_session(&result.session_id)
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+
+        store.delete_session(&result.session_id).await.unwrap();
+    }
 }

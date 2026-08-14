@@ -81,15 +81,17 @@ const SCHEMA_BLOCK_LIST_ENTRIES: &str = "CREATE TABLE IF NOT EXISTS block_list_e
     updated_at BIGINT NOT NULL
 )";
 
-/// Indexes for enabled/priority columns used during rule lookup.
-const SCHEMA_INDEXES: &str = "
-CREATE INDEX IF NOT EXISTS idx_mock_enabled ON mock_rules(enabled);
-CREATE INDEX IF NOT EXISTS idx_mock_priority ON mock_rules(priority);
-CREATE INDEX IF NOT EXISTS idx_rewrite_enabled ON rewrite_rules(enabled);
-CREATE INDEX IF NOT EXISTS idx_rewrite_priority ON rewrite_rules(priority);
-CREATE INDEX IF NOT EXISTS idx_breakpoint_enabled ON breakpoint_rules(enabled);
-CREATE INDEX IF NOT EXISTS idx_block_list_enabled ON block_list_entries(enabled);
-";
+/// Indexes for enabled/priority columns used during rule lookup. Each
+/// statement is executed individually (PostgreSQL does not allow multiple
+/// statements in a single prepared statement).
+const SCHEMA_INDEX_STMTS: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS idx_mock_enabled ON mock_rules(enabled)",
+    "CREATE INDEX IF NOT EXISTS idx_mock_priority ON mock_rules(priority)",
+    "CREATE INDEX IF NOT EXISTS idx_rewrite_enabled ON rewrite_rules(enabled)",
+    "CREATE INDEX IF NOT EXISTS idx_rewrite_priority ON rewrite_rules(priority)",
+    "CREATE INDEX IF NOT EXISTS idx_breakpoint_enabled ON breakpoint_rules(enabled)",
+    "CREATE INDEX IF NOT EXISTS idx_block_list_enabled ON block_list_entries(enabled)",
+];
 
 /// Row shape for `mock_rules` (new 12-column schema).
 #[derive(Debug, FromRow)]
@@ -176,7 +178,9 @@ impl PostgresInterceptStore {
         sqlx::query(SCHEMA_BLOCK_LIST_ENTRIES)
             .execute(&pool)
             .await?;
-        sqlx::query(SCHEMA_INDEXES).execute(&pool).await?;
+        for stmt in SCHEMA_INDEX_STMTS {
+            sqlx::query(stmt).execute(&pool).await?;
+        }
         Ok(Self { pool })
     }
 

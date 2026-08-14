@@ -33,7 +33,7 @@ pub use license::{License, LicenseClaims, LicenseError, LicenseFile, LicenseVeri
 pub use rbac::{Permission, RbacManager, Resource, ResourceType};
 pub use router::create_enterprise_router;
 pub use store::{ApiKeyRecord, AuditStats, AuthSession, UserUpdate};
-pub use store::{EnterpriseStore, SqliteEnterpriseStore, StoreError};
+pub use store::{EnterpriseStore, PostgresEnterpriseStore, SqliteEnterpriseStore, StoreError};
 pub use user::{User, UserRole, UserStatus};
 
 use madhyamas_api::auth::{AuditError, AuthError};

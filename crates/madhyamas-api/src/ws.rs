@@ -3,7 +3,7 @@
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
 use madhyamas_core::{
-    TrafficEntrySnapshot, TrafficFilter, TrafficStore, WsClientMessage, WsServerMessage,
+    TrafficEntrySnapshot, TrafficFilter, TrafficStoreBackend, WsClientMessage, WsServerMessage,
 };
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -11,7 +11,10 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// Handle WebSocket connection for real-time traffic updates
-pub async fn handle_ws(socket: WebSocket, traffic_store: Arc<TrafficStore>) {
+pub async fn handle_ws(
+    socket: WebSocket,
+    traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
+) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let client_id = Uuid::new_v4().to_string();
 
@@ -130,7 +133,7 @@ pub async fn handle_ws(socket: WebSocket, traffic_store: Arc<TrafficStore>) {
 /// Handle incoming client messages
 async fn handle_client_message(
     msg: &WsClientMessage,
-    traffic_store: &Arc<TrafficStore>,
+    traffic_store: &Arc<dyn TrafficStoreBackend + Send + Sync>,
     client_id: &str,
 ) {
     match msg {

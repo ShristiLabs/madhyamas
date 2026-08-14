@@ -10,9 +10,11 @@
 //! the compile-time `query!` macro) so the crate builds without a database at
 //! build time.
 
+pub mod postgres;
 pub mod sqlite;
 pub mod types;
 
+pub use postgres::PostgresEnterpriseStore;
 pub use sqlite::SqliteEnterpriseStore;
 pub use types::{ApiKeyRecord, AuditEventRecord, AuditStats, AuthSession, UserRecord, UserUpdate};
 

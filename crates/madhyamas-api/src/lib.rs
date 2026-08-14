@@ -28,7 +28,7 @@ use madhyamas_core::ScriptRuntime;
 use madhyamas_core::{
     AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager,
     InterceptStoreBackend, LogHandle, MirrorWriter, MockManager, ProxyConfig, ReplayManager,
-    RewriteManager, SessionManager, ThrottleManager, TrafficStore, WsManager,
+    RewriteManager, SessionManager, ThrottleManager, TrafficStoreBackend, WsManager,
 };
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -66,7 +66,7 @@ fn is_safe_origin(value: &axum::http::HeaderValue) -> bool {
 /// API state shared across handlers
 #[derive(Clone)]
 pub struct AppState {
-    pub traffic_store: Arc<TrafficStore>,
+    pub traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
     pub cert_manager: Option<Arc<CertificateManager>>,
     pub breakpoint_manager: Arc<BreakpointManager>,
     pub mock_manager: Arc<MockManager>,
@@ -113,7 +113,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(traffic_store: Arc<TrafficStore>) -> Self {
+    pub fn new(traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>) -> Self {
         let session_manager = Arc::new(SessionManager::new(traffic_store.clone()));
         Self {
             traffic_store,

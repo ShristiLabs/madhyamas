@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::traffic::{Session, TrafficEntry, TrafficStore};
+use crate::traffic::{Session, TrafficEntry};
 use crate::Error;
 
 /// Metadata about a session
@@ -73,11 +73,11 @@ pub fn get_common_presets() -> Vec<SessionPreset> {
 
 /// Manages session persistence and export/import
 pub struct SessionManager {
-    traffic_store: Arc<TrafficStore>,
+    traffic_store: Arc<dyn crate::storage::TrafficStoreBackend + Send + Sync>,
 }
 
 impl SessionManager {
-    pub fn new(traffic_store: Arc<TrafficStore>) -> Self {
+    pub fn new(traffic_store: Arc<dyn crate::storage::TrafficStoreBackend + Send + Sync>) -> Self {
         Self { traffic_store }
     }
 
