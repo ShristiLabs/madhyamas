@@ -26,6 +26,11 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 4d RBAC enforcement | #42 | done | skipped | approved | done (role→permission matrix, require_permission middleware, 3 tests) | committed (0554b2c) | done |
 | 4e Audit persistence | #43 | done | skipped | approved | done (store-backed, SHA-256 hash chain, tamper detection, 4 tests) | committed (08000ab) | done |
 | 5 PostgreSQL backends | #44 | done | skipped | approved | done (6 Pg stores, --database-url, advisory lock, 7 Pg tests pass) | committed (78e7766, d2c98ca) | done |
+| 6a Redis state | #45 | done | skipped | approved | done (pub/sub, config+intercept sync, --redis-url, 6 Redis tests) | committed (77ce3c3) | done |
+| 6c Seat coordination | #47 | done | skipped | approved | done (register/heartbeat/deregister, seat limit, SIGTERM release) | committed (47cc1c2) | done |
+| 6b Shared CA | #46 | — | — | — | — | — | pending |
+| 6d LB support | #48 | — | — | — | — | — | pending |
+| 6e Cluster metrics | #49 | — | — | — | — | — | pending |
 
 ## Agent Log
 
