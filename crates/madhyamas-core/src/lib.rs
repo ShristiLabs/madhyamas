@@ -114,8 +114,8 @@ pub use plugin::WasmRuntime;
 pub use plugin::{
     bytes_to_hex, generate_keypair, hex_to_bytes, sign_package, verify_package, PluginCapability,
     PluginError, PluginEventBus, PluginInstaller, PluginKeypair, PluginManager, PluginManifest,
-    PluginPersistence, PluginRegistry, PluginSettingField, PluginSettingType, PluginSettingsSchema,
-    PluginState, PluginStats, PluginTemplate, PluginTemplates, TemplateId,
+    PluginRegistry, PluginSettingField, PluginSettingType, PluginSettingsSchema, PluginState,
+    PluginStats, PluginTemplate, PluginTemplates, TemplateId,
 };
 
 // Re-exports from performance
@@ -130,6 +130,8 @@ pub use performance::{
 pub use storage::PluginStoreBackend;
 #[cfg(feature = "scripting")]
 pub use storage::ScriptStoreBackend;
+#[cfg(feature = "plugins")]
+pub use storage::SqlitePluginStore;
 pub use storage::{
     ConfigStoreBackend, InterceptStoreBackend, SqliteConfigStore, SqliteInterceptStore,
     TrafficStoreBackend,

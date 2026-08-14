@@ -157,17 +157,38 @@ fn should_reload(last: &Mutex<Instant>) -> bool {
 
 /// Trigger a debounced reload on the plugin manager.
 fn trigger_reload(manager: &Arc<PluginManager>) {
-    // We use a simple approach: spawn the reload on a blocking thread to
-    // avoid blocking the notify callback. The manager's refresh() is
-    // synchronous (file I/O + wasmtime module compilation).
+    // Spawn the async refresh on the tokio runtime if available; otherwise
+    // fall back to a blocking thread with a dedicated runtime.
     let mgr = manager.clone();
-    std::thread::spawn(move || {
-        debug!("hot-reload: triggering PluginManager::refresh()");
-        match mgr.refresh() {
-            Ok(count) => info!("hot-reload: reloaded {} plugin(s)", count),
-            Err(e) => error!("hot-reload: refresh failed: {}", e),
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn(async move {
+                debug!("hot-reload: triggering PluginManager::refresh()");
+                match mgr.refresh().await {
+                    Ok(count) => info!("hot-reload: reloaded {} plugin(s)", count),
+                    Err(e) => error!("hot-reload: refresh failed: {}", e),
+                }
+            });
         }
-    });
+        Err(_) => {
+            std::thread::spawn(move || {
+                let runtime = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        error!("hot-reload: failed to create runtime: {}", e);
+                        return;
+                    }
+                };
+                runtime.block_on(async move {
+                    debug!("hot-reload: triggering PluginManager::refresh()");
+                    match mgr.refresh().await {
+                        Ok(count) => info!("hot-reload: reloaded {} plugin(s)", count),
+                        Err(e) => error!("hot-reload: refresh failed: {}", e),
+                    }
+                });
+            });
+        }
+    }
 }
 
 #[cfg(test)]

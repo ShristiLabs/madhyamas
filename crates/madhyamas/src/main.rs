@@ -24,7 +24,9 @@ use madhyamas_core::{
     SessionManager, SqliteInterceptStore, ThrottleManager, TrafficStore, UpstreamProxyConfig,
 };
 #[cfg(feature = "plugins")]
-use madhyamas_core::{PluginExtension, PluginInstaller, PluginManager, PluginPersistence};
+use madhyamas_core::{
+    PluginExtension, PluginInstaller, PluginManager, PluginStoreBackend, SqlitePluginStore,
+};
 #[cfg(feature = "scripting")]
 use madhyamas_core::{ScriptExtension, ScriptRuntime};
 
@@ -733,18 +735,39 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
 
         let mut mgr = PluginManager::new();
 
-        // Attach SQLite persistence (state, settings, invocation logs).
-        match PluginPersistence::open(&plugins_db) {
-            Ok(p) => {
-                info!("Plugin persistence opened at {:?}", plugins_db);
-                mgr = mgr.with_persistence(p);
+        // Attach async plugin store (state, settings, invocation logs).
+        let plugins_db_url = format!("sqlite://{}", plugins_db.display());
+        let plugin_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&plugins_db_url)
+            .map(|opts| opts.create_if_missing(true))
+            .map_err(|e| anyhow::anyhow!("failed to parse plugins db url: {e}"));
+        match plugin_opts {
+            Ok(opts) => {
+                match sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(5)
+                    .connect_with(opts)
+                    .await
+                {
+                    Ok(pool) => match SqlitePluginStore::new(pool).await {
+                        Ok(store) => {
+                            let store: Arc<dyn PluginStoreBackend + Send + Sync> = Arc::new(store);
+                            info!("Plugin persistence opened at {:?}", plugins_db);
+                            mgr = mgr.with_persistence(store);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to initialize plugin store: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to open plugin persistence database at {:?}: {}",
+                            plugins_db,
+                            e
+                        );
+                    }
+                }
             }
             Err(e) => {
-                tracing::warn!(
-                    "Failed to open plugin persistence database at {:?}: {}",
-                    plugins_db,
-                    e
-                );
+                tracing::warn!("Failed to parse plugin db url: {}", e);
             }
         }
 
@@ -767,7 +790,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         }
 
         // Discover and load any plugins already on disk.
-        if let Err(e) = mgr.refresh() {
+        if let Err(e) = mgr.refresh().await {
             tracing::warn!("Initial plugin discovery failed: {}", e);
         }
 

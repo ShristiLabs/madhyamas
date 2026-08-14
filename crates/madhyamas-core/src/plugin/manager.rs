@@ -14,13 +14,14 @@
 //! layer's audit log.
 
 use super::installer::{InstallResult, InstallSource, PluginInstaller};
-use super::persistence::{PluginInvocationRow, PluginPersistence};
+use super::persistence::PluginInvocationRow;
 #[cfg(feature = "wasm-runtime")]
 use super::WasmRuntime;
 use super::{
     Plugin, PluginContext, PluginError, PluginHook, PluginManifest, PluginResult, PluginState,
     PluginStats,
 };
+use crate::storage::PluginStoreBackend;
 use crate::Error;
 use parking_lot::RwLock;
 use semver::{Version, VersionReq};
@@ -42,8 +43,8 @@ pub struct PluginManager {
     /// Sandboxed WASM runtime (present when the `wasm-runtime` feature is on).
     #[cfg(feature = "wasm-runtime")]
     wasm_runtime: Option<Arc<WasmRuntime>>,
-    /// SQLite persistence for plugin state, settings, and invocation logs.
-    persistence: Option<Arc<PluginPersistence>>,
+    /// Async plugin store for plugin state, settings, and invocation logs.
+    persistence: Option<Arc<dyn PluginStoreBackend + Send + Sync>>,
     /// Installer used for download/uninstall.
     installer: Option<Arc<PluginInstaller>>,
     /// Active timer task handles (plugin_id -> JoinHandle), so timers can be
@@ -83,8 +84,8 @@ impl PluginManager {
         self
     }
 
-    /// Attach SQLite persistence (enables state/settings/invocation logging).
-    pub fn with_persistence(mut self, p: Arc<PluginPersistence>) -> Self {
+    /// Attach an async plugin store (enables state/settings/invocation logging).
+    pub fn with_persistence(mut self, p: Arc<dyn PluginStoreBackend + Send + Sync>) -> Self {
         self.persistence = Some(p);
         self
     }
@@ -162,7 +163,7 @@ impl PluginManager {
     }
 
     /// Load a plugin from a directory.
-    pub fn load_plugin(&self, path: &Path) -> crate::Result<String> {
+    pub async fn load_plugin(&self, path: &Path) -> crate::Result<String> {
         // Try TOML first, then JSON
         let manifest_path = path.join("madhyamas-plugin.toml");
         let manifest_json = path.join("madhyamas-plugin.json");
@@ -196,7 +197,7 @@ impl PluginManager {
 
         // Restore persisted state (enabled flag + settings) if available.
         let (initial_state, restored_settings) = match &self.persistence {
-            Some(p) => match p.load_state(&plugin_id)? {
+            Some(p) => match p.load_state(&plugin_id).await? {
                 Some(row) => {
                     let state = if row.enabled {
                         PluginState::Enabled
@@ -249,7 +250,7 @@ impl PluginManager {
     /// that are still present. This is the counterpart to
     /// [`PluginRegistry::refresh`]: the registry refreshes the *catalog* of
     /// available plugins, while this refreshes the set of *loaded* plugins.
-    pub fn refresh(&self) -> crate::Result<usize> {
+    pub async fn refresh(&self) -> crate::Result<usize> {
         let discovered = self.discover_plugins()?;
 
         // Collect current plugin ids and their settings so we can preserve
@@ -271,11 +272,11 @@ impl PluginManager {
         // Load all discovered plugins, restoring preserved settings.
         let mut count = 0;
         for path in discovered {
-            match self.load_plugin(&path) {
+            match self.load_plugin(&path).await {
                 Ok(id) => {
                     if let Some(settings) = previous.get(&id) {
                         if !settings.is_empty() && self.persistence.is_none() {
-                            self.update_settings(&id, settings.clone());
+                            self.update_settings(&id, settings.clone()).await;
                         }
                     }
                     count += 1;
@@ -309,7 +310,7 @@ impl PluginManager {
     }
 
     /// Enable a plugin
-    pub fn enable_plugin(&self, id: &str) -> Result<(), PluginError> {
+    pub async fn enable_plugin(&self, id: &str) -> Result<(), PluginError> {
         // Check dependencies and set state in a single write lock.
         let deps = {
             let mut plugins = self.plugins.write();
@@ -330,7 +331,7 @@ impl PluginManager {
             plugin.state = PluginState::Enabled;
         }
         // Persist + lifecycle.
-        self.persist_state(id, true);
+        self.persist_state(id, true).await;
         self.dispatch_lifecycle(id, PluginHook::OnEnable);
         self.maybe_start_timer(id);
         info!("Enabled plugin: {}", id);
@@ -338,7 +339,7 @@ impl PluginManager {
     }
 
     /// Disable a plugin
-    pub fn disable_plugin(&self, id: &str) -> Result<(), PluginError> {
+    pub async fn disable_plugin(&self, id: &str) -> Result<(), PluginError> {
         self.stop_timer(id);
         {
             let mut plugins = self.plugins.write();
@@ -347,7 +348,7 @@ impl PluginManager {
             })?;
             plugin.state = PluginState::Disabled;
         }
-        self.persist_state(id, false);
+        self.persist_state(id, false).await;
         self.dispatch_lifecycle(id, PluginHook::OnDisable);
         info!("Disabled plugin: {}", id);
         Ok(())
@@ -443,11 +444,11 @@ impl PluginManager {
     }
 
     /// Get recent invocation logs for a plugin.
-    pub fn get_invocations(&self, id: &str, limit: u32) -> Vec<PluginInvocationRow> {
-        self.persistence
-            .as_ref()
-            .and_then(|p| p.list_invocations(id, limit).ok())
-            .unwrap_or_default()
+    pub async fn get_invocations(&self, id: &str, limit: u32) -> Vec<PluginInvocationRow> {
+        match &self.persistence {
+            Some(p) => p.list_invocations(id, limit).await.unwrap_or_default(),
+            None => Vec::new(),
+        }
     }
 
     /// Execute a hook for all relevant plugins
@@ -505,7 +506,10 @@ impl PluginManager {
             }
         }
 
-        // Record invocation in the audit log.
+        // Record invocation in the audit log (fire-and-forget via
+        // tokio::spawn — this method is called from sync contexts such as
+        // the extension trait and timer tasks, so we cannot `.await` the
+        // async store directly).
         if let Some(p) = &self.persistence {
             let row = PluginInvocationRow {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -519,8 +523,13 @@ impl PluginManager {
                 modified: result.modified,
                 timestamp: chrono::Utc::now(),
             };
-            if let Err(e) = p.record_invocation(&row) {
-                warn!("failed to record plugin invocation: {}", e);
+            let store = p.clone();
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    if let Err(e) = store.record_invocation(&row).await {
+                        warn!("failed to record plugin invocation: {}", e);
+                    }
+                });
             }
         }
 
@@ -577,17 +586,21 @@ impl PluginManager {
     }
 
     /// Persist the enabled flag (and current settings) for a plugin.
-    fn persist_state(&self, id: &str, enabled: bool) {
+    async fn persist_state(&self, id: &str, enabled: bool) {
         if let Some(p) = &self.persistence {
             let settings = self.get_settings(id).unwrap_or_default();
-            if let Err(e) = p.save_state(id, enabled, &settings) {
+            if let Err(e) = p.save_state(id, enabled, &settings).await {
                 warn!("failed to persist plugin state for {}: {}", id, e);
             }
         }
     }
 
     /// Update plugin settings.
-    pub fn update_settings(&self, id: &str, settings: HashMap<String, serde_json::Value>) -> bool {
+    pub async fn update_settings(
+        &self,
+        id: &str,
+        settings: HashMap<String, serde_json::Value>,
+    ) -> bool {
         {
             let mut plugins = self.plugins.write();
             if let Some(plugin) = plugins.get_mut(id) {
@@ -605,7 +618,7 @@ impl PluginManager {
                 .get(id)
                 .map(|pl| pl.is_enabled())
                 .unwrap_or(false);
-            let _ = p.save_state(id, enabled, &settings);
+            let _ = p.save_state(id, enabled, &settings).await;
         }
         self.dispatch_lifecycle(id, PluginHook::OnSettingsChange);
         true
@@ -624,18 +637,18 @@ impl PluginManager {
         let result = installer.install(source, expected_checksum).await?;
         // Load the newly installed plugin.
         let path = PathBuf::from(&result.path);
-        if let Err(e) = self.load_plugin(&path) {
+        if let Err(e) = self.load_plugin(&path).await {
             warn!("plugin installed but failed to load: {}", e);
         }
         Ok(result)
     }
 
     /// Uninstall a plugin (remove from disk + persistence + unload).
-    pub fn uninstall_plugin(&self, id: &str) -> crate::Result<()> {
+    pub async fn uninstall_plugin(&self, id: &str) -> crate::Result<()> {
         self.stop_timer(id);
         self.unload_plugin(id);
         if let Some(installer) = &self.installer {
-            installer.uninstall(id)?;
+            installer.uninstall(id).await?;
         } else {
             // Fallback: remove from the first plugin dir that contains it.
             if let Some(plugin) = self.get_plugin(id) {
@@ -664,8 +677,8 @@ impl PluginManager {
     ///
     /// This is an alias for [`Self::refresh`]: it re-scans the plugin
     /// directories and reloads all discovered plugins.
-    pub fn reload_all(&self) -> crate::Result<usize> {
-        self.refresh()
+    pub async fn reload_all(&self) -> crate::Result<usize> {
+        self.refresh().await
     }
 
     /// Start timer tasks for all enabled plugins that declare a timer interval.

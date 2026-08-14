@@ -23,6 +23,8 @@ use tokio::sync::broadcast;
 
 pub mod sqlite;
 
+#[cfg(feature = "plugins")]
+pub use sqlite::SqlitePluginStore;
 pub use sqlite::{SqliteConfigStore, SqliteInterceptStore};
 
 use crate::intercept::{BlockListEntry, BreakpointRule, MockRule, RewriteRule, ThrottleProfile};

@@ -9,6 +9,10 @@
 
 pub mod config;
 pub mod intercept;
+#[cfg(feature = "plugins")]
+pub mod plugin;
 
 pub use config::SqliteConfigStore;
 pub use intercept::SqliteInterceptStore;
+#[cfg(feature = "plugins")]
+pub use plugin::SqlitePluginStore;
