@@ -31,6 +31,8 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 6b Shared CA | #46 | done | skipped | approved | done (--ca-cert-file/--ca-key-file, load or generate + save) | committed (4f37e5e) | done |
 | 6d LB support | #48 | done | skipped | approved | done (--base-path, health deps, graceful shutdown, K8s + docker-compose.multi) | committed (908d7f4) | done |
 | 6e Cluster metrics | #49 | done | skipped | approved | done (InstanceMetrics, /api/metrics/cluster, /api/instances, 30s heartbeat) | committed (2052fb8) | done |
+| 7a+7b Web UI auth | #50,51 | done | skipped | approved | done (TierContext, AuthContext, LoginPage, ProtectedApp, UserMenu, badge) | committed (f36cf1f) | done |
+| 7c+7d Web UI admin | #52,53 | done | skipped | approved | done (Users/Audit/Metrics/License/ApiKeys/Instances panels, lazy chunks, OSS hides enterprise) | committed (93d98df) | done |
 
 ## Agent Log
 
