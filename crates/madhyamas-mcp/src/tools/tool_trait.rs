@@ -8,7 +8,7 @@
 use reqwest::Client;
 use serde_json::Value;
 
-use crate::types::{ContentBlock, McpError, Tool};
+use crate::types::{ContentBlock, McpError, Tool, ToolAnnotations};
 
 /// A self-describing MCP tool.
 ///
@@ -26,6 +26,14 @@ pub trait McpTool: Send + Sync {
     /// JSON Schema describing the tool's input parameters.
     fn input_schema(&self) -> Value;
 
+    /// Tool annotations (MCP spec hints + enterprise permission).
+    ///
+    /// Defaults to `None`. Override to declare `readOnlyHint`,
+    /// `destructiveHint`, `idempotentHint`, and `required_permission`.
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        None
+    }
+
     /// Execute the tool, returning content blocks for the MCP response.
     async fn execute(
         &self,
@@ -41,6 +49,7 @@ pub fn tool_definition<T: McpTool + ?Sized>(t: &T) -> Tool {
         name: t.name().to_string(),
         description: t.description().to_string(),
         input_schema: t.input_schema(),
+        annotations: t.annotations(),
     }
 }
 
@@ -92,6 +101,16 @@ impl DynToolRegistry {
     /// Whether the registry is empty.
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
+    }
+
+    /// Merge all tools from `other` into this registry, consuming `other`.
+    pub fn merge(&mut self, mut other: DynToolRegistry) {
+        self.tools.append(&mut other.tools);
+    }
+
+    /// Check whether a tool with the given name is registered.
+    pub fn contains(&self, name: &str) -> bool {
+        self.tools.iter().any(|t| t.name() == name)
     }
 }
 

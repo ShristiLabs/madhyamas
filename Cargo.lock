@@ -2762,6 +2762,7 @@ version = "0.1.6"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "futures",
  "madhyamas-core",
  "reqwest",

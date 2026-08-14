@@ -5,7 +5,7 @@
 use std::env;
 use std::process;
 
-use madhyamas_mcp::{McpAuth, McpConfig, McpServer};
+use madhyamas_mcp::{McpAuth, McpConfig, McpServer, McpTransport};
 
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -57,6 +57,7 @@ fn main() {
         api_url,
         timeout_secs,
         auth,
+        transport: McpTransport::Stdio,
     };
 
     let server = McpServer::new(config).expect("Failed to create MCP server");

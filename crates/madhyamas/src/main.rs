@@ -41,7 +41,7 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 use madhyamas_cli::{CliAuth, Commands as CliCommands};
 
 // Re-export MCP server from the madhyamas-mcp library
-use madhyamas_mcp::{McpAuth, McpConfig, McpServer};
+use madhyamas_mcp::{McpAuth, McpConfig, McpServer, McpTransport};
 
 #[derive(Parser, Debug)]
 #[command(name = "madhyamas")]
@@ -328,7 +328,7 @@ enum Command {
     /// Start the proxy server with web UI (default action)
     Serve,
 
-    /// Run as an MCP (Model Context Protocol) server via stdio
+    /// Run as an MCP (Model Context Protocol) server via stdio or HTTP
     #[command(name = "mcp")]
     Mcp {
         /// API server URL to connect to
@@ -342,6 +342,14 @@ enum Command {
         /// Request timeout in seconds
         #[arg(long, env = "MADHYAMAS_TIMEOUT", default_value_t = 30)]
         timeout_secs: u64,
+
+        /// Transport mode: stdio (default) or http
+        #[arg(long, env = "MADHYAMAS_MCP_TRANSPORT", default_value = "stdio")]
+        transport: String,
+
+        /// Port for HTTP transport (only used with --transport http)
+        #[arg(long, env = "MADHYAMAS_MCP_PORT", default_value_t = 3002)]
+        mcp_port: u16,
     },
 
     /// CLI commands for interacting with a running Madhyamas server
@@ -369,6 +377,8 @@ async fn main() -> Result<()> {
         Some(Command::Mcp {
             api_url,
             timeout_secs,
+            transport,
+            mcp_port,
         }) => {
             // MCP mode: log to stderr to avoid corrupting stdio JSON-RPC
             let subscriber = fmt::Subscriber::builder()
@@ -383,15 +393,31 @@ async fn main() -> Result<()> {
             info!("API URL: {}", api_url);
 
             let auth = resolve_mcp_auth(&args.api_key, &args.token);
+            let mcp_transport = match transport.as_str() {
+                "http" => McpTransport::Http { port: mcp_port },
+                _ => McpTransport::Stdio,
+            };
             let config = McpConfig {
                 api_url,
                 timeout_secs,
                 auth,
+                transport: mcp_transport,
             };
             let server = McpServer::new(config).expect("Failed to create MCP server");
-            if let Err(e) = server.run() {
-                eprintln!("MCP server error: {}", e);
-                std::process::exit(1);
+            match server.transport() {
+                McpTransport::Stdio => {
+                    if let Err(e) = server.run() {
+                        eprintln!("MCP server error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                McpTransport::Http { port } => {
+                    info!("MCP HTTP transport on port {}", port);
+                    if let Err(e) = server.run_http(port) {
+                        eprintln!("MCP server error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             }
             Ok(())
         }
