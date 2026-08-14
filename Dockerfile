@@ -14,7 +14,12 @@ COPY web/ ./
 RUN npm run build
 
 # Backend build stage
+# BUILD_TIER build-arg selects the feature set:
+#   enterprise (default) — cargo build --release -p madhyamas
+#   oss                  — cargo build --release --no-default-features -p madhyamas
 FROM rust:alpine AS builder
+
+ARG BUILD_TIER=enterprise
 
 RUN apk add --no-cache musl-dev openssl-dev openssl openssl-libs-static pkgconf build-base
 
@@ -46,7 +51,12 @@ RUN echo "pub fn dummy() {}" > crates/madhyamas-enterprise/src/lib.rs
 COPY --from=frontend-builder /app/web/dist ./web/dist
 
 # Build dependencies (only the madhyamas package, not all crates)
-RUN cargo build --release -p madhyamas --locked
+# Tier-aware: oss disables default features (drops enterprise crate)
+RUN if [ "$BUILD_TIER" = "oss" ]; then \
+      cargo build --release --no-default-features -p madhyamas --locked; \
+    else \
+      cargo build --release -p madhyamas --locked; \
+    fi
 
 # Copy actual source files
 COPY crates/madhyamas/src ./crates/madhyamas/src
@@ -62,7 +72,12 @@ COPY crates/madhyamas-core/tests ./crates/madhyamas-core/tests
 RUN find crates -name "*.rs" -exec touch {} \;
 
 # Build the unified binary (includes proxy + web UI + MCP + CLI)
-RUN cargo build --release -p madhyamas --locked
+# Tier-aware: oss disables default features (drops enterprise crate)
+RUN if [ "$BUILD_TIER" = "oss" ]; then \
+      cargo build --release --no-default-features -p madhyamas --locked; \
+    else \
+      cargo build --release -p madhyamas --locked; \
+    fi
 
 # Runtime stage
 FROM alpine:3.19

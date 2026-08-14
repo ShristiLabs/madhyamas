@@ -80,9 +80,10 @@ jobs:
 
   # =============================================================================
   # Rust checks: format, clippy, build, test on multiple OS/toolchains
+  # Two-tier matrix: enterprise (default features) + oss (no-default-features)
   # =============================================================================
   rust-checks:
-    name: Rust ${{ matrix.rust }} on ${{ matrix.os }}
+    name: Rust ${{ matrix.rust }} on ${{ matrix.os }} (${{ matrix.tier }})
     needs: build-frontend
     runs-on: ${{ matrix.os }}
     strategy:
@@ -90,9 +91,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         rust: [stable]
+        tier: [enterprise, oss]
         include:
           - os: ubuntu-latest
             rust: beta
+            tier: enterprise
+          - os: ubuntu-latest
+            rust: beta
+            tier: oss
     steps:
       - uses: actions/checkout@v4
 
@@ -105,7 +111,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.os }}-${{ matrix.rust }}
+          key: ${{ matrix.os }}-${{ matrix.rust }}-${{ matrix.tier }}
 
       - name: Download frontend artifact
         uses: actions/download-artifact@v4
@@ -116,24 +122,41 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Run clippy
+      - name: Run clippy (enterprise tier)
+        if: matrix.tier == 'enterprise'
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Build (debug profile — fast compilation for checks)
-        run: cargo build --verbose
+      - name: Run clippy (oss tier)
+        if: matrix.tier == 'oss'
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+
+      - name: Build (enterprise tier — debug profile)
+        if: matrix.tier == 'enterprise'
+        run: cargo build --verbose -p madhyamas
+
+      - name: Build (oss tier — debug profile, no default features)
+        if: matrix.tier == 'oss'
+        run: cargo build --verbose --no-default-features -p madhyamas
 
       - name: Install nextest
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
 
-      - name: Run tests
+      - name: Run tests (enterprise tier)
+        if: matrix.tier == 'enterprise'
         env:
           RUST_BACKTRACE: 1
-        run: cargo nextest run --verbose
+        run: cargo nextest run --verbose --all-features
+
+      - name: Run tests (oss tier)
+        if: matrix.tier == 'oss'
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo nextest run --verbose --no-default-features
 
   # =============================================================================
-  # Security audit
+  # Security audit — both tiers + license compliance (no BSL in OSS)
   # =============================================================================
   security-audit:
     name: Security Audit
@@ -150,8 +173,23 @@ jobs:
       - name: Install cargo-audit (pre-built binary)
         run: cargo binstall cargo-audit --no-confirm
 
-      - name: Run security audit
+      - name: Run security audit (default features)
         run: cargo audit
+
+      - name: Run security audit (all features — enterprise)
+        run: cargo audit --all-features
+
+      - name: Verify OSS build contains no BSL/enterprise crate
+        shell: bash
+        run: |
+          # The OSS build (--no-default-features) must not pull in the
+          # BSL-licensed madhyamas-enterprise crate. Fail CI if it leaks in.
+          if cargo tree --no-default-features -p madhyamas 2>/dev/null | grep -q "madhyamas-enterprise"; then
+            echo "::error::BSL-licensed madhyamas-enterprise crate leaked into the OSS build (--no-default-features)."
+            cargo tree --no-default-features -p madhyamas | grep "madhyamas-enterprise"
+            exit 1
+          fi
+          echo "OK: OSS build does not include madhyamas-enterprise (BSL) crate."
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -165,38 +203,59 @@ jobs:
         run: npm audit --audit-level=high || true
 
   # =============================================================================
-  # Docker build test
+  # Docker build test — both tiers via BUILD_TIER build-arg
   # =============================================================================
   docker-build:
-    name: Docker Build Test
+    name: Docker Build Test (${{ matrix.tier }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [oss, enterprise]
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build Docker image
+      - name: Build Docker image (oss)
+        if: matrix.tier == 'oss'
         uses: docker/build-push-action@v7
         with:
           context: .
           push: false
-          tags: madhyamas:test
+          tags: madhyamas:test-oss
+          build-args: |
+            BUILD_TIER=oss
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Docker image (enterprise)
+        if: matrix.tier == 'enterprise'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          tags: madhyamas:test-enterprise
+          build-args: |
+            BUILD_TIER=enterprise
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   # =============================================================================
-  # Cross-compile builds for all platforms
+  # Cross-compile builds for all platforms — both tiers
   # Single unified binary: proxy + web UI (embedded) + MCP + CLI
   # Uses ci-release profile (thin LTO, parallel codegen) for faster builds.
+  # Tier dimension: enterprise (default features) + oss (no-default-features)
   # =============================================================================
   build-binaries:
-    name: Build madhyamas for ${{ matrix.target }}
+    name: Build madhyamas (${{ matrix.tier }}) for ${{ matrix.target }}
     needs: [rust-checks, build-frontend]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        tier: [enterprise, oss]
         include:
           # Linux
           - target: x86_64-unknown-linux-gnu
@@ -263,7 +322,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.target }}-${{ matrix.tier }}
 
       - name: Download frontend artifact
         uses: actions/download-artifact@v4
@@ -276,14 +335,19 @@ jobs:
         shell: bash
         run: echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
 
-      - name: Build binary (ci-release profile)
+      - name: Build binary (enterprise tier — ci-release profile)
+        if: matrix.tier == 'enterprise'
         run: cargo build --profile ci-release --target ${{ matrix.target }} -p madhyamas
+
+      - name: Build binary (oss tier — ci-release profile, no default features)
+        if: matrix.tier == 'oss'
+        run: cargo build --profile ci-release --no-default-features --target ${{ matrix.target }} -p madhyamas
 
       - name: Package (Unix)
         if: matrix.os != 'windows-latest'
         shell: bash
         run: |
-          ARTIFACT_NAME="madhyamas-${{ steps.sha.outputs.SHORT_SHA }}-${{ matrix.target }}"
+          ARTIFACT_NAME="madhyamas-${{ matrix.tier }}-${{ steps.sha.outputs.SHORT_SHA }}-${{ matrix.target }}"
           mkdir -p dist/$ARTIFACT_NAME
           cp target/${{ matrix.target }}/ci-release/madhyamas dist/$ARTIFACT_NAME/
           cd dist
@@ -298,7 +362,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $ARTIFACT_NAME = "madhyamas-${{ steps.sha.outputs.SHORT_SHA }}-${{ matrix.target }}"
+          $ARTIFACT_NAME = "madhyamas-${{ matrix.tier }}-${{ steps.sha.outputs.SHORT_SHA }}-${{ matrix.target }}"
           New-Item -ItemType Directory -Path "dist\$ARTIFACT_NAME" -Force
           Copy-Item "target\${{ matrix.target }}\ci-release\madhyamas.exe" "dist\$ARTIFACT_NAME\"
           cd dist
@@ -309,7 +373,7 @@ jobs:
       - name: Upload build artifact (3 days retention)
         uses: actions/upload-artifact@v4
         with:
-          name: madhyamas-${{ matrix.target }}
+          name: madhyamas-${{ matrix.tier }}-${{ matrix.target }}
           path: dist/madhyamas-*.*
           retention-days: 3
 

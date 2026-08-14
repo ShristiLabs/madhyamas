@@ -1403,6 +1403,139 @@ start immediately.
 
 ---
 
+## 12. Implemented Pipeline (Phase 11)
+
+Phase 11 implemented the two-tier CI/CD pipeline described above. This
+section documents the **actual** workflow files, build commands, and
+artifacts as shipped in `.github/workflows/ci.yml`,
+`.github/workflows/release.yml`, and `Dockerfile`.
+
+### 12.1 Two-tier CI matrix
+
+The `rust-checks` job in `ci.yml` runs a `tier: [enterprise, oss]`
+matrix dimension across `os: [ubuntu-latest, macos-latest,
+windows-latest]` and `rust: [stable]` (plus `beta` on Ubuntu). Each
+tier runs format check, clippy, build, and tests:
+
+| Tier | Clippy | Build | Tests |
+|---|---|---|---|
+| `enterprise` | `cargo clippy --all-targets --all-features -- -D warnings` | `cargo build -p madhyamas` | `cargo nextest run --all-features` |
+| `oss` | `cargo clippy --all-targets --no-default-features -- -D warnings` | `cargo build --no-default-features -p madhyamas` | `cargo nextest run --no-default-features` |
+
+The frontend build (`build-frontend` job) is shared — one `npm run
+build` produces `web/dist/` that both tiers download as an artifact.
+
+The `build-binaries` cross-compile job also carries the `tier`
+dimension, producing per-target, per-tier artifacts named
+`madhyamas-{tier}-{sha}-{target}.tar.gz` (CI) or
+`madhyamas-{tier}-v{ver}-{target}.tar.gz` (release).
+
+### 12.2 Security audit and license compliance
+
+The `security-audit` job runs `cargo audit` for both the default
+feature set and `--all-features` (enterprise). It also enforces a
+**license compliance** check: the OSS build
+(`--no-default-features`) must not pull in the BSL-1.1-licensed
+`madhyamas-enterprise` crate. The check runs:
+
+```bash
+cargo tree --no-default-features -p madhyamas | grep madhyamas-enterprise
+```
+
+If this returns any match, CI fails — BSL code has leaked into the OSS
+build. This is a structural guarantee, not just a feature gate.
+
+### 12.3 Docker build-args
+
+The `Dockerfile` accepts a `BUILD_TIER` build-arg (default
+`enterprise`):
+
+```bash
+# OSS image (no enterprise code)
+docker build --build-arg BUILD_TIER=oss -t madhyamas:latest .
+
+# Enterprise image (default)
+docker build --build-arg BUILD_TIER=enterprise -t madhyamas-enterprise:latest .
+```
+
+Internally the builder stage runs:
+
+- `oss` → `cargo build --release --no-default-features -p madhyamas --locked`
+- `enterprise` → `cargo build --release -p madhyamas --locked`
+
+The CI `docker-build` job builds both tiers as a smoke test
+(`madhyamas:test-oss`, `madhyamas:test-enterprise`). The release
+`publish-docker` job pushes both to GHCR:
+`ghcr.io/{org}/madhyamas:latest` (OSS) and
+`ghcr.io/{org}/madhyamas-enterprise:latest` (enterprise), each with
+`v{ver}` and `{major}.{minor}` tags. Docker Hub push is OSS-only.
+
+### 12.4 Building locally
+
+```bash
+# Frontend (must build before Rust — assets are embedded at compile time)
+cd web && npm run build && cd ..
+
+# Enterprise build (default features include the madhyamas-enterprise crate)
+cargo build --release -p madhyamas
+
+# OSS build (no enterprise code, no BSL dependencies)
+cargo build --release --no-default-features -p madhyamas
+
+# All checks
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
+```
+
+### 12.5 Release process
+
+A release is triggered by pushing a tag `v*` (or via
+`workflow_dispatch` with a `version` input). The `release.yml` workflow
+then:
+
+1. **Build frontend** (shared).
+2. **Test gate** — fmt, clippy, tests must pass before any build/publish.
+3. **Build binaries** — `tier: [enterprise, oss]` × 8 targets. Produces:
+   - `madhyamas-oss-v{ver}-{target}.tar.gz` (+ `.sha256`)
+   - `madhyamas-enterprise-v{ver}-{target}.tar.gz` (+ `.sha256`)
+4. **Build MSI** (OSS Windows only), **Snap**, **RPM** (OSS only).
+5. **Create GitHub Release** — one release with both tiers' binaries
+   attached. The release body has separate OSS and Enterprise download
+   tables.
+6. **Publish Docker** — both tiers to GHCR; OSS also to Docker Hub.
+7. **Publish to crates.io** — OSS crates only:
+   `madhyamas-core`, `madhyamas-plugin-sdk`, `madhyamas-api` (no
+   enterprise feature), `madhyamas-cli`, `madhyamas-mcp`, `madhyamas`.
+   `madhyamas-enterprise` is **not** published (`publish = false`,
+   BSL-1.1).
+8. **Generate SBOM** — `cargo cyclonedx` produces CycloneDX JSON for
+   both tiers (`madhyamas-oss-v{ver}.cdx.json`,
+   `madhyamas-enterprise-v{ver}.cdx.json`) and attaches them to the
+   release.
+9. **Publish Homebrew / Chocolatey** — OSS only (uses OSS checksums).
+
+### 12.6 Artifacts produced per release
+
+| Artifact | Tier | Destination |
+|---|---|---|
+| `madhyamas-oss-v{ver}-{target}.tar.gz` | OSS | GitHub Release |
+| `madhyamas-enterprise-v{ver}-{target}.tar.gz` | Enterprise | GitHub Release |
+| `madhyamas-v{ver}-x64.msi` | OSS | GitHub Release |
+| `madhyamas-v{ver}.snap` | OSS | Snap Store |
+| `madhyamas-{ver}.x86_64.rpm` | OSS | GitHub Release |
+| `ghcr.io/{org}/madhyamas:{tags}` | OSS | GHCR + Docker Hub |
+| `ghcr.io/{org}/madhyamas-enterprise:{tags}` | Enterprise | GHCR |
+| `madhyamas-oss-v{ver}.cdx.json` | OSS | GitHub Release (SBOM) |
+| `madhyamas-enterprise-v{ver}.cdx.json` | Enterprise | GitHub Release (SBOM) |
+| 6 OSS crates | OSS | crates.io |
+
+Enterprise binaries are **not** published to crates.io, Homebrew,
+Chocolatey, or the Snap Store — they are distributed via GitHub Release
+downloads and the GHCR Docker image only.
+
+---
+
 ## See Also
 
 - [Enterprise Analysis Overview](ENTERPRISE_OVERVIEW.md) — Master document
