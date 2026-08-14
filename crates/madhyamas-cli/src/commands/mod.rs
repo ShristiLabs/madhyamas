@@ -8,6 +8,7 @@ mod blocklist;
 mod breakpoints;
 mod capture;
 mod config;
+mod enterprise;
 mod export;
 mod focus;
 mod grpc;
@@ -28,6 +29,7 @@ use self::blocklist::BlockListCommands;
 use self::breakpoints::BreakpointCommands;
 use self::capture::CaptureCommands;
 use self::config::ConfigCommands;
+use self::enterprise::{AuditCommands, AuthCommands, LicenseCommands, UsersCommands};
 use self::export::ExportCommands;
 use self::focus::FocusCommands;
 use self::grpc::GrpcCommands;
@@ -358,6 +360,18 @@ pub enum Commands {
     /// WebSocket traffic inspection commands
     #[command(subcommand)]
     WsTraffic(WsTrafficCommands),
+    /// User management commands (enterprise tier)
+    #[command(subcommand)]
+    Users(UsersCommands),
+    /// Audit log commands (enterprise tier)
+    #[command(subcommand)]
+    Audit(AuditCommands),
+    /// License commands (enterprise tier)
+    #[command(subcommand)]
+    License(LicenseCommands),
+    /// Authentication commands (enterprise tier)
+    #[command(subcommand)]
+    Auth(AuthCommands),
 }
 
 impl Commands {
@@ -382,6 +396,10 @@ impl Commands {
             Commands::Logs(cmd) => cmd.execute(api_url, auth).await,
             Commands::Blocklist(cmd) => cmd.execute(api_url, auth).await,
             Commands::WsTraffic(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Users(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Audit(cmd) => cmd.execute(api_url, auth).await,
+            Commands::License(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Auth(cmd) => cmd.execute(api_url, auth).await,
         }
     }
 }
