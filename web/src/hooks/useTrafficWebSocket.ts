@@ -30,11 +30,21 @@ export function useTrafficWebSocket(
   const [traffic, setTraffic] = useState<TrafficEntrySnapshot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Build WebSocket URL
+  // Build WebSocket URL (includes base path for context-path deployments)
   const wsUrl = useMemo(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host;
-    return `${protocol}//${host}/api/ws`;
+    // Derive base path from the meta tag injected by the backend.
+    let basePath = "/";
+    const meta = document.querySelector('meta[name="madhyamas-base-path"]');
+    const content = meta?.getAttribute("content");
+    if (content && content.trim()) {
+      let p = content.trim();
+      if (!p.startsWith("/")) p = "/" + p;
+      if (!p.endsWith("/")) p = p + "/";
+      basePath = p;
+    }
+    return `${protocol}//${host}${basePath}api/ws`;
   }, []);
 
   const handleMessage = useCallback(

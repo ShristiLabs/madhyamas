@@ -377,6 +377,20 @@ impl WsManager {
         }
     }
 
+    /// Close all tracked WebSocket connections (graceful shutdown). Marks
+    /// every connection as closed so in-flight proxy WS tunnels are torn down
+    /// promptly rather than waiting for TCP timeouts.
+    pub fn close_all_connections(&self) {
+        let mut conns = self.connections.write();
+        let count = conns.len();
+        for conn in conns.values_mut() {
+            conn.set_closed();
+        }
+        if count > 0 {
+            tracing::info!("Closed {count} WebSocket connection(s)");
+        }
+    }
+
     /// Record a message
     pub fn record_message(
         &self,

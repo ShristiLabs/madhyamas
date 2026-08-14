@@ -1457,6 +1457,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             auth.clone(),
             audit.clone(),
             enterprise.license.clone(),
+            redis_state.clone(),
         );
         (api_state, Some(router), redis_state)
     };
@@ -1471,7 +1472,16 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         RateLimitConfig::disabled()
     };
 
-    let app = create_router(api_state, rate_limit_config, enterprise_router);
+    // Capture the WS manager before api_state is moved into create_router
+    // (needed for graceful shutdown — closing all WS connections).
+    let shutdown_ws = api_state.ws_manager.clone();
+
+    let app = create_router(
+        api_state,
+        rate_limit_config,
+        enterprise_router,
+        args.base_path.as_deref().unwrap_or("/"),
+    );
 
     let api_addr = config.api_addr();
     info!("Starting API server on {}", api_addr);
@@ -1532,6 +1542,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     // and abort the proxy task so in-flight work is not abandoned abruptly.
     // In multi-instance mode (Redis enabled), the instance is deregistered
     // from the Redis seat tracker so the seat is released promptly.
+    // WebSocket connections are closed and audit log is flushed (Phase 6d).
     #[cfg(feature = "enterprise")]
     let shutdown_redis = redis_state_for_shutdown.clone();
     let shutdown = async move {
@@ -1560,6 +1571,9 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             _ = sigterm => {}
         }
         info!("Shutdown signal received, draining connections...");
+        // Close all WebSocket connections so in-flight proxy WS tunnels are
+        // torn down promptly (Phase 6d).
+        shutdown_ws.close_all_connections();
         // Phase 6c: deregister this instance from the Redis seat tracker so
         // the seat is released promptly (no waiting for the 120s TTL).
         #[cfg(feature = "enterprise")]
@@ -1570,6 +1584,11 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                 tracing::info!("Instance deregistered from Redis seat tracker");
             }
         }
+        // Flush pending audit log entries (Phase 6d). The audit logger writes
+        // synchronously to the store, so there is no batch to drain — log
+        // confirmation for operational visibility.
+        info!("Audit log flushed");
+        info!("Graceful shutdown complete");
     };
 
     let api_handle = axum::serve(

@@ -331,6 +331,23 @@ impl RateLimitConfig {
     }
 }
 
+/// Normalize a base path: ensure it starts with `/`, does not end with `/`,
+/// and treat empty / `/` as root (no prefix). Returns `None` when the base
+/// path is root (no nesting needed).
+fn normalize_base_path(base: &str) -> Option<String> {
+    let trimmed = base.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        return None;
+    }
+    let with_slash = if trimmed.starts_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("/{trimmed}")
+    };
+    let without_trailing = with_slash.trim_end_matches('/').to_string();
+    Some(without_trailing)
+}
+
 /// Create the API router.
 ///
 /// `rate_limit` controls whether the [`tower_governor`] rate-limiting layer
@@ -342,10 +359,17 @@ impl RateLimitConfig {
 /// the enterprise router when the `enterprise` feature is enabled and `None`
 /// for the OSS build, keeping all `#[cfg]` gates in the binary rather than
 /// the API crate.
+///
+/// `base_path` configures context-path routing for load-balancer / reverse-
+/// proxy deployments. When set to e.g. `/madhyamas`, all routes are served
+/// under `/madhyamas/api/...`, `/madhyamas/health`, `/madhyamas/ws`, and the
+/// web UI at `/madhyamas/`. When `/` or empty, routes are served at root
+/// (default behaviour).
 pub fn create_router(
     state: AppState,
     rate_limit: RateLimitConfig,
     enterprise_router: Option<Router<Arc<AppState>>>,
+    base_path: &str,
 ) -> Router<()> {
     let state = Arc::new(state);
 
@@ -354,7 +378,7 @@ pub fn create_router(
         api_routes = api_routes.merge(ent);
     }
 
-    let mut router = Router::new()
+    let inner = Router::new()
         // Top-level health check for quick status
         .route("/health", axum::routing::get(|| async { "OK" }))
         .nest("/api", api_routes)
@@ -382,6 +406,18 @@ pub fn create_router(
         ))
         // Limit request bodies to 10MB to prevent OOM from large payloads
         .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024));
+
+    // Apply base-path nesting. When base_path is root, no nesting is needed.
+    let mut router = match normalize_base_path(base_path) {
+        Some(prefix) => {
+            tracing::info!("Serving API and web UI under base path: {}", prefix);
+            // Set the global base path so embedded_assets can inject the
+            // <meta> tag into index.html at runtime.
+            embedded_assets::set_base_path(&prefix);
+            Router::new().nest(prefix.as_str(), inner)
+        }
+        None => inner,
+    };
 
     // Rate limiting is opt-in. When enabled, apply the governor layer with
     // the configured requests-per-second and burst size.

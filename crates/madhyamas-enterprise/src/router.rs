@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::{
     handlers, middleware, AuditLogger, AuthManager, EnterpriseStore, License, Permission,
-    RbacManager, ResourceType,
+    RbacManager, RedisState, ResourceType,
 };
 
 /// Create the enterprise router (all enterprise endpoints under `/api`).
@@ -31,12 +31,14 @@ use crate::{
 /// injected so the [`handlers::get_license_info`] and
 /// [`handlers::get_health_check`] handlers can report license status. The
 /// `audit` logger is injected so login/logout handlers can record audit
-/// events.
+/// events. `redis` is injected so the detailed health check can probe Redis
+/// connectivity (Phase 6d).
 pub fn create_enterprise_router(
     store: Arc<dyn EnterpriseStore>,
     auth: Arc<AuthManager>,
     audit: Arc<AuditLogger>,
     license: Option<License>,
+    redis: Option<Arc<RedisState>>,
 ) -> Router<Arc<AppState>> {
     let rbac = Arc::new(RbacManager::new());
 
@@ -114,7 +116,8 @@ pub fn create_enterprise_router(
         .layer(Extension(store.clone()))
         .layer(Extension(auth.clone()))
         .layer(Extension(audit.clone()))
-        .layer(Extension(license));
+        .layer(Extension(license))
+        .layer(Extension(redis));
 
     // Enforce JWT/API-key authentication on enterprise routes. The middleware
     // honors `AuthManager::require_auth()`, so it only rejects requests

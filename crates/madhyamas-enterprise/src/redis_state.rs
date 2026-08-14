@@ -107,6 +107,13 @@ impl RedisState {
         self.client.clone()
     }
 
+    /// Ping Redis to verify connectivity. Returns `Ok(())` on success.
+    pub async fn ping(&self) -> Result<(), RedisError> {
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        redis::cmd("PING").query_async::<String>(&mut conn).await?;
+        Ok(())
+    }
+
     /// Publish `msg` to `channel`. Fire-and-forget from the caller's
     /// perspective — errors are returned for logging but should not abort
     /// the publishing operation.

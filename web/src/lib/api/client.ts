@@ -8,6 +8,11 @@
  * - Consistent error handling and status checking
  * - Typed helpers for JSON and text responses
  * - Automatic JSON content-type headers for POST/PUT/PATCH
+ * - Base-path awareness for load-balancer / context-path deployments
+ *
+ * The API base is derived from a `<meta name="madhyamas-base-path">` tag
+ * injected by the backend (or falls back to `/`). When the frontend is
+ * served at `/madhyamas/`, API calls go to `/madhyamas/api/...`.
  *
  * Usage in React Query hooks:
  *
@@ -23,8 +28,28 @@
  * ```
  */
 
+/**
+ * Resolve the base path for API requests. Reads the
+ * `<meta name="madhyamas-base-path" content="...">` tag injected by the
+ * backend at runtime. Falls back to `/` when the tag is absent (root
+ * deployment). The result always starts with `/` and ends with `/`.
+ */
+function resolveBasePath(): string {
+  if (typeof document !== 'undefined') {
+    const meta = document.querySelector('meta[name="madhyamas-base-path"]');
+    const content = meta?.getAttribute('content');
+    if (content && content.trim()) {
+      let p = content.trim();
+      if (!p.startsWith('/')) p = '/' + p;
+      if (!p.endsWith('/')) p = p + '/';
+      return p;
+    }
+  }
+  return '/';
+}
+
 /** Base URL for all API requests (relative to the page origin). */
-const API_BASE = '/api';
+const API_BASE = `${resolveBasePath()}api`;
 
 /** Error thrown when an API request fails. */
 export class ApiError extends Error {

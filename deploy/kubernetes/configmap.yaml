@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: madhyamas-config
+  namespace: madhyamas
+  labels:
+    app.kubernetes.io/name: madhyamas
+    app.kubernetes.io/part-of: madhyamas
+data:
+  MADHYAMAS_HOST: "0.0.0.0"
+  MADHYAMAS_API_PORT: "3001"
+  MADHYAMAS_PROXY_PORT: "8888"
+  MADHYAMAS_VERBOSE: "false"
+  MADHYAMAS_MAX_REQUESTS: "10000"
+  MADHYAMAS_ENABLE_AUTH: "true"
+  MADHYAMAS_ADMIN_USERNAME: "admin"
+  MADHYAMAS_BASE_PATH: "/"
+  RUST_LOG: "info"
