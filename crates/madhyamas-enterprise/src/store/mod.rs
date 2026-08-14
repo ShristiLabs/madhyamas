@@ -46,9 +46,13 @@ pub type Result<T> = std::result::Result<T, StoreError>;
 /// backend (`PgEnterpriseStore`) is deferred to Phase 5.
 #[async_trait]
 pub trait EnterpriseStore: Send + Sync {
-    async fn create_user(&self, user: &User) -> Result<()>;
+    async fn create_user(&self, user: &User, password_hash: &str) -> Result<()>;
     async fn get_user(&self, id: &str) -> Result<Option<User>>;
     async fn get_user_by_username(&self, username: &str) -> Result<Option<User>>;
+    /// Fetch a user by username together with their stored password hash.
+    /// Used by the login handler to verify credentials without exposing the
+    /// `password_hash` column on the public [`User`] type.
+    async fn get_user_credentials(&self, username: &str) -> Result<Option<(User, String)>>;
     async fn list_users(&self) -> Result<Vec<User>>;
     async fn update_user(&self, id: &str, updates: &UserUpdate) -> Result<()>;
     async fn delete_user(&self, id: &str) -> Result<()>;
@@ -63,6 +67,9 @@ pub trait EnterpriseStore: Send + Sync {
     async fn get_session(&self, id: &str) -> Result<Option<AuthSession>>;
     async fn revoke_session(&self, id: &str) -> Result<()>;
     async fn cleanup_expired_sessions(&self) -> Result<()>;
+    /// Update the `last_activity` timestamp of a session to the current time.
+    /// Used by the auth middleware to track idle timeout (Phase 4b.8).
+    async fn update_session_activity(&self, session_id: &str) -> Result<()>;
 
     async fn log_audit_event(&self, event: &AuditEvent) -> Result<()>;
     async fn query_audit_events(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>>;

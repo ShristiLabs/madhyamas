@@ -116,6 +116,13 @@ ed25519-dalek = { version = "2", default-features = false, features = [
     "rand_core",
 ] }
 
+# Argon2id password hashing for enterprise user management (Phase 4a).
+# `password-hash` is the companion PHC-string crate; argon2 0.5 re-exports it
+# under `argon2::password_hash`, but declaring it explicitly keeps the dep
+# graph stable and lets the credentials module import it directly.
+argon2 = "0.5"
+password-hash = "0.5"
+
 # Internal crates
 madhyamas-core = { path = "crates/madhyamas-core", version = "0.1.6" }
 madhyamas-api = { path = "crates/madhyamas-api", version = "0.1.6", default-features = false }

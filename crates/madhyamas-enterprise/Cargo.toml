@@ -26,9 +26,11 @@ chrono.workspace = true
 uuid.workspace = true
 parking_lot.workspace = true
 sqlx.workspace = true
-sha2.workspace = true
 ed25519-dalek.workspace = true
 base64.workspace = true
+argon2.workspace = true
+password-hash.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
 # OS RNG for Ed25519 keypair generation in license tests.

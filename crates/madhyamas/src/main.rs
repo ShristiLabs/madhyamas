@@ -237,6 +237,20 @@ struct Args {
     /// `MADHYAMAS_LICENSE_PUBLIC_KEY` (base64-encoded 32 bytes).
     #[arg(long, env = "MADHYAMAS_LICENSE_FILE", global = true)]
     license_file: Option<String>,
+
+    /// Bootstrap admin username (enterprise tier). On first run — when the
+    /// users table is empty — an admin user is created with this username.
+    /// Defaults to `admin` if neither the flag nor the env var is set.
+    #[arg(long, env = "MADHYAMAS_ADMIN_USERNAME", global = true)]
+    admin_username: Option<String>,
+
+    /// Bootstrap admin password (enterprise tier). On first run, the admin
+    /// user is created with this password. If neither this flag nor the env
+    /// var is set, a random password is generated and logged once with a
+    /// warning to change it immediately. The password is never logged when
+    /// provided via this flag.
+    #[arg(long, env = "MADHYAMAS_ADMIN_PASSWORD", global = true)]
+    admin_password: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -980,6 +994,13 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("failed to initialize enterprise store: {e}"))?;
         let store: std::sync::Arc<dyn madhyamas_enterprise::EnterpriseStore> =
             std::sync::Arc::new(store);
+        // Phase 4a.5: bootstrap admin user on first run (empty users table).
+        bootstrap_admin_user(
+            &store,
+            args.admin_username.clone(),
+            args.admin_password.clone(),
+        )
+        .await?;
         let enterprise = madhyamas_enterprise::EnterpriseState::new(auth_config)
             .with_store(store.clone())
             .with_license(license);
@@ -990,6 +1011,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         let router = madhyamas_enterprise::create_enterprise_router(
             store,
             enterprise.auth.clone(),
+            enterprise.audit.clone(),
             enterprise.license.clone(),
         );
         (api_state, Some(router))
@@ -1222,6 +1244,73 @@ fn init_logging(
             .expect("failed to create disabled log writer in temp dir");
         LogHandle::new(writer)
     })
+}
+
+/// Bootstrap a default admin user on first run (empty users table).
+///
+/// Username comes from `--admin-username` / `MADHYAMAS_ADMIN_USERNAME`
+/// (default `admin`). Password comes from `--admin-password` /
+/// `MADHYAMAS_ADMIN_PASSWORD`; if neither is set a random password is
+/// generated and logged once with a warning to change it. The password is
+/// never logged when provided via flag/env.
+#[cfg(feature = "enterprise")]
+async fn bootstrap_admin_user(
+    store: &std::sync::Arc<dyn madhyamas_enterprise::EnterpriseStore>,
+    admin_username: Option<String>,
+    admin_password: Option<String>,
+) -> Result<()> {
+    use madhyamas_enterprise::{hash_password, User, UserRole, UserStatus};
+
+    let existing = store
+        .list_users()
+        .await
+        .map_err(|e| anyhow::anyhow!("bootstrap: failed to list users: {e}"))?;
+    if !existing.is_empty() {
+        return Ok(());
+    }
+    let username = admin_username.unwrap_or_else(|| "admin".to_string());
+    let (password, auto_generated) = match admin_password {
+        Some(p) if !p.is_empty() => (p, false),
+        _ => {
+            // Generate a random 24-character password.
+            use rand::Rng;
+            const CHARSET: &[u8] =
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            let mut rng = rand::rng();
+            let password: String = (0..24)
+                .map(|_| {
+                    let idx = rng.random_range(0..CHARSET.len());
+                    CHARSET[idx] as char
+                })
+                .collect();
+            (password, true)
+        }
+    };
+    let password_hash = hash_password(&password)
+        .map_err(|e| anyhow::anyhow!("bootstrap: password hashing failed: {e}"))?;
+    let user = User::new(
+        uuid::Uuid::new_v4().to_string(),
+        username.clone(),
+        Some(format!("{username}@local")),
+        UserRole::Admin,
+        username.clone(),
+        UserStatus::Active,
+    );
+    store
+        .create_user(&user, &password_hash)
+        .await
+        .map_err(|e| anyhow::anyhow!("bootstrap: failed to create admin user: {e}"))?;
+    if auto_generated {
+        tracing::warn!(
+            "Bootstrap: created admin user '{}'. \
+             Auto-generated password (CHANGE IMMEDIATELY): {}",
+            username,
+            password
+        );
+    } else {
+        tracing::info!("Bootstrap: created admin user '{}'", username);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

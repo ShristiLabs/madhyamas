@@ -88,7 +88,7 @@ const SCHEMA_AUDIT_EVENTS: &str = "CREATE TABLE IF NOT EXISTS audit_events (
 
 #[async_trait]
 impl EnterpriseStore for SqliteEnterpriseStore {
-    async fn create_user(&self, user: &User) -> Result<()> {
+    async fn create_user(&self, user: &User, password_hash: &str) -> Result<()> {
         let rec = UserRecord::from(user);
         sqlx::query(
             "INSERT INTO users \
@@ -99,7 +99,7 @@ impl EnterpriseStore for SqliteEnterpriseStore {
         .bind(&rec.username)
         .bind(&rec.email)
         .bind(&rec.display_name)
-        .bind(&rec.password_hash)
+        .bind(password_hash)
         .bind(&rec.role)
         .bind(&rec.status)
         .bind(rec.created_at)
@@ -126,6 +126,18 @@ impl EnterpriseStore for SqliteEnterpriseStore {
                 .fetch_optional(&self.pool)
                 .await?;
         Ok(row.map(User::from))
+    }
+
+    async fn get_user_credentials(&self, username: &str) -> Result<Option<(User, String)>> {
+        let row: Option<UserRecord> =
+            sqlx::query_as::<_, UserRecord>("SELECT * FROM users WHERE username = ?")
+                .bind(username)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|r| {
+            let hash = r.password_hash.clone();
+            (User::from(r), hash)
+        }))
     }
 
     async fn list_users(&self) -> Result<Vec<User>> {
@@ -156,6 +168,9 @@ impl EnterpriseStore for SqliteEnterpriseStore {
         if updates.preferences.is_some() {
             sets.push("preferences = ?");
         }
+        if updates.last_login.is_some() {
+            sets.push("last_login = ?");
+        }
         if sets.is_empty() {
             return Ok(());
         }
@@ -177,6 +192,9 @@ impl EnterpriseStore for SqliteEnterpriseStore {
             q = q.bind(v);
         }
         if let Some(ref v) = updates.preferences {
+            q = q.bind(v);
+        }
+        if let Some(v) = updates.last_login {
             q = q.bind(v);
         }
         q.bind(id).execute(&self.pool).await?;
@@ -287,6 +305,16 @@ impl EnterpriseStore for SqliteEnterpriseStore {
         let now = Utc::now().to_rfc3339();
         sqlx::query("DELETE FROM auth_sessions WHERE expires_at < ? AND revoked = 0")
             .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn update_session_activity(&self, session_id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE auth_sessions SET last_activity = ? WHERE id = ?")
+            .bind(&now)
+            .bind(session_id)
             .execute(&self.pool)
             .await?;
         Ok(())

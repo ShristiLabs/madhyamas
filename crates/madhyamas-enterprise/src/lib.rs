@@ -15,6 +15,7 @@
 
 pub mod audit;
 pub mod auth;
+pub mod credentials;
 pub mod enterprise_error;
 pub mod handlers;
 pub mod license;
@@ -25,7 +26,8 @@ pub mod store;
 pub mod user;
 
 pub use audit::{AuditEvent, AuditEventType, AuditFilter, AuditLogger};
-pub use auth::{ApiKey, AuthConfig, AuthManager, JwtClaims};
+pub use auth::{ApiKey, AuthConfig, AuthManager, JwtClaims, RefreshTokenClaims};
+pub use credentials::{hash_password, verify_password};
 pub use enterprise_error::EnterpriseError;
 pub use license::{License, LicenseClaims, LicenseError, LicenseFile, LicenseVerifier};
 pub use rbac::{Permission, RbacManager, Resource, ResourceType};

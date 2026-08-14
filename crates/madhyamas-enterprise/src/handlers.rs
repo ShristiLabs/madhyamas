@@ -14,35 +14,15 @@ use axum::{
 };
 use madhyamas_api::AppState;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::audit::{AuditEventType, AuditFilter};
-use crate::store::{ApiKeyRecord, EnterpriseStore, UserUpdate};
+use crate::credentials::{hash_password, verify_password};
+use crate::store::{ApiKeyRecord, AuthSession, EnterpriseStore, UserUpdate};
 use crate::{
     ApiKey, AuditEvent, AuthManager, JwtClaims, License, Permission, User, UserRole, UserStatus,
 };
-
-/// Hash a plaintext password with SHA-256. Phase 4 replaces this with
-/// Argon2id; for now a deterministic hash keeps plaintext credentials out of
-/// the database.
-fn hash_password(password: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(password.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-/// Reserved preferences key under which the password hash is stored until
-/// Phase 4 adds a dedicated credential field to the store trait.
-const PASSWORD_HASH_KEY: &str = "_password_hash";
-
-/// Remove the internal password-hash entry from a user's preferences before
-/// returning it over the API, so credential material never leaves the store.
-fn strip_credentials(mut user: User) -> User {
-    user.preferences.remove(PASSWORD_HASH_KEY);
-    user
-}
 
 // ============== Stub Types ==============
 
@@ -289,6 +269,7 @@ pub struct LoginRequest {
 #[derive(Debug, Serialize)]
 pub struct LoginResponse {
     pub token: String,
+    pub refresh_token: String,
     pub user: UserInfo,
     pub expires_at: i64,
 }
@@ -302,59 +283,93 @@ pub struct UserInfo {
 }
 
 /// Login handler. Looks up the user by username in the enterprise store,
-/// verifies the password against the stored hash, and issues a JWT via the
-/// injected [`AuthManager`].
+/// verifies the password against the stored Argon2id hash, issues an access
+/// JWT plus a longer-lived refresh token via the injected [`AuthManager`],
+/// creates a persisted auth session, and records a login audit event.
 pub async fn login(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
     Extension(auth): Extension<Arc<AuthManager>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, StatusCode> {
-    let user = store
-        .get_user_by_username(&req.username)
+    let (user, password_hash) = store
+        .get_user_credentials(&req.username)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
-    if hash_password(&req.password) != user_password_hash(&user.id, &store).await {
+    let matched = verify_password(&req.password, &password_hash)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !matched {
+        audit.log(
+            AuditEvent::new(AuditEventType::Login, "login failed: bad credentials")
+                .with_user(user.id.clone()),
+        );
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let token = auth
-        .generate_jwt(&user.id, user.role.as_label())
+    let role = user.role.as_label().to_string();
+    let (token, refresh_token, session_id, expires_at) = auth
+        .generate_token_pair(&user.id, &role)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let expires_at = chrono::Utc::now().timestamp() + 3600;
+    let now = chrono::Utc::now();
+    let expires_dt = chrono::DateTime::<chrono::Utc>::from_timestamp(expires_at, 0)
+        .unwrap_or(now + chrono::Duration::hours(1));
+    let session = AuthSession {
+        id: session_id.clone(),
+        user_id: user.id.clone(),
+        jwt_jti: session_id.clone(),
+        created_at: now.to_rfc3339(),
+        expires_at: expires_dt.to_rfc3339(),
+        last_activity: now.to_rfc3339(),
+        revoked: false,
+    };
+    store
+        .create_session(&session)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Update last_login timestamp (best-effort; does not fail the login).
+    let _ = store
+        .update_user(
+            &user.id,
+            &UserUpdate {
+                last_login: Some(now.timestamp()),
+                ..Default::default()
+            },
+        )
+        .await;
+    audit.log(AuditEvent::new(AuditEventType::Login, "user logged in").with_user(user.id.clone()));
     Ok(Json(LoginResponse {
         token,
+        refresh_token,
         user: UserInfo {
             id: user.id.clone(),
             username: user.username,
             email: user.email.unwrap_or_default(),
-            role: user.role.as_label().to_string(),
+            role,
         },
         expires_at,
     }))
 }
 
-/// Retrieve the stored password hash for a user id. Returns an empty string
-/// when the user has no credentials yet (e.g. created without a password).
-async fn user_password_hash(id: &str, store: &Arc<dyn EnterpriseStore>) -> String {
-    // The public User type does not expose password_hash; re-fetch via the
-    // record is not possible through the trait. Until Phase 4 adds credential
-    // management to the trait, login compares against a hash stored in the
-    // user's preferences under a reserved key.
-    if let Ok(Some(user)) = store.get_user(id).await {
-        user.preferences
-            .get(PASSWORD_HASH_KEY)
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_default()
-    } else {
-        String::new()
+/// Logout handler. Revokes the authenticated user's session in the store so
+/// the token can no longer be refreshed or used past idle timeout.
+pub async fn logout(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+) -> Result<StatusCode, StatusCode> {
+    if let Some(sid) = &claims.0 .0.sid {
+        store
+            .revoke_session(sid)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
-}
-
-/// Logout handler
-pub async fn logout(State(_state): State<Arc<AppState>>) -> StatusCode {
-    StatusCode::OK
+    audit.log(
+        AuditEvent::new(AuditEventType::Logout, "user logged out")
+            .with_user(claims.0 .0.sub.clone()),
+    );
+    Ok(StatusCode::OK)
 }
 
 /// Get current user. Returns the authenticated user's profile from the store.
@@ -387,6 +402,53 @@ pub async fn validate_token(
         .validate_jwt(&token)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
     Ok(Json(claims))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RefreshRequest {
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RefreshResponse {
+    pub token: String,
+    pub refresh_token: String,
+    pub expires_at: i64,
+}
+
+/// Refresh token endpoint. Validates the supplied refresh token, checks the
+/// associated session is still active in the store, and issues a fresh
+/// access + refresh token pair. This route is public (no `Authorization`
+/// header required) — it authenticates via the refresh token itself.
+pub async fn refresh_token(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(auth): Extension<Arc<AuthManager>>,
+    Json(req): Json<RefreshRequest>,
+) -> Result<Json<RefreshResponse>, StatusCode> {
+    let claims = auth
+        .validate_refresh_token(&req.refresh_token)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    // Confirm the session is still valid (not revoked / expired).
+    if let Some(sid) = &claims.sid {
+        let session = store
+            .get_session(sid)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        match session {
+            Some(s) if !s.revoked => {}
+            _ => return Err(StatusCode::UNAUTHORIZED),
+        }
+    }
+    let role = claims.role.clone();
+    let (token, refresh_token, _session_id, expires_at) = auth
+        .generate_token_pair(&claims.sub, &role)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(RefreshResponse {
+        token,
+        refresh_token,
+        expires_at,
+    }))
 }
 
 // ============================================================================
@@ -447,11 +509,12 @@ pub async fn create_api_key(
     let api_key = ApiKey::generate(&claims.0 .0.sub, &req.name);
     let now = chrono::Utc::now();
     let expires_at = req.expires_in_days.map(|d| now + chrono::Duration::days(d));
+    let key_hash = hash_password(&api_key.key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let record = ApiKeyRecord {
         id: api_key.id.clone(),
         user_id: api_key.user_id.clone(),
         name: api_key.name.clone(),
-        key_hash: hash_password(&api_key.key),
+        key_hash,
         key_prefix: api_key.key.chars().take(12).collect(),
         scopes: "[]".to_string(),
         expires_at: expires_at.map(|t| t.to_rfc3339()),
@@ -491,7 +554,7 @@ pub async fn get_users(
         .list_users()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(users.into_iter().map(strip_credentials).collect()))
+    Ok(Json(users))
 }
 
 /// Get user by ID
@@ -505,7 +568,7 @@ pub async fn get_user(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(strip_credentials(user)))
+    Ok(Json(user))
 }
 
 #[derive(Debug, Deserialize)]
@@ -516,8 +579,9 @@ pub struct CreateUserRequest {
     pub role: UserRole,
 }
 
-/// Create user. Persists the user with a hashed password and returns the
-/// created record.
+/// Create user. Hashes the password with Argon2id, persists the user with the
+/// hash in the dedicated `password_hash` column, and returns the created
+/// record (without credential material).
 pub async fn create_user(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
@@ -531,7 +595,9 @@ pub async fn create_user(
     {
         return Err(StatusCode::CONFLICT);
     }
-    let mut user = User::new(
+    let password_hash =
+        hash_password(&req.password).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let user = User::new(
         uuid::Uuid::new_v4().to_string(),
         req.username.clone(),
         Some(req.email.clone()),
@@ -539,15 +605,11 @@ pub async fn create_user(
         req.username.clone(),
         UserStatus::Active,
     );
-    user.preferences.insert(
-        PASSWORD_HASH_KEY.to_string(),
-        serde_json::Value::String(hash_password(&req.password)),
-    );
     store
-        .create_user(&user)
+        .create_user(&user, &password_hash)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(strip_credentials(user)))
+    Ok(Json(user))
 }
 
 #[derive(Debug, Deserialize)]
@@ -555,19 +617,28 @@ pub struct UpdateUserRequest {
     pub email: Option<String>,
     pub role: Option<UserRole>,
     pub status: Option<UserStatus>,
+    pub password: Option<String>,
 }
 
-/// Update user. Applies partial updates and returns the updated record.
+/// Update user. Applies partial updates (email, role, status, password) and
+/// returns the updated record. When a new password is supplied it is hashed
+/// with Argon2id before being persisted.
 pub async fn update_user(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
     Path(user_id): Path<String>,
     Json(req): Json<UpdateUserRequest>,
 ) -> Result<Json<User>, StatusCode> {
+    let password_hash = match req.password {
+        Some(ref pw) if !pw.is_empty() => {
+            Some(hash_password(pw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
+        }
+        _ => None,
+    };
     let updates = UserUpdate {
         username: None,
         email: req.email,
-        password_hash: None,
+        password_hash,
         role: req.role.map(|r| r.as_label().to_string()),
         status: req.status.map(|s| {
             match s {
@@ -579,6 +650,7 @@ pub async fn update_user(
             .to_string()
         }),
         preferences: None,
+        last_login: None,
     };
     store
         .update_user(&user_id, &updates)
@@ -589,7 +661,7 @@ pub async fn update_user(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(strip_credentials(user)))
+    Ok(Json(user))
 }
 
 /// Delete user

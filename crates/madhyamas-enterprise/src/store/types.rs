@@ -210,6 +210,7 @@ pub struct UserUpdate {
     pub role: Option<String>,
     pub status: Option<String>,
     pub preferences: Option<String>,
+    pub last_login: Option<i64>,
 }
 
 /// Aggregate audit statistics returned by [`super::EnterpriseStore::get_audit_stats`].
