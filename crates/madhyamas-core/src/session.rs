@@ -82,8 +82,8 @@ impl SessionManager {
     }
 
     /// List all sessions
-    pub fn list_sessions(&self) -> Result<Vec<SessionSummary>, Error> {
-        let sessions = self.traffic_store.list_sessions()?;
+    pub async fn list_sessions(&self) -> Result<Vec<SessionSummary>, Error> {
+        let sessions = self.traffic_store.list_sessions().await?;
         Ok(sessions
             .into_iter()
             .map(|s| SessionSummary {
@@ -97,28 +97,29 @@ impl SessionManager {
     }
 
     /// Get a specific session by ID
-    pub fn get_session(&self, id: &str) -> Result<Option<Session>, Error> {
-        let sessions = self.traffic_store.list_sessions()?;
+    pub async fn get_session(&self, id: &str) -> Result<Option<Session>, Error> {
+        let sessions = self.traffic_store.list_sessions().await?;
         Ok(sessions.into_iter().find(|s| s.id == id))
     }
 
     /// Create a new session
-    pub fn create_session(&self, name: Option<&str>) -> Result<Session, Error> {
-        self.traffic_store.create_session(name)
+    pub async fn create_session(&self, name: Option<&str>) -> Result<Session, Error> {
+        self.traffic_store.create_session(name).await
     }
 
     /// Delete a session and its traffic
-    pub fn delete_session(&self, id: &str) -> Result<(), Error> {
-        self.traffic_store.delete_session(id)
+    pub async fn delete_session(&self, id: &str) -> Result<(), Error> {
+        self.traffic_store.delete_session(id).await
     }
 
     /// Export a session to HAR format
-    pub fn export_session(&self, id: &str) -> Result<SessionExport, Error> {
+    pub async fn export_session(&self, id: &str) -> Result<SessionExport, Error> {
         let session = self
-            .get_session(id)?
-            .ok_or_else(|| Error::Database(rusqlite::Error::QueryReturnedNoRows))?;
+            .get_session(id)
+            .await?
+            .ok_or_else(|| Error::Sqlx(sqlx::Error::RowNotFound))?;
 
-        let entries = self.traffic_store.get_traffic_by_session(id)?;
+        let entries = self.traffic_store.get_traffic_by_session(id).await?;
 
         Ok(SessionExport {
             version: "1.0".to_string(),
@@ -140,7 +141,7 @@ impl SessionManager {
     ///
     /// Only the currently supported export version ("1.0") is accepted.
     /// Future versions should add a migration step here before importing.
-    pub fn import_session(&self, export: SessionExport) -> Result<Session, Error> {
+    pub async fn import_session(&self, export: SessionExport) -> Result<Session, Error> {
         // Version check — reject unsupported export versions.
         //
         // Migration path for future versions:
@@ -159,29 +160,33 @@ impl SessionManager {
             }
         }
 
-        let session = self.create_session(export.session.name.as_deref())?;
+        let session = self.create_session(export.session.name.as_deref()).await?;
 
         for entry in export.entries {
             let mut entry_with_session = entry;
             entry_with_session.session_id = session.id.clone();
-            self.traffic_store.store_request(&entry_with_session)?;
-            self.traffic_store.store_response(
-                &entry_with_session.id,
-                &entry_with_session.response.unwrap_or_default(),
-            )?;
+            self.traffic_store
+                .store_request(&entry_with_session)
+                .await?;
+            self.traffic_store
+                .store_response(
+                    &entry_with_session.id,
+                    &entry_with_session.response.unwrap_or_default(),
+                )
+                .await?;
         }
 
         Ok(session)
     }
 
     /// Get session metadata
-    pub fn get_session_metadata(&self, id: &str) -> Result<Option<SessionMetadata>, Error> {
-        let session = match self.get_session(id)? {
+    pub async fn get_session_metadata(&self, id: &str) -> Result<Option<SessionMetadata>, Error> {
+        let session = match self.get_session(id).await? {
             Some(s) => s,
             None => return Ok(None),
         };
 
-        let entries = self.traffic_store.get_traffic_by_session(id)?;
+        let entries = self.traffic_store.get_traffic_by_session(id).await?;
 
         Ok(Some(SessionMetadata {
             id: session.id,
