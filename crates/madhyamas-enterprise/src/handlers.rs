@@ -134,6 +134,118 @@ pub async fn get_metrics(State(_state): State<Arc<AppState>>) -> Json<Metrics> {
     Json(collector.snapshot())
 }
 
+/// Cluster-wide metrics response (Phase 6e). Aggregates per-instance metrics
+/// from all active instances registered in Redis.
+#[derive(Debug, Serialize)]
+pub struct ClusterMetricsResponse {
+    pub instances: Vec<InstanceSummary>,
+    pub total_active_connections: u64,
+    pub total_request_count: u64,
+    pub avg_cpu_usage: f64,
+    pub avg_memory_usage_mb: f64,
+}
+
+/// Per-instance summary in the cluster metrics response.
+#[derive(Debug, Serialize)]
+pub struct InstanceSummary {
+    pub instance_id: String,
+    pub addr: String,
+    pub last_heartbeat: i64,
+    pub status: String,
+    pub cpu_usage: f64,
+    pub memory_usage_mb: u64,
+    pub active_connections: u64,
+    pub request_count: u64,
+    pub uptime_secs: u64,
+}
+
+/// `GET /api/metrics/cluster` — aggregate metrics from all instances via
+/// Redis. Admin-only (requires authentication). Returns 503 when Redis is
+/// not configured (single-instance mode).
+pub async fn get_cluster_metrics(
+    State(_state): State<Arc<AppState>>,
+    Extension(redis): Extension<Option<Arc<crate::RedisState>>>,
+) -> Result<Json<ClusterMetricsResponse>, StatusCode> {
+    let rs = redis.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let instances = rs
+        .list_instances_with_metrics()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let summaries: Vec<InstanceSummary> = instances
+        .iter()
+        .map(|info| {
+            let m = info.metrics.clone().unwrap_or_default();
+            InstanceSummary {
+                instance_id: info.instance_id.clone(),
+                addr: info.addr.clone(),
+                last_heartbeat: info.last_heartbeat,
+                status: "active".to_string(),
+                cpu_usage: m.cpu_usage,
+                memory_usage_mb: m.memory_usage_mb,
+                active_connections: m.active_connections,
+                request_count: m.request_count,
+                uptime_secs: m.uptime_secs,
+            }
+        })
+        .collect();
+    let total_active_connections = summaries.iter().map(|s| s.active_connections).sum();
+    let total_request_count = summaries.iter().map(|s| s.request_count).sum();
+    let count = summaries.len().max(1);
+    let avg_cpu_usage = summaries.iter().map(|s| s.cpu_usage).sum::<f64>() / count as f64;
+    let avg_memory_usage_mb = summaries
+        .iter()
+        .map(|s| s.memory_usage_mb as f64)
+        .sum::<f64>()
+        / count as f64;
+    Ok(Json(ClusterMetricsResponse {
+        instances: summaries,
+        total_active_connections,
+        total_request_count,
+        avg_cpu_usage,
+        avg_memory_usage_mb,
+    }))
+}
+
+/// Instances list response (Phase 6e).
+#[derive(Debug, Serialize)]
+pub struct InstancesResponse {
+    pub instances: Vec<InstanceStatus>,
+}
+
+/// Per-instance status in the instances list response.
+#[derive(Debug, Serialize)]
+pub struct InstanceStatus {
+    pub instance_id: String,
+    pub addr: String,
+    pub last_heartbeat: i64,
+    pub status: String,
+}
+
+/// `GET /api/instances` — list all active instances registered in Redis.
+/// Admin-only. Returns 503 when Redis is not configured.
+pub async fn get_instances(
+    State(_state): State<Arc<AppState>>,
+    Extension(redis): Extension<Option<Arc<crate::RedisState>>>,
+) -> Result<Json<InstancesResponse>, StatusCode> {
+    let rs = redis.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let instances = rs
+        .list_instances()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let statuses = instances
+        .iter()
+        .map(|info| InstanceStatus {
+            instance_id: info.instance_id.clone(),
+            addr: info.addr.clone(),
+            last_heartbeat: info.last_heartbeat,
+            status: "active".to_string(),
+        })
+        .collect();
+    Ok(Json(InstancesResponse {
+        instances: statuses,
+    }))
+}
+
 /// Get health check. Includes a license status summary when the enterprise
 /// tier is active (Phase 3) and dependency checks (database, Redis, license)
 /// for load-balancer health probes (Phase 6d).

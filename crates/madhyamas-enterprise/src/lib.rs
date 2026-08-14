@@ -33,8 +33,8 @@ pub use enterprise_error::EnterpriseError;
 pub use license::{License, LicenseClaims, LicenseError, LicenseFile, LicenseVerifier};
 pub use rbac::{Permission, RbacManager, Resource, ResourceType};
 pub use redis_state::{
-    InstanceInfo, RedisState, RedisTrafficEvent, CHANNEL_CONFIG, CHANNEL_EVENTS, CHANNEL_INTERCEPT,
-    CHANNEL_SEATS,
+    InstanceInfo, InstanceMetrics, RedisState, RedisTrafficEvent, CHANNEL_CONFIG, CHANNEL_EVENTS,
+    CHANNEL_INTERCEPT, CHANNEL_SEATS,
 };
 pub use router::create_enterprise_router;
 pub use store::{ApiKeyRecord, AuditStats, AuthSession, UserUpdate};

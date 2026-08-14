@@ -74,6 +74,8 @@ pub fn create_enterprise_router(
     let router = Router::new()
         // Performance & Monitoring
         .route("/metrics", get(handlers::get_metrics))
+        .route("/metrics/cluster", get(handlers::get_cluster_metrics))
+        .route("/instances", get(handlers::get_instances))
         .route("/health/detailed", get(handlers::get_health_check))
         .route("/performance", get(handlers::get_performance_stats))
         // License (public — informational, no auth required)

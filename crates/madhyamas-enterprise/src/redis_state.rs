@@ -64,6 +64,34 @@ pub struct RedisTrafficEvent {
     pub event: madhyamas_core::TrafficEvent,
 }
 
+/// Per-instance metrics snapshot (Phase 6e). Stored alongside the instance
+/// registration in Redis so cluster-wide metrics can be aggregated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstanceMetrics {
+    /// CPU usage percentage (0–100).
+    pub cpu_usage: f64,
+    /// Memory usage in megabytes.
+    pub memory_usage_mb: u64,
+    /// Active proxy/API connections.
+    pub active_connections: u64,
+    /// Total requests processed since startup.
+    pub request_count: u64,
+    /// Uptime in seconds.
+    pub uptime_secs: u64,
+}
+
+impl Default for InstanceMetrics {
+    fn default() -> Self {
+        Self {
+            cpu_usage: 0.0,
+            memory_usage_mb: 0,
+            active_connections: 0,
+            request_count: 0,
+            uptime_secs: 0,
+        }
+    }
+}
+
 /// Information about a registered instance, returned by [`RedisState::list_instances`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceInfo {
@@ -71,6 +99,10 @@ pub struct InstanceInfo {
     pub license_id: String,
     pub addr: String,
     pub last_heartbeat: i64,
+    /// Latest metrics snapshot (Phase 6e). `None` for instances registered
+    /// without metrics (e.g. older versions or before the metrics task runs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<InstanceMetrics>,
 }
 
 /// Redis-backed cross-instance state coordinator.
@@ -152,6 +184,7 @@ impl RedisState {
             license_id: license_id.to_string(),
             addr: addr.to_string(),
             last_heartbeat: now,
+            metrics: None,
         };
         let member =
             serde_json::to_string(&info).map_err(|e| RedisError::from(io_error(e.to_string())))?;
@@ -228,6 +261,76 @@ impl RedisState {
             }
         }
         Ok(instances)
+    }
+
+    // ── Cluster metrics (Phase 6e) ────────────────────────────────────────
+
+    /// Register this instance with an initial metrics snapshot. Like
+    /// [`Self::register_instance`] but stores the metrics alongside the
+    /// instance info in the Redis sorted set.
+    pub async fn register_instance_with_metrics(
+        &self,
+        instance_id: &str,
+        license_id: &str,
+        addr: &str,
+        metrics: &InstanceMetrics,
+    ) -> Result<(), RedisError> {
+        let now = current_timestamp();
+        let info = InstanceInfo {
+            instance_id: instance_id.to_string(),
+            license_id: license_id.to_string(),
+            addr: addr.to_string(),
+            last_heartbeat: now,
+            metrics: Some(metrics.clone()),
+        };
+        let member =
+            serde_json::to_string(&info).map_err(|e| RedisError::from(io_error(e.to_string())))?;
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        conn.zadd::<_, _, _, ()>(INSTANCES_KEY, &member, now)
+            .await?;
+        conn.expire::<_, ()>(INSTANCES_KEY, HEARTBEAT_TTL_SECS)
+            .await?;
+        Ok(())
+    }
+
+    /// Update the metrics for an already-registered instance. Finds the
+    /// instance by ID, replaces its metrics, and refreshes the heartbeat
+    /// timestamp + key TTL.
+    pub async fn update_instance_metrics(
+        &self,
+        instance_id: &str,
+        metrics: &InstanceMetrics,
+    ) -> Result<(), RedisError> {
+        let now = current_timestamp();
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        let members: Vec<String> = conn.zrange(INSTANCES_KEY, 0, -1).await?;
+        for member in members {
+            if let Ok(info) = serde_json::from_str::<InstanceInfo>(&member) {
+                if info.instance_id == instance_id {
+                    conn.zrem::<_, _, ()>(INSTANCES_KEY, &member).await?;
+                    let updated = InstanceInfo {
+                        last_heartbeat: now,
+                        metrics: Some(metrics.clone()),
+                        ..info
+                    };
+                    let new_member = serde_json::to_string(&updated)
+                        .map_err(|e| RedisError::from(io_error(e.to_string())))?;
+                    conn.zadd::<_, _, _, ()>(INSTANCES_KEY, &new_member, now)
+                        .await?;
+                    break;
+                }
+            }
+        }
+        conn.expire::<_, ()>(INSTANCES_KEY, HEARTBEAT_TTL_SECS)
+            .await?;
+        Ok(())
+    }
+
+    /// List all active instances with their latest metrics. This is the same
+    /// as [`Self::list_instances`] but is named explicitly for the cluster
+    /// metrics aggregation endpoint.
+    pub async fn list_instances_with_metrics(&self) -> Result<Vec<InstanceInfo>, RedisError> {
+        self.list_instances().await
     }
 }
 
@@ -412,5 +515,101 @@ mod tests {
         let instances = state.list_instances().await.expect("list");
         let still_registered = instances.iter().any(|i| i.instance_id == id);
         assert!(!still_registered, "instance should have been deregistered");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires redis at redis://localhost:6379"]
+    async fn test_instance_registration_with_metrics() {
+        let id = unique_instance_id();
+        let state = RedisState::new(REDIS_URL, id.clone())
+            .await
+            .expect("connect to redis");
+        let metrics = InstanceMetrics {
+            cpu_usage: 42.5,
+            memory_usage_mb: 256,
+            active_connections: 10,
+            request_count: 1000,
+            uptime_secs: 3600,
+        };
+        state
+            .register_instance_with_metrics(&id, "lic_test", "127.0.0.1:3001", &metrics)
+            .await
+            .expect("register with metrics");
+        let instances = state.list_instances_with_metrics().await.expect("list");
+        let found = instances
+            .iter()
+            .find(|i| i.instance_id == id)
+            .expect("instance not found");
+        let m = found.metrics.clone().expect("metrics should be present");
+        assert_eq!(m.cpu_usage, 42.5);
+        assert_eq!(m.memory_usage_mb, 256);
+        assert_eq!(m.active_connections, 10);
+        assert_eq!(m.request_count, 1000);
+        assert_eq!(m.uptime_secs, 3600);
+        // Update metrics and verify.
+        let updated = InstanceMetrics {
+            cpu_usage: 55.0,
+            memory_usage_mb: 512,
+            active_connections: 20,
+            request_count: 2000,
+            uptime_secs: 7200,
+        };
+        state
+            .update_instance_metrics(&id, &updated)
+            .await
+            .expect("update metrics");
+        let instances2 = state.list_instances_with_metrics().await.expect("list 2");
+        let found2 = instances2
+            .iter()
+            .find(|i| i.instance_id == id)
+            .expect("instance not found after update");
+        let m2 = found2.metrics.clone().expect("metrics should be present");
+        assert_eq!(m2.cpu_usage, 55.0);
+        assert_eq!(m2.request_count, 2000);
+        state.deregister_instance(&id).await.expect("deregister");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires redis at redis://localhost:6379"]
+    async fn test_cluster_metrics_aggregation() {
+        let base = unique_instance_id();
+        let state = RedisState::new(REDIS_URL, format!("{base}-0"))
+            .await
+            .expect("connect to redis");
+        // Register 2 instances with different metrics.
+        for (i, req_count) in [(0, 500u64), (1, 1500u64)] {
+            let id = format!("{base}-{i}");
+            let metrics = InstanceMetrics {
+                cpu_usage: 30.0 + i as f64 * 10.0,
+                memory_usage_mb: 128 + i as u64 * 256,
+                active_connections: 5 + i as u64 * 5,
+                request_count: req_count,
+                uptime_secs: 1800 + i as u64 * 1800,
+            };
+            state
+                .register_instance_with_metrics(&id, "lic_test", "127.0.0.1:3001", &metrics)
+                .await
+                .expect("register");
+        }
+        let instances = state.list_instances_with_metrics().await.expect("list");
+        let ours: Vec<_> = instances
+            .iter()
+            .filter(|i| i.instance_id.starts_with(&base))
+            .collect();
+        assert_eq!(ours.len(), 2, "expected 2 instances");
+        let total_requests: u64 = ours
+            .iter()
+            .map(|i| i.metrics.as_ref().unwrap().request_count)
+            .sum();
+        assert_eq!(total_requests, 2000, "total request count should be 2000");
+        let total_conns: u64 = ours
+            .iter()
+            .map(|i| i.metrics.as_ref().unwrap().active_connections)
+            .sum();
+        assert_eq!(total_conns, 15, "total active connections should be 15");
+        for i in 0..2 {
+            let id = format!("{base}-{i}");
+            state.deregister_instance(&id).await.expect("deregister");
+        }
     }
 }

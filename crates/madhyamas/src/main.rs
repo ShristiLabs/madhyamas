@@ -1020,6 +1020,12 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     let memory_manager = Arc::new(MemoryManager::new());
     let performance_monitor = Arc::new(PerformanceMonitor::new());
 
+    // Clone the metrics collector for the Phase 6e background cluster metrics
+    // task (runs inside the enterprise block below). The original is moved
+    // into the proxy engine; this clone is captured for periodic Redis updates.
+    #[cfg(feature = "enterprise")]
+    let metrics_collector_for_redis = metrics_collector.clone();
+
     // Create a single shared config that both the proxy engine and the API
     // layer reference. This allows runtime config changes made via the API
     // (e.g. adding SSL passthrough domains in the web UI) to take effect
@@ -1277,6 +1283,34 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                     interval.tick().await;
                     if let Err(e) = rs_heartbeat.heartbeat(&hb_id).await {
                         tracing::warn!("Redis heartbeat failed: {e}");
+                    }
+                }
+            });
+            // Phase 6e: start background cluster metrics task (every 30s).
+            // Collects local metrics from the MetricsCollector and updates
+            // the instance's metrics snapshot in Redis so /api/metrics/cluster
+            // can aggregate across all instances.
+            let rs_metrics = rs.clone();
+            let metrics_id = instance_id.clone();
+            let metrics_mc = metrics_collector_for_redis.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                interval.tick().await; // skip immediate tick
+                loop {
+                    interval.tick().await;
+                    let snap = metrics_mc.snapshot();
+                    let instance_metrics = madhyamas_enterprise::InstanceMetrics {
+                        cpu_usage: 0.0, // CPU usage not tracked locally; future work
+                        memory_usage_mb: 0,
+                        active_connections: snap.active_connections,
+                        request_count: snap.request_count,
+                        uptime_secs: snap.uptime_secs,
+                    };
+                    if let Err(e) = rs_metrics
+                        .update_instance_metrics(&metrics_id, &instance_metrics)
+                        .await
+                    {
+                        tracing::warn!("Redis metrics update failed: {e}");
                     }
                 }
             });
