@@ -22,9 +22,9 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 3 License (Ed25519) | #38 | done | skipped | approved | done (verify at startup, /api/license, health, 7 tests) | committed (2fdd753) | done |
 | 4a Users (Argon2id) | #39 | done | skipped | approved | done (Argon2id, bootstrap admin, 3 cred tests) | committed (1d52f4f) | done |
 | 4b JWT auth | #40 | done | skipped | approved | done (HS256 pin, leeway, refresh, idle timeout, 4 tests) | committed (f03001d) | done |
-| 4c API key scopes | #41 | — | — | — | — | — | pending |
-| 4d RBAC enforcement | #42 | — | — | — | — | — | pending |
-| 4e Audit persistence | #43 | — | — | — | — | — | pending |
+| 4c API key scopes | #41 | done | skipped | approved | done (SHA-256 hash, X-API-Key, scope matching, 7 tests) | committed (64f5207) | done |
+| 4d RBAC enforcement | #42 | done | skipped | approved | done (role→permission matrix, require_permission middleware, 3 tests) | committed (0554b2c) | done |
+| 4e Audit persistence | #43 | done | skipped | approved | done (store-backed, SHA-256 hash chain, tamper detection, 4 tests) | committed (08000ab) | done |
 
 ## Agent Log
 
