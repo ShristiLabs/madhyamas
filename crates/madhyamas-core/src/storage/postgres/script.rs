@@ -92,7 +92,9 @@ impl PostgresScriptStore {
             .execute(&mut *tx)
             .await?;
         sqlx::query(SCHEMA_SCRIPTS).execute(&mut *tx).await?;
-        sqlx::query(SCHEMA_SCRIPT_EXECUTIONS).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_SCRIPT_EXECUTIONS)
+            .execute(&mut *tx)
+            .await?;
         for stmt in SCHEMA_INDEX_STMTS {
             sqlx::query(stmt).execute(&mut *tx).await?;
         }

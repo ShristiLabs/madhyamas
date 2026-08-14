@@ -323,9 +323,11 @@ impl TrafficStore {
         // same pattern simultaneously. `INSERT OR IGNORE` in
         // `add_focus_host` relies on this constraint to resolve races
         // deterministically.
-        sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_focus_hosts_pattern ON focus_hosts (pattern)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_focus_hosts_pattern ON focus_hosts (pattern)",
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -642,7 +644,10 @@ impl TrafficStore {
 
         // Delete responses first, then requests (FK constraint: no ON DELETE
         // CASCADE on the responses table).
-        let placeholders = (0..pruned_ids.len()).map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = (0..pruned_ids.len())
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
         let delete_responses_sql = format!(
             "DELETE FROM responses WHERE request_id IN ({})",
             placeholders
@@ -653,8 +658,7 @@ impl TrafficStore {
         }
         q.execute(&mut *tx).await?;
 
-        let delete_requests_sql =
-            format!("DELETE FROM requests WHERE id IN ({})", placeholders);
+        let delete_requests_sql = format!("DELETE FROM requests WHERE id IN ({})", placeholders);
         let mut q = sqlx::query(&delete_requests_sql);
         for id in &pruned_ids {
             q = q.bind(id);
@@ -751,7 +755,10 @@ impl TrafficStore {
 
         if !to_prune.is_empty() {
             // Delete responses first, then requests (no ON DELETE CASCADE).
-            let placeholders = (0..to_prune.len()).map(|_| "?").collect::<Vec<_>>().join(",");
+            let placeholders = (0..to_prune.len())
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
             let delete_responses_sql = format!(
                 "DELETE FROM responses WHERE request_id IN ({})",
                 placeholders
@@ -1336,7 +1343,8 @@ impl TrafficStore {
 
         *self.current_session_id.lock() = session_id.to_string();
         // Persist to shared state so other instances can sync.
-        self.set_shared_state("current_session_id", session_id).await?;
+        self.set_shared_state("current_session_id", session_id)
+            .await?;
         Ok(())
     }
 

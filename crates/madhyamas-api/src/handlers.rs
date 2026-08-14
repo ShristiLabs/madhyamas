@@ -1244,13 +1244,10 @@ pub async fn ws_handler(
     }
 
     ws.on_upgrade(move |socket| {
-        let cross_rx = state
-            .cross_instance_sender
-            .as_ref()
-            .map(|s| s.subscribe());
+        let cross_rx = state.cross_instance_sender.as_ref().map(|s| s.subscribe());
         handle_ws(socket, state.traffic_store.clone(), cross_rx)
     })
-        .into_response()
+    .into_response()
 }
 
 /// Get CA certificate for HTTPS interception

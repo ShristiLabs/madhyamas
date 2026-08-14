@@ -177,8 +177,12 @@ impl PostgresInterceptStore {
             .await?;
         sqlx::query(SCHEMA_MOCK_RULES).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_REWRITE_RULES).execute(&mut *tx).await?;
-        sqlx::query(SCHEMA_BREAKPOINT_RULES).execute(&mut *tx).await?;
-        sqlx::query(SCHEMA_THROTTLE_PROFILE).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_BREAKPOINT_RULES)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(SCHEMA_THROTTLE_PROFILE)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(SCHEMA_BLOCK_LIST_ENTRIES)
             .execute(&mut *tx)
             .await?;

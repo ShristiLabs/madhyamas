@@ -18,6 +18,9 @@ pub use auth::{
 };
 pub use pubsub::{notify, EventPublisher};
 
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::Router;
 #[cfg(feature = "plugins")]
 use madhyamas_core::plugin::PluginRegistry;
@@ -32,9 +35,6 @@ use madhyamas_core::{
     InterceptStoreBackend, LogHandle, MirrorWriter, MockManager, ProxyConfig, ReplayManager,
     RewriteManager, SessionManager, ThrottleManager, TrafficEvent, TrafficStoreBackend, WsManager,
 };
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -301,10 +301,7 @@ impl AppState {
     /// other instances via Redis are sent on this channel so the WebSocket
     /// handler can forward them to connected clients without creating an
     /// infinite loop (local broadcast → Redis → local broadcast → …).
-    pub fn with_cross_instance_sender(
-        mut self,
-        sender: broadcast::Sender<TrafficEvent>,
-    ) -> Self {
+    pub fn with_cross_instance_sender(mut self, sender: broadcast::Sender<TrafficEvent>) -> Self {
         self.cross_instance_sender = Some(sender);
         self
     }
@@ -435,11 +432,7 @@ pub fn create_router(
                     Ok(()) => (StatusCode::OK, "OK").into_response(),
                     Err(e) => {
                         tracing::error!("Health check failed: database not ready: {e}");
-                        (
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            "Database not ready",
-                        )
-                            .into_response()
+                        (StatusCode::SERVICE_UNAVAILABLE, "Database not ready").into_response()
                     }
                 }
             }),

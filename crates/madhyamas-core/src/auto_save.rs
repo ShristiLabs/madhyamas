@@ -205,9 +205,7 @@ impl AutoSaveManager {
             let existing_ts: i64 = existing.parse().unwrap_or(0);
             let now = Utc::now().timestamp();
             if now - existing_ts < 30 {
-                info!(
-                    "Auto Save: skipping rotation, another instance rotated recently"
-                );
+                info!("Auto Save: skipping rotation, another instance rotated recently");
                 // Sync our local session id from shared state so we record
                 // new traffic against the session the other instance just
                 // created.
@@ -224,7 +222,10 @@ impl AutoSaveManager {
 
         // Record the rotation timestamp so the other instance skips if its
         // timer fires within the lock window.
-        let _ = self.traffic_store.set_shared_state(lock_key, &lock_value).await;
+        let _ = self
+            .traffic_store
+            .set_shared_state(lock_key, &lock_value)
+            .await;
 
         info!("Auto Save: rotated to new session {}", new_session.id);
         Ok(())

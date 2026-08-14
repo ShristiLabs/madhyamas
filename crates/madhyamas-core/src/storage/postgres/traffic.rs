@@ -458,8 +458,10 @@ impl PostgresTrafficStore {
             .map(|i| format!("${i}"))
             .collect::<Vec<_>>()
             .join(",");
-        let delete_responses_sql =
-            format!("DELETE FROM responses WHERE request_id IN ({})", placeholders);
+        let delete_responses_sql = format!(
+            "DELETE FROM responses WHERE request_id IN ({})",
+            placeholders
+        );
         let mut q = sqlx::query(&delete_responses_sql);
         for id in &pruned_ids {
             q = q.bind(id);
@@ -1310,7 +1312,8 @@ impl TrafficStoreBackend for PostgresTrafficStore {
 
         *self.current_session_id.lock() = session_id.to_string();
         // Persist to shared state so other instances can sync.
-        self.set_shared_state("current_session_id", session_id).await?;
+        self.set_shared_state("current_session_id", session_id)
+            .await?;
         Ok(())
     }
 
