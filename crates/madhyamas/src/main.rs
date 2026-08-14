@@ -9,7 +9,6 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-#[cfg(feature = "enterprise")]
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -20,9 +19,9 @@ use madhyamas_core::GrpcManager;
 use madhyamas_core::WasmRuntime;
 use madhyamas_core::{
     AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, ExtensionManager,
-    InterceptStore, LogHandle, MemoryManager, MetricsCollector, MirrorWriter, MockManager,
+    InterceptStoreBackend, LogHandle, MemoryManager, MetricsCollector, MirrorWriter, MockManager,
     PerformanceMonitor, Persistable, ProxyConfig, ProxyEngine, RewriteManager, RotatingFileWriter,
-    SessionManager, ThrottleManager, TrafficStore, UpstreamProxyConfig,
+    SessionManager, SqliteInterceptStore, ThrottleManager, TrafficStore, UpstreamProxyConfig,
 };
 #[cfg(feature = "plugins")]
 use madhyamas_core::{PluginExtension, PluginInstaller, PluginManager, PluginPersistence};
@@ -633,7 +632,17 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     // Initialize intercept rule persistence store (SQLite). Rules are
     // loaded on startup and saved whenever they change via the API.
     let intercept_db_path = std::path::Path::new(&config.db_path).with_file_name("intercept.db");
-    let intercept_store = InterceptStore::new(&intercept_db_path)?;
+    let intercept_db_url = format!("sqlite://{}", intercept_db_path.display());
+    let intercept_connect_options = sqlx::sqlite::SqliteConnectOptions::from_str(&intercept_db_url)
+        .map_err(|e| anyhow::anyhow!("failed to parse intercept db url: {e}"))?
+        .create_if_missing(true);
+    let intercept_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(intercept_connect_options)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to open intercept db: {e}"))?;
+    let intercept_store: Arc<dyn InterceptStoreBackend + Send + Sync> =
+        Arc::new(SqliteInterceptStore::new(intercept_pool).await?);
 
     info!("Starting proxy engine...");
     let cert_manager_for_api = cert_manager.clone();
@@ -642,35 +651,35 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     // Each manager loads its persisted rules on construction.
     let mock_manager = Arc::new({
         let m = MockManager::new().with_store(intercept_store.clone());
-        if let Err(e) = m.load() {
+        if let Err(e) = m.load().await {
             tracing::warn!("Failed to load mock rules from store: {}", e);
         }
         m
     });
     let rewrite_manager = Arc::new({
         let m = RewriteManager::new().with_store(intercept_store.clone());
-        if let Err(e) = m.load() {
+        if let Err(e) = m.load().await {
             tracing::warn!("Failed to load rewrite rules from store: {}", e);
         }
         m
     });
     let breakpoint_manager = Arc::new({
         let m = BreakpointManager::new(100).with_store(intercept_store.clone());
-        if let Err(e) = m.load() {
+        if let Err(e) = m.load().await {
             tracing::warn!("Failed to load breakpoint rules from store: {}", e);
         }
         m
     });
     let throttle_manager = Arc::new({
         let m = ThrottleManager::new().with_store(intercept_store.clone());
-        if let Err(e) = m.load() {
+        if let Err(e) = m.load().await {
             tracing::warn!("Failed to load throttle profile from store: {}", e);
         }
         m
     });
     let block_list_manager = Arc::new({
         let m = BlockListManager::new().with_store(intercept_store.clone());
-        if let Err(e) = m.load() {
+        if let Err(e) = m.load().await {
             tracing::warn!("Failed to load block list entries from store: {}", e);
         }
         m

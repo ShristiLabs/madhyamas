@@ -23,7 +23,7 @@ use tokio::sync::broadcast;
 
 pub mod sqlite;
 
-pub use sqlite::SqliteConfigStore;
+pub use sqlite::{SqliteConfigStore, SqliteInterceptStore};
 
 use crate::intercept::{BlockListEntry, BreakpointRule, MockRule, RewriteRule, ThrottleProfile};
 use crate::mirror::MirrorWriter;

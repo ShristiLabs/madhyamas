@@ -53,7 +53,7 @@ pub async fn create_breakpoint_rule(
         rule.priority = priority;
     }
 
-    let id = state.breakpoint_manager.add_rule(rule);
+    let id = state.breakpoint_manager.add_rule(rule).await;
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -80,7 +80,7 @@ pub async fn delete_breakpoint_rule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if state.breakpoint_manager.remove_rule(&id) {
+    if state.breakpoint_manager.remove_rule(&id).await {
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -178,7 +178,7 @@ pub async fn create_mock_rule(
         rule.priority = priority;
     }
 
-    let id = state.mock_manager.add_rule(rule);
+    let id = state.mock_manager.add_rule(rule).await;
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -234,7 +234,7 @@ pub async fn delete_mock_rule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if state.mock_manager.remove_rule(&id) {
+    if state.mock_manager.remove_rule(&id).await {
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -365,7 +365,7 @@ pub async fn create_mock_from_traffic(
                 let mut rule = MockRule::new(name, condition, mock_response);
                 rule.enabled = enabled;
 
-                let id = state.mock_manager.add_rule(rule);
+                let id = state.mock_manager.add_rule(rule).await;
                 created_ids.push(id);
             }
             Ok(None) => {
@@ -935,7 +935,7 @@ pub async fn create_advanced_mock_rule(
         rule.collection_id = Some(collection_id);
     }
 
-    let id = state.mock_manager.add_rule(rule);
+    let id = state.mock_manager.add_rule(rule).await;
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -977,7 +977,7 @@ pub async fn create_rewrite_rule(
         rule.priority = priority;
     }
 
-    let id = state.rewrite_manager.add_rule(rule);
+    let id = state.rewrite_manager.add_rule(rule).await;
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -1025,7 +1025,7 @@ pub async fn update_rewrite_rule(
     rule.enabled = req.enabled.unwrap_or(existing.enabled);
     rule.priority = req.priority.unwrap_or(existing.priority);
 
-    if state.rewrite_manager.update_rule(&id, rule) {
+    if state.rewrite_manager.update_rule(&id, rule).await {
         StatusCode::OK.into_response()
     } else {
         (
@@ -1060,7 +1060,7 @@ pub async fn delete_rewrite_rule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if state.rewrite_manager.remove_rule(&id) {
+    if state.rewrite_manager.remove_rule(&id).await {
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -1197,9 +1197,9 @@ pub async fn set_throttle_profile(
     if let Err(e) = super::validation::validate(&req) {
         return e.into_response();
     }
-    state.throttle_manager.set_profile(req.profile);
+    state.throttle_manager.set_profile(req.profile).await;
     if let Some(enabled) = req.enabled {
-        state.throttle_manager.set_enabled(enabled);
+        state.throttle_manager.set_enabled(enabled).await;
     }
     StatusCode::OK.into_response()
 }
@@ -1209,7 +1209,7 @@ pub async fn set_throttle_enabled(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ToggleRequest>,
 ) -> impl IntoResponse {
-    state.throttle_manager.set_enabled(req.enabled);
+    state.throttle_manager.set_enabled(req.enabled).await;
     StatusCode::OK
 }
 
@@ -1465,7 +1465,7 @@ pub async fn create_block_list_entry(
         entry.content_type = content_type;
     }
 
-    let id = state.block_list_manager.add_entry(entry);
+    let id = state.block_list_manager.add_entry(entry).await;
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -1495,7 +1495,7 @@ pub async fn update_block_list_entry(
     if entry.pattern.trim().is_empty() {
         return super::error::ApiError::bad_request("pattern cannot be empty").into_response();
     }
-    if state.block_list_manager.update_entry(&id, entry) {
+    if state.block_list_manager.update_entry(&id, entry).await {
         StatusCode::OK.into_response()
     } else {
         (
@@ -1513,7 +1513,7 @@ pub async fn delete_block_list_entry(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if state.block_list_manager.remove_entry(&id) {
+    if state.block_list_manager.remove_entry(&id).await {
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -1532,7 +1532,11 @@ pub async fn toggle_block_list_entry(
     Path(id): Path<String>,
     Json(req): Json<ToggleRequest>,
 ) -> impl IntoResponse {
-    if state.block_list_manager.toggle_entry(&id, req.enabled) {
+    if state
+        .block_list_manager
+        .toggle_entry(&id, req.enabled)
+        .await
+    {
         StatusCode::OK.into_response()
     } else {
         (

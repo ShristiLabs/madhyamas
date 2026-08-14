@@ -73,7 +73,7 @@ pub use intercept::{
 };
 
 // Re-exports from persistence
-pub use persistence::{InterceptStore, Persistable};
+pub use persistence::Persistable;
 
 // Re-exports from extension
 #[cfg(feature = "plugins")]
@@ -131,7 +131,8 @@ pub use storage::PluginStoreBackend;
 #[cfg(feature = "scripting")]
 pub use storage::ScriptStoreBackend;
 pub use storage::{
-    ConfigStoreBackend, InterceptStoreBackend, SqliteConfigStore, TrafficStoreBackend,
+    ConfigStoreBackend, InterceptStoreBackend, SqliteConfigStore, SqliteInterceptStore,
+    TrafficStoreBackend,
 };
 
 /// Result type

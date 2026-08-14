@@ -357,16 +357,17 @@ impl Default for GrpcManager {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::persistence::Persistable for GrpcManager {
-    fn save(&self) -> crate::Result<()> {
+    async fn save(&self) -> crate::Result<()> {
         Ok(())
     }
 
-    fn load(&self) -> crate::Result<()> {
+    async fn load(&self) -> crate::Result<()> {
         Ok(())
     }
 
-    fn clear(&self) -> crate::Result<()> {
+    async fn clear(&self) -> crate::Result<()> {
         self.clear();
         Ok(())
     }

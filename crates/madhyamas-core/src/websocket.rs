@@ -513,16 +513,17 @@ impl Default for WsManager {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::persistence::Persistable for WsManager {
-    fn save(&self) -> crate::Result<()> {
+    async fn save(&self) -> crate::Result<()> {
         Ok(())
     }
 
-    fn load(&self) -> crate::Result<()> {
+    async fn load(&self) -> crate::Result<()> {
         Ok(())
     }
 
-    fn clear(&self) -> crate::Result<()> {
+    async fn clear(&self) -> crate::Result<()> {
         self.clear_messages();
         Ok(())
     }

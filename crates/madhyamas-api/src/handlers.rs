@@ -1293,7 +1293,7 @@ pub async fn clear_ws_traffic(State(state): State<Arc<AppState>>) -> impl IntoRe
 /// Export all rules
 pub async fn export_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match &state.intercept_store {
-        Some(store) => match store.export_all() {
+        Some(store) => match store.export_all().await {
             Ok(json) => Json(serde_json::json!({ "data": json })).into_response(),
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1328,7 +1328,7 @@ pub async fn import_all_rules(
         return e.into_response();
     }
     match &state.intercept_store {
-        Some(store) => match store.import_all(&req.data) {
+        Some(store) => match store.import_all(&req.data).await {
             Ok(()) => Json(serde_json::json!({ "success": true })).into_response(),
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1370,7 +1370,7 @@ pub async fn save_all_rules(
         Some(store) => {
             // Save mock rules
             for rule in state.mock_manager.get_rules() {
-                if let Err(e) = store.save_mock_rule(&rule) {
+                if let Err(e) = store.save_mock_rule(&rule).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
@@ -1383,7 +1383,7 @@ pub async fn save_all_rules(
 
             // Save rewrite rules
             for rule in state.rewrite_manager.get_rules() {
-                if let Err(e) = store.save_rewrite_rule(&rule) {
+                if let Err(e) = store.save_rewrite_rule(&rule).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
@@ -1396,7 +1396,7 @@ pub async fn save_all_rules(
 
             // Save breakpoint rules
             for rule in state.breakpoint_manager.get_rules() {
-                if let Err(e) = store.save_breakpoint_rule(&rule) {
+                if let Err(e) = store.save_breakpoint_rule(&rule).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
@@ -1410,8 +1410,9 @@ pub async fn save_all_rules(
             // Save throttle profile
             {
                 let profile = state.throttle_manager.get_profile();
-                if let Err(e) =
-                    store.save_throttle_profile(&profile, state.throttle_manager.is_enabled())
+                if let Err(e) = store
+                    .save_throttle_profile(&profile, state.throttle_manager.is_enabled())
+                    .await
                 {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -1425,7 +1426,7 @@ pub async fn save_all_rules(
 
             // Save block list entries
             for entry in state.block_list_manager.get_entries() {
-                if let Err(e) = store.save_block_list_entry(&entry) {
+                if let Err(e) = store.save_block_list_entry(&entry).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
@@ -1453,7 +1454,7 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
     match &state.intercept_store {
         Some(store) => {
             // Load mock rules
-            match store.load_mock_rules() {
+            match store.load_mock_rules().await {
                 Ok(rules) => {
                     state.mock_manager.clear();
                     state.mock_manager.import_rules(rules);
@@ -1470,11 +1471,11 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
             }
 
             // Load rewrite rules
-            match store.load_rewrite_rules() {
+            match store.load_rewrite_rules().await {
                 Ok(rules) => {
                     state.rewrite_manager.clear();
                     for rule in rules {
-                        state.rewrite_manager.add_rule(rule);
+                        state.rewrite_manager.add_rule(rule).await;
                     }
                 }
                 Err(e) => {
@@ -1489,11 +1490,11 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
             }
 
             // Load breakpoint rules
-            match store.load_breakpoint_rules() {
+            match store.load_breakpoint_rules().await {
                 Ok(rules) => {
                     state.breakpoint_manager.clear();
                     for rule in rules {
-                        state.breakpoint_manager.add_rule(rule);
+                        state.breakpoint_manager.add_rule(rule).await;
                     }
                 }
                 Err(e) => {
@@ -1508,10 +1509,10 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
             }
 
             // Load throttle profile
-            match store.load_throttle_profile() {
+            match store.load_throttle_profile().await {
                 Ok(Some((profile, enabled))) => {
-                    state.throttle_manager.set_profile(profile);
-                    state.throttle_manager.set_enabled(enabled);
+                    state.throttle_manager.set_profile(profile).await;
+                    state.throttle_manager.set_enabled(enabled).await;
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -1526,11 +1527,11 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
             }
 
             // Load block list entries
-            match store.load_block_list_entries() {
+            match store.load_block_list_entries().await {
                 Ok(entries) => {
-                    state.block_list_manager.clear();
+                    state.block_list_manager.clear().await;
                     for entry in entries {
-                        state.block_list_manager.add_entry(entry);
+                        state.block_list_manager.add_entry(entry).await;
                     }
                 }
                 Err(e) => {

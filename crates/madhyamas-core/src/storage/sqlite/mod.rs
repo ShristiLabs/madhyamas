@@ -8,5 +8,7 @@
 //! migrated here one at a time, smallest first.
 
 pub mod config;
+pub mod intercept;
 
 pub use config::SqliteConfigStore;
+pub use intercept::SqliteInterceptStore;

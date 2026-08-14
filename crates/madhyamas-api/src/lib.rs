@@ -26,9 +26,9 @@ use madhyamas_core::PluginManager;
 #[cfg(feature = "scripting")]
 use madhyamas_core::ScriptRuntime;
 use madhyamas_core::{
-    AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, InterceptStore,
-    LogHandle, MirrorWriter, MockManager, ProxyConfig, ReplayManager, RewriteManager,
-    SessionManager, ThrottleManager, TrafficStore, WsManager,
+    AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager,
+    InterceptStoreBackend, LogHandle, MirrorWriter, MockManager, ProxyConfig, ReplayManager,
+    RewriteManager, SessionManager, ThrottleManager, TrafficStore, WsManager,
 };
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -84,7 +84,7 @@ pub struct AppState {
     pub plugin_registry: Arc<tokio::sync::Mutex<PluginRegistry>>,
     pub ws_manager: Arc<WsManager>,
     pub session_manager: Arc<SessionManager>,
-    pub intercept_store: Option<Arc<InterceptStore>>,
+    pub intercept_store: Option<Arc<dyn InterceptStoreBackend + Send + Sync>>,
     pub proxy_config: Option<Arc<RwLock<ProxyConfig>>>,
     /// Auto Save manager (periodic session backup). Optional — only set
     /// when the proxy engine is running with Auto Save enabled.
@@ -208,7 +208,10 @@ impl AppState {
         self
     }
 
-    pub fn with_intercept_store(mut self, store: Arc<InterceptStore>) -> Self {
+    pub fn with_intercept_store(
+        mut self,
+        store: Arc<dyn InterceptStoreBackend + Send + Sync>,
+    ) -> Self {
         self.intercept_store = Some(store);
         self
     }

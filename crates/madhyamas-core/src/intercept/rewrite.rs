@@ -2,7 +2,7 @@
 
 use super::regex_cache;
 use super::MatchCondition;
-use crate::persistence::InterceptStore;
+use crate::storage::InterceptStoreBackend;
 use crate::traffic::{RequestData, ResponseData};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -102,7 +102,7 @@ pub struct RewriteManager {
     /// Active rewrite rules
     rules: RwLock<Vec<RewriteRule>>,
     /// Optional SQLite persistence backend
-    store: Option<Arc<InterceptStore>>,
+    store: Option<Arc<dyn InterceptStoreBackend + Send + Sync>>,
 }
 
 impl RewriteManager {
@@ -114,16 +114,16 @@ impl RewriteManager {
     }
 
     /// Attach a SQLite persistence backend.
-    pub fn with_store(mut self, store: Arc<InterceptStore>) -> Self {
+    pub fn with_store(mut self, store: Arc<dyn InterceptStoreBackend + Send + Sync>) -> Self {
         self.store = Some(store);
         self
     }
 
     /// Add a rewrite rule
-    pub fn add_rule(&self, rule: RewriteRule) -> String {
+    pub async fn add_rule(&self, rule: RewriteRule) -> String {
         let id = rule.id.clone();
         if let Some(store) = &self.store {
-            if let Err(e) = store.save_rewrite_rule(&rule) {
+            if let Err(e) = store.save_rewrite_rule(&rule).await {
                 tracing::warn!("Failed to persist rewrite rule: {}", e);
             }
         }
@@ -132,19 +132,24 @@ impl RewriteManager {
     }
 
     /// Remove a rewrite rule
-    pub fn remove_rule(&self, id: &str) -> bool {
-        let mut rules = self.rules.write();
-        if let Some(pos) = rules.iter().position(|r| r.id == id) {
-            rules.remove(pos);
+    pub async fn remove_rule(&self, id: &str) -> bool {
+        let removed = {
+            let mut rules = self.rules.write();
+            if let Some(pos) = rules.iter().position(|r| r.id == id) {
+                rules.remove(pos);
+                true
+            } else {
+                false
+            }
+        };
+        if removed {
             if let Some(store) = &self.store {
-                if let Err(e) = store.delete_rewrite_rule(id) {
+                if let Err(e) = store.delete_rewrite_rule(id).await {
                     tracing::warn!("Failed to delete rewrite rule from store: {}", e);
                 }
             }
-            true
-        } else {
-            false
         }
+        removed
     }
 
     /// Get all rules
@@ -158,12 +163,19 @@ impl RewriteManager {
     }
 
     /// Update a rule
-    pub fn update_rule(&self, id: &str, rule: RewriteRule) -> bool {
-        let mut rules = self.rules.write();
-        if let Some(pos) = rules.iter().position(|r| r.id == id) {
-            rules[pos] = rule.clone();
+    pub async fn update_rule(&self, id: &str, rule: RewriteRule) -> bool {
+        let rule_to_save = {
+            let mut rules = self.rules.write();
+            if let Some(pos) = rules.iter().position(|r| r.id == id) {
+                rules[pos] = rule.clone();
+                Some(rule)
+            } else {
+                None
+            }
+        };
+        if let Some(rule) = rule_to_save {
             if let Some(store) = &self.store {
-                if let Err(e) = store.save_rewrite_rule(&rule) {
+                if let Err(e) = store.save_rewrite_rule(&rule).await {
                     tracing::warn!("Failed to persist rewrite rule update: {}", e);
                 }
             }
@@ -398,28 +410,29 @@ impl Default for RewriteManager {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::persistence::Persistable for RewriteManager {
-    fn save(&self) -> crate::Result<()> {
+    async fn save(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            let rules = self.rules.read();
-            for rule in rules.iter() {
-                store.save_rewrite_rule(rule)?;
+            let rules = self.rules.read().clone();
+            for rule in &rules {
+                store.save_rewrite_rule(rule).await?;
             }
         }
         Ok(())
     }
 
-    fn load(&self) -> crate::Result<()> {
+    async fn load(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            let loaded = store.load_rewrite_rules()?;
+            let loaded = store.load_rewrite_rules().await?;
             *self.rules.write() = loaded;
         }
         Ok(())
     }
 
-    fn clear(&self) -> crate::Result<()> {
+    async fn clear(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            store.clear_rewrite_rules()?;
+            store.clear_rewrite_rules().await?;
         }
         self.rules.write().clear();
         Ok(())
@@ -616,10 +629,10 @@ mod tests {
         assert_eq!(rule.rewrites.len(), 8, "No Caching should have 8 actions");
     }
 
-    #[test]
-    fn no_caching_template_strips_conditional_request_headers() {
+    #[tokio::test]
+    async fn no_caching_template_strips_conditional_request_headers() {
         let manager = RewriteManager::new();
-        manager.add_rule(RewriteTemplates::no_caching());
+        manager.add_rule(RewriteTemplates::no_caching()).await;
 
         let mut request = RequestData {
             method: HttpMethod::Get,
@@ -656,10 +669,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn no_caching_template_strips_and_sets_response_headers() {
+    #[tokio::test]
+    async fn no_caching_template_strips_and_sets_response_headers() {
         let manager = RewriteManager::new();
-        manager.add_rule(RewriteTemplates::no_caching());
+        manager.add_rule(RewriteTemplates::no_caching()).await;
 
         let request = RequestData {
             method: HttpMethod::Get,
@@ -730,10 +743,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn no_caching_template_can_be_disabled() {
+    #[tokio::test]
+    async fn no_caching_template_can_be_disabled() {
         let manager = RewriteManager::new();
-        let id = manager.add_rule(RewriteTemplates::no_caching());
+        let id = manager.add_rule(RewriteTemplates::no_caching()).await;
         assert!(manager.toggle_rule(&id, false), "toggle should succeed");
 
         let mut request = RequestData {
@@ -772,10 +785,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn block_cookies_template_strips_cookie_request_header() {
+    #[tokio::test]
+    async fn block_cookies_template_strips_cookie_request_header() {
         let manager = RewriteManager::new();
-        manager.add_rule(RewriteTemplates::block_cookies());
+        manager.add_rule(RewriteTemplates::block_cookies()).await;
 
         let mut request = RequestData {
             method: HttpMethod::Get,
@@ -807,10 +820,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn block_cookies_template_strips_set_cookie_response_header() {
+    #[tokio::test]
+    async fn block_cookies_template_strips_set_cookie_response_header() {
         let manager = RewriteManager::new();
-        manager.add_rule(RewriteTemplates::block_cookies());
+        manager.add_rule(RewriteTemplates::block_cookies()).await;
 
         let request = RequestData {
             method: HttpMethod::Get,
@@ -852,10 +865,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn block_cookies_template_can_be_disabled() {
+    #[tokio::test]
+    async fn block_cookies_template_can_be_disabled() {
         let manager = RewriteManager::new();
-        let id = manager.add_rule(RewriteTemplates::block_cookies());
+        let id = manager.add_rule(RewriteTemplates::block_cookies()).await;
         assert!(manager.toggle_rule(&id, false), "toggle should succeed");
 
         let mut request = RequestData {
@@ -880,11 +893,11 @@ mod tests {
 
     // ── Template interaction with the manager ───────────────────────
 
-    #[test]
-    fn both_templates_can_coexist() {
+    #[tokio::test]
+    async fn both_templates_can_coexist() {
         let manager = RewriteManager::new();
-        manager.add_rule(RewriteTemplates::no_caching());
-        manager.add_rule(RewriteTemplates::block_cookies());
+        manager.add_rule(RewriteTemplates::no_caching()).await;
+        manager.add_rule(RewriteTemplates::block_cookies()).await;
 
         assert_eq!(manager.get_rules().len(), 2);
 
