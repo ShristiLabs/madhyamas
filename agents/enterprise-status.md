@@ -39,6 +39,8 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 8d MCP protocol | #57 | done | skipped | approved | done (HTTP transport, annotations, resources, 6 prompts) | committed (ade0279) | done |
 | 8e Ent CLI commands | #58 | done | skipped | approved | done (users/audit/license/auth commands, skill docs updated) | committed (a0054fe) | done |
 | 9 Security hardening | #59 | done | skipped | approved | done (WS auth, CSP, proxy auth, password complexity, SSRF, license instance ID, DB URL redaction, 579 tests) | committed (443287c) | done |
+| 10a+10b DB optimization | #60,61 | done | skipped | approved | done (tiered body storage, zstd, session counters, cursor pagination, lazy bodies, write batching, 587 tests) | committed (1890982) | done |
+| 10c+10d DB scale+HA | #62,63 | done | skipped | approved | done (partitioning docs, PgBouncer docs, read/write split, --database-read-url, PGBOUNCER.md, POSTGRES_HA.md) | committed (9b4fb25) | done |
 
 ## Agent Log
 
