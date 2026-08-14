@@ -278,6 +278,30 @@ struct Args {
     /// - `rediss://:password@host:port` — TLS + auth
     #[arg(long, env = "MADHYAMAS_REDIS_URL", global = true)]
     redis_url: Option<String>,
+
+    /// Path to a PEM-encoded CA certificate file for HTTPS interception.
+    /// When set together with `--ca-key-file`, the CA is loaded from these
+    /// files instead of being generated fresh. If the files do not exist
+    /// yet, a new CA is generated and written to them so other instances
+    /// can load the same CA. For multi-instance deployments, share the same
+    /// CA across instances via a Kubernetes Secret or shared volume.
+    #[arg(long, env = "MADHYAMAS_CA_CERT_FILE", global = true)]
+    ca_cert_file: Option<String>,
+
+    /// Path to a PEM-encoded CA private key file for HTTPS interception.
+    /// Used together with `--ca-cert-file` to load or store the shared CA.
+    /// For multi-instance deployments, share the same CA key across
+    /// instances via a Kubernetes Secret or shared volume.
+    #[arg(long, env = "MADHYAMAS_CA_KEY_FILE", global = true)]
+    ca_key_file: Option<String>,
+
+    /// Base path for serving the API and web UI (load-balancer context-path
+    /// routing). When set to e.g. `/madhyamas`, all routes are served under
+    /// `/madhyamas/api/...`, `/madhyamas/health`, `/madhyamas/ws`, and the
+    /// web UI at `/madhyamas/`. Defaults to `/` (root path, unchanged
+    /// behavior). The path is normalized to not have a trailing slash.
+    #[arg(long, env = "MADHYAMAS_BASE_PATH", global = true)]
+    base_path: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -662,8 +686,15 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         debug!("IP access control disabled (allow all connections)");
     }
 
-    // Initialize certificate manager
-    let cert_manager = CertificateManager::new(&config.cert_path).await?;
+    // Initialize certificate manager. When --ca-cert-file and --ca-key-file
+    // are both provided, the CA is loaded from (or generated and written to)
+    // those files so multiple instances can share the same CA (Phase 6b).
+    let cert_manager = CertificateManager::new_with_ca_files(
+        &config.cert_path,
+        args.ca_cert_file.as_deref(),
+        args.ca_key_file.as_deref(),
+    )
+    .await?;
 
     // Initialize traffic store. When --database-url points to a PostgreSQL
     // instance, use PostgresTrafficStore; otherwise fall back to the default

@@ -99,6 +99,100 @@ impl CertificateManager {
         }))
     }
 
+    /// Create a certificate manager using an explicitly-provided CA
+    /// certificate and key file pair (Phase 6b — shared CA for multi-instance).
+    ///
+    /// Behaviour:
+    /// - If **both** `ca_cert_file` and `ca_key_file` exist on disk, the CA is
+    ///   loaded from those files (all instances share the same CA).
+    /// - If the flags are provided but the files **do not** exist, a new CA is
+    ///   generated and written to those paths so other instances can load it.
+    /// - If either flag is `None`, this falls back to [`Self::new`] (default
+    ///   in-memory / cert-path CA).
+    ///
+    /// For multi-instance deployments, store the CA in a Kubernetes Secret or
+    /// shared volume so every instance reads the same key material.
+    pub async fn new_with_ca_files(
+        cert_path: &str,
+        ca_cert_file: Option<&str>,
+        ca_key_file: Option<&str>,
+    ) -> crate::Result<Arc<Self>> {
+        match (ca_cert_file, ca_key_file) {
+            (Some(cert_file), Some(key_file)) => {
+                let cert_p = Path::new(cert_file);
+                let key_p = Path::new(key_file);
+                if cert_p.exists() && key_p.exists() {
+                    info!("Loading shared CA certificate from {}", cert_file);
+                    let (ca_cert_pem, ca_key_pem, ca_key_pair, ca_params) =
+                        Self::load_ca(cert_p, key_p).await?;
+                    return Ok(Arc::new(Self {
+                        ca_cert_pem,
+                        ca_key_pem,
+                        ca_key_pair,
+                        ca_params,
+                        cache: RwLock::new(HashMap::new()),
+                        cert_path: cert_path.to_string(),
+                        max_cache_size: 10_000,
+                        cache_ttl_secs: 24 * 60 * 60,
+                    }));
+                }
+                // Files don't exist yet — generate a new CA and write it.
+                info!("Generating new CA certificate at {}", cert_file);
+                let (cert_pem, key_pem, key_pair, params) = Self::generate_ca()?;
+                Self::save_ca(cert_p, key_p, &cert_pem, &key_pem).await?;
+                Ok(Arc::new(Self {
+                    ca_cert_pem: cert_pem,
+                    ca_key_pem: key_pem,
+                    ca_key_pair: key_pair,
+                    ca_params: params,
+                    cache: RwLock::new(HashMap::new()),
+                    cert_path: cert_path.to_string(),
+                    max_cache_size: 10_000,
+                    cache_ttl_secs: 24 * 60 * 60,
+                }))
+            }
+            // Fall back to default behaviour.
+            _ => Self::new(cert_path).await,
+        }
+    }
+
+    /// Write the CA certificate and key PEM bytes to the given paths and set
+    /// restrictive permissions on the key file (0600 on Unix).
+    async fn save_ca(
+        cert_path: &Path,
+        key_path: &Path,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+    ) -> crate::Result<()> {
+        if let Some(parent) = cert_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| Error::Certificate(format!("Failed to create CA cert dir: {}", e)))?;
+        }
+        if let Some(parent) = key_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| Error::Certificate(format!("Failed to create CA key dir: {}", e)))?;
+        }
+        fs::write(cert_path, cert_pem)
+            .await
+            .map_err(|e| Error::Certificate(format!("Failed to write CA cert: {}", e)))?;
+        fs::write(key_path, key_pem)
+            .await
+            .map_err(|e| Error::Certificate(format!("Failed to write CA key: {}", e)))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            tokio::fs::set_permissions(key_path, perms)
+                .await
+                .map_err(|e| {
+                    Error::Certificate(format!("Failed to set CA key permissions: {}", e))
+                })?;
+        }
+        Ok(())
+    }
+
     /// Load existing CA certificate
     async fn load_ca(
         cert_path: &Path,
@@ -261,5 +355,52 @@ impl CertificateManager {
     /// Get the path where certificates are stored
     pub fn cert_path(&self) -> &str {
         &self.cert_path
+    }
+
+    /// Get the CA private key in PEM format (for testing / verification).
+    #[cfg(test)]
+    fn ca_key_pem(&self) -> &[u8] {
+        &self.ca_key_pem
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_ca_load_and_save() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let cert_file = tmp.path().join("ca-cert.pem");
+        let key_file = tmp.path().join("ca-key.pem");
+
+        // Generate a CA via new_with_ca_files (files don't exist yet → generate + write).
+        let cert_path = tmp.path().to_string_lossy().to_string();
+        let mgr = CertificateManager::new_with_ca_files(
+            &cert_path,
+            cert_file.to_str(),
+            key_file.to_str(),
+        )
+        .await
+        .expect("generate + save CA");
+        let original_key = mgr.ca_key_pem().to_vec();
+
+        // Files should now exist.
+        assert!(cert_file.exists(), "CA cert file should exist after save");
+        assert!(key_file.exists(), "CA key file should exist after save");
+
+        // Load the CA from the written files — the key material must match.
+        let mgr2 = CertificateManager::new_with_ca_files(
+            &cert_path,
+            cert_file.to_str(),
+            key_file.to_str(),
+        )
+        .await
+        .expect("load CA from files");
+        assert_eq!(
+            mgr2.ca_key_pem(),
+            original_key,
+            "loaded CA key must match saved key"
+        );
     }
 }
