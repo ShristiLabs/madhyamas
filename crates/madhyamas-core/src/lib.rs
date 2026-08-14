@@ -151,8 +151,6 @@ pub enum Error {
     Tls(String),
     #[error("Certificate error: {0}")]
     Certificate(String),
-    #[error("Database error: {0}")]
-    Database(#[from] rusqlite::Error),
     #[error("SQLx database error: {0}")]
     Sqlx(#[from] sqlx::Error),
     #[error("Serialization error: {0}")]

@@ -16,7 +16,8 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 2b | #35 | done | skipped | approved | done (additive, 487 tests unchanged) | committed (da155fb) | done |
 | 2c-1 Config | #36 | done | skipped | approved | done (both builds green) | committed (ebe5426) | done |
 | 2c-2 Intercept | #36 | done | skipped | approved | done (both builds green, intercept pipeline async) | committed (5a0f131) | done |
-| 2c-3 Plugin+Script | #36 | — | — | — | — | — | pending |
+| 2c-3 Plugin+Script | #36 | done | skipped | approved | done (sync boundary via tokio::spawn; 481 tests pass) | committed (da7e372, 4a51e3f) | done |
+| 2c-4 Traffic+Session | #36 | — | — | — | — | — | pending |
 
 ## Agent Log
 

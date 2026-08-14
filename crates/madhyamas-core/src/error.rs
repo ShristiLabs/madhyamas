@@ -59,7 +59,6 @@ impl AppError for crate::Error {
             crate::Error::Io(_) => "CORE_IO",
             crate::Error::Tls(_) => "CORE_TLS",
             crate::Error::Certificate(_) => "CORE_CERTIFICATE",
-            crate::Error::Database(_) => "CORE_DATABASE",
             crate::Error::Sqlx(_) => "CORE_DATABASE",
             crate::Error::Serialization(_) => "CORE_SERIALIZATION",
             crate::Error::Proxy(_) => "CORE_PROXY",
@@ -76,7 +75,6 @@ impl AppError for crate::Error {
             // issues are unlikely to resolve themselves on retry.
             crate::Error::Tls(_)
             | crate::Error::Certificate(_)
-            | crate::Error::Database(_)
             | crate::Error::Sqlx(_)
             | crate::Error::Serialization(_)
             | crate::Error::Proxy(_)
