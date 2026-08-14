@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+pub mod body_storage;
 pub mod postgres;
 pub mod sqlite;
 
@@ -79,6 +80,11 @@ pub trait TrafficStoreBackend: Send + Sync {
     async fn remove_focus_host(&self, id: &str) -> Result<bool>;
     async fn list_focus_hosts(&self) -> Result<Vec<FocusHost>>;
     async fn clear_focus_hosts(&self) -> Result<()>;
+
+    /// Flush any pending buffered writes (Phase 10b.1 write batching).
+    /// For backends without write batching (SQLite), this is a no-op.
+    /// Called on graceful shutdown to avoid data loss.
+    async fn flush(&self) -> Result<()>;
 
     fn subscribe(&self) -> broadcast::Receiver<TrafficEvent>;
     fn event_sender(&self) -> broadcast::Sender<TrafficEvent>;

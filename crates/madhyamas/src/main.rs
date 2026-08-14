@@ -264,6 +264,17 @@ struct Args {
     #[arg(long, env = "MADHYAMAS_DATABASE_URL", global = true)]
     database_url: Option<String>,
 
+    /// Read replica database URL (Phase 10d.2). When set to a PostgreSQL
+    /// URL, read queries (`get_traffic`, `get_by_id`, `count`, etc.) are
+    /// routed to the replica while write queries (`store_request`,
+    /// `store_response`, `clear_traffic`, etc.) go to the primary
+    /// (`--database-url`). This improves read throughput under load and
+    /// offloads analytics queries from the primary. When omitted, all
+    /// queries go to the primary. Only effective when `--database-url`
+    /// is also a PostgreSQL URL.
+    #[arg(long, env = "MADHYAMAS_DATABASE_READ_URL", global = true)]
+    database_read_url: Option<String>,
+
     /// Redis URL for cross-instance state synchronization (enterprise tier,
     /// multi-instance mode). When provided, the binary connects to Redis and
     /// enables pub/sub event broadcasting (WebSocket traffic events, config
@@ -933,43 +944,66 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
 
     // Initialize traffic store. When --database-url points to a PostgreSQL
     // instance, use PostgresTrafficStore; otherwise fall back to the default
-    // SQLite TrafficStore.
-    let traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync> =
-        if let Some(ref db_url) = database_url {
-            if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
-                info!("Using PostgreSQL traffic store: {}", redact_db_url(db_url));
-                let pool = sqlx::postgres::PgPoolOptions::new()
-                    .max_connections(10)
-                    .connect(db_url)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("failed to connect to PostgreSQL: {e}"))?;
-                // Run schema migrations under a PostgreSQL advisory lock to
-                // prevent concurrent migration races in multi-instance setups.
-                run_pg_migrations(&pool).await?;
-                let store = PostgresTrafficStore::new(pool).await?;
-                store.set_max_body_size(config.max_body_size);
-                store.set_max_entries(config.max_requests);
-                if let Some(mb) = config.max_total_size_mb {
-                    store.set_max_total_size_bytes(mb * 1024 * 1024);
+    // SQLite TrafficStore. When --database-read-url is also set, a separate
+    // read replica pool is used for read queries (Phase 10d.2).
+    let traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync> = if let Some(ref db_url) =
+        database_url
+    {
+        if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+            info!("Using PostgreSQL traffic store: {}", redact_db_url(db_url));
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(10)
+                .connect(db_url)
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to connect to PostgreSQL: {e}"))?;
+            // Run schema migrations under a PostgreSQL advisory lock to
+            // prevent concurrent migration races in multi-instance setups.
+            run_pg_migrations(&pool).await?;
+
+            // Phase 10d.2: connect to the read replica if configured.
+            let read_pool = if let Some(ref read_url) = args.database_read_url {
+                if read_url.starts_with("postgres://") || read_url.starts_with("postgresql://") {
+                    info!("Using PostgreSQL read replica: {}", redact_db_url(read_url));
+                    Some(
+                        sqlx::postgres::PgPoolOptions::new()
+                            .max_connections(10)
+                            .connect(read_url)
+                            .await
+                            .map_err(|e| {
+                                anyhow::anyhow!("failed to connect to read replica: {e}")
+                            })?,
+                    )
+                } else {
+                    None
                 }
-                store.set_capture_request_bodies(config.capture_request_bodies);
-                store.set_capture_response_bodies(config.capture_response_bodies);
-                store.set_ignored_domains(config.ignored_domains.clone());
-                store
             } else {
-                info!(
-                    "Using SQLite traffic store (explicit URL): {}",
-                    redact_db_url(db_url)
-                );
-                let store = TrafficStore::new(config.db_path.clone()).await?;
-                configure_traffic_store(&store, &config);
-                store
+                None
+            };
+
+            let store = PostgresTrafficStore::with_read_pool(pool, read_pool).await?;
+            store.set_max_body_size(config.max_body_size);
+            store.set_max_entries(config.max_requests);
+            if let Some(mb) = config.max_total_size_mb {
+                store.set_max_total_size_bytes(mb * 1024 * 1024);
             }
+            store.set_capture_request_bodies(config.capture_request_bodies);
+            store.set_capture_response_bodies(config.capture_response_bodies);
+            store.set_ignored_domains(config.ignored_domains.clone());
+            store
         } else {
+            info!(
+                "Using SQLite traffic store (explicit URL): {}",
+                redact_db_url(db_url)
+            );
             let store = TrafficStore::new(config.db_path.clone()).await?;
             configure_traffic_store(&store, &config);
             store
-        };
+        }
+    } else {
+        let store = TrafficStore::new(config.db_path.clone()).await?;
+        configure_traffic_store(&store, &config);
+        store
+    };
 
     // Initialize intercept rule persistence store. When using PostgreSQL,
     // the intercept store shares the same database; otherwise it uses a
@@ -1841,6 +1875,9 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     // WebSocket connections are closed and audit log is flushed (Phase 6d).
     #[cfg(feature = "enterprise")]
     let shutdown_redis = redis_state_for_shutdown.clone();
+    // Phase 10b.1: clone the traffic store so we can flush the write
+    // batcher during graceful shutdown (avoids data loss).
+    let shutdown_traffic_store = traffic_store.clone();
     let shutdown = async move {
         // Wait for either SIGINT (ctrl_c) or SIGTERM (Unix signal).
         let sigint = tokio::signal::ctrl_c();
@@ -1884,6 +1921,13 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         // synchronously to the store, so there is no batch to drain — log
         // confirmation for operational visibility.
         info!("Audit log flushed");
+        // Phase 10b.1: flush the write batcher so buffered traffic entries
+        // are not lost on shutdown.
+        if let Err(e) = shutdown_traffic_store.flush().await {
+            tracing::warn!("Failed to flush traffic store on shutdown: {e}");
+        } else {
+            info!("Traffic store flushed");
+        }
         info!("Graceful shutdown complete");
     };
 

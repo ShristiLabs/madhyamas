@@ -5,7 +5,9 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use madhyamas_core::{AccessControlList, ProxyConfig, TrafficFilter, WsFilter};
+use madhyamas_core::{
+    AccessControlList, PaginatedTraffic, ProxyConfig, TrafficCursor, TrafficFilter, WsFilter,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -28,6 +30,13 @@ pub struct TrafficQuery {
     pub is_passthrough: Option<String>,
     /// Filter by host pattern (substring match)
     pub host: Option<String>,
+    /// Phase 10b.3: cursor for cursor-based pagination. When provided,
+    /// OFFSET is ignored and keyset pagination is used. The response
+    /// format changes to `PaginatedTraffic` (with `next_cursor`).
+    pub cursor: Option<String>,
+    /// Phase 10b.4: when "false", omit body columns from the response
+    /// to reduce payload size. Defaults to "true" (include bodies).
+    pub include_bodies: Option<String>,
 }
 
 /// Get all traffic entries
@@ -47,6 +56,12 @@ pub async fn get_traffic(
         })
         .unwrap_or((None, None));
 
+    let include_bodies = query
+        .include_bodies
+        .as_deref()
+        .map(|s| !s.eq_ignore_ascii_case("false"))
+        .unwrap_or(true);
+
     let filter = TrafficFilter {
         url_pattern: query.url,
         method: query.method.and_then(|m| m.parse().ok()),
@@ -64,10 +79,26 @@ pub async fn get_traffic(
             _ => None,
         }),
         host: query.host,
+        cursor: query.cursor,
+        include_bodies: Some(include_bodies),
     };
 
     match state.traffic_store.get_traffic(&filter).await {
-        Ok(entries) => Json(entries).into_response(),
+        Ok(entries) => {
+            // Phase 10b.3: when cursor pagination is used, return
+            // PaginatedTraffic with next_cursor. Otherwise, return a
+            // plain array for backward compatibility.
+            if filter.cursor.is_some() {
+                let next_cursor = entries.last().map(TrafficCursor::from_entry);
+                let paginated = PaginatedTraffic {
+                    entries,
+                    next_cursor,
+                };
+                Json(paginated).into_response()
+            } else {
+                Json(entries).into_response()
+            }
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {

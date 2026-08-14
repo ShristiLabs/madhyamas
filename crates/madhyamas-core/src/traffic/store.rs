@@ -153,6 +153,11 @@ CREATE TABLE IF NOT EXISTS focus_hosts (
     pattern TEXT NOT NULL UNIQUE,
     created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS session_counters (
+    session_id TEXT PRIMARY KEY,
+    entry_count INTEGER NOT NULL DEFAULT 0
+);
 "#;
 
 impl TrafficStore {
@@ -482,12 +487,26 @@ impl TrafficStore {
     /// Get the number of traffic entries in the current session.
     pub async fn get_entry_count(&self) -> crate::Result<usize> {
         let session_id = self.current_session_id.lock().clone();
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM requests WHERE session_id = ?")
-            .bind(&session_id)
-            .fetch_one(&self.pool)
-            .await
-            .unwrap_or(0);
-        Ok(count as usize)
+        // Phase 10b.2: read from the session_counters table (O(1))
+        // instead of COUNT(*) (O(n)). Fall back to COUNT(*) if the
+        // counter row doesn't exist (old data / pre-migration).
+        let count: Option<i64> =
+            sqlx::query_scalar("SELECT entry_count FROM session_counters WHERE session_id = ?")
+                .bind(&session_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        match count {
+            Some(c) => Ok(c as usize),
+            None => {
+                let fallback: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM requests WHERE session_id = ?")
+                        .bind(&session_id)
+                        .fetch_one(&self.pool)
+                        .await
+                        .unwrap_or(0);
+                Ok(fallback as usize)
+            }
+        }
     }
 
     /// Get the total size of all stored bodies (request + response) in the
@@ -535,6 +554,15 @@ impl TrafficStore {
         if pruned_ids.is_empty() {
             return Ok(());
         }
+
+        // Phase 10b.2: decrement the session counter.
+        let _ = sqlx::query(
+            "UPDATE session_counters SET entry_count = MAX(0, entry_count - ?) WHERE session_id = ?",
+        )
+        .bind(pruned_ids.len() as i64)
+        .bind(&session_id)
+        .execute(&self.pool)
+        .await;
 
         delete_requests_and_responses(&self.pool, &pruned_ids).await?;
         self.emit_event(TrafficEvent::Deleted(pruned_ids));
@@ -684,6 +712,16 @@ impl TrafficStore {
             .execute(&self.pool)
             .await;
 
+        // Phase 10b.2: increment the session counter (INSERT ... ON CONFLICT
+        // UPDATE) — eliminates the expensive COUNT(*) on every stats request.
+        let _ = sqlx::query(
+            "INSERT INTO session_counters (session_id, entry_count) VALUES (?, 1) \
+             ON CONFLICT(session_id) DO UPDATE SET entry_count = entry_count + 1",
+        )
+        .bind(&entry.session_id)
+        .execute(&self.pool)
+        .await;
+
         // Emit traffic added event
         let snapshot = TrafficEntrySnapshot::from(entry);
         self.emit_event(TrafficEvent::Added(snapshot));
@@ -785,15 +823,33 @@ impl TrafficStore {
     pub async fn get_traffic(&self, filter: &TrafficFilter) -> crate::Result<Vec<TrafficEntry>> {
         let session_id = self.current_session_id.lock().clone();
 
+        // Phase 10b.4: lazy body loading — when include_bodies == Some(false),
+        // omit body columns from the SELECT to reduce payload size.
+        let include_bodies = filter.include_bodies.unwrap_or(true);
+        let body_cols = if include_bodies {
+            "r.body, rs.body AS resp_body"
+        } else {
+            "NULL AS body, NULL AS resp_body"
+        };
+
         let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-            "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted,
-                    rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.body AS resp_body, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version
-             FROM requests r
-             LEFT JOIN responses rs ON r.id = rs.request_id
-             WHERE r.session_id = ",
+            "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, ",
         );
+        qb.push(body_cols);
+        qb.push(", r.content_type, r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version FROM requests r LEFT JOIN responses rs ON r.id = rs.request_id WHERE r.session_id = ");
         qb.push_bind(session_id);
+
+        // Phase 10b.3: cursor-based pagination — when a cursor is provided,
+        // use keyset pagination instead of OFFSET (O(1) vs O(n)).
+        if let Some(ref cursor_str) = filter.cursor {
+            if let Some(cursor) = crate::traffic::TrafficCursor::decode(cursor_str) {
+                qb.push(" AND (r.timestamp, r.id) < (")
+                    .push_bind(cursor.t)
+                    .push(", ")
+                    .push_bind(cursor.i)
+                    .push(")");
+            }
+        }
 
         if let Some(ref pattern) = filter.url_pattern {
             qb.push(" AND r.url LIKE ")
@@ -845,14 +901,24 @@ impl TrafficStore {
                 .push_bind(format!("%{}%", host));
         }
 
-        qb.push(" ORDER BY r.timestamp DESC");
+        // When using cursor pagination, order by (timestamp DESC, id DESC)
+        // so the keyset cursor is deterministic. Otherwise keep the original
+        // timestamp DESC ordering for backward compatibility.
+        if filter.cursor.is_some() {
+            qb.push(" ORDER BY r.timestamp DESC, r.id DESC");
+        } else {
+            qb.push(" ORDER BY r.timestamp DESC");
+        }
 
         if let Some(limit) = filter.limit {
             qb.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        if let Some(offset) = filter.offset {
-            qb.push(" OFFSET ").push_bind(offset as i64);
+        // Only use OFFSET when cursor is not provided (backward compat).
+        if filter.cursor.is_none() {
+            if let Some(offset) = filter.offset {
+                qb.push(" OFFSET ").push_bind(offset as i64);
+            }
         }
 
         let rows: Vec<TrafficRow> = qb
@@ -895,6 +961,12 @@ impl TrafficStore {
             .execute(&self.pool)
             .await?;
 
+        // Phase 10b.2: reset the session counter.
+        let _ = sqlx::query("UPDATE session_counters SET entry_count = 0 WHERE session_id = ?")
+            .bind(&session_id)
+            .execute(&self.pool)
+            .await;
+
         // Emit traffic cleared event
         self.emit_event(TrafficEvent::Cleared);
 
@@ -905,6 +977,26 @@ impl TrafficStore {
     pub async fn delete_traffic(&self, ids: &[String]) -> crate::Result<()> {
         if ids.is_empty() {
             return Ok(());
+        }
+
+        // Phase 10b.2: decrement the session counter by the number of
+        // deleted entries (best-effort — if the session counter row
+        // doesn't exist, the count will be rebuilt on next fallback).
+        if let Some(session_id) =
+            sqlx::query_scalar::<_, String>("SELECT session_id FROM requests WHERE id = ? LIMIT 1")
+                .bind(&ids[0])
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten()
+        {
+            let _ = sqlx::query(
+                "UPDATE session_counters SET entry_count = MAX(0, entry_count - ?) WHERE session_id = ?",
+            )
+            .bind(ids.len() as i64)
+            .bind(&session_id)
+            .execute(&self.pool)
+            .await;
         }
 
         delete_requests_and_responses(&self.pool, ids).await?;
@@ -1103,6 +1195,11 @@ impl TrafficStore {
             .execute(&self.pool)
             .await?;
 
+        sqlx::query("DELETE FROM session_counters WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+
         sqlx::query("DELETE FROM sessions WHERE id = ?")
             .bind(session_id)
             .execute(&self.pool)
@@ -1272,6 +1369,9 @@ impl TrafficStoreBackend for TrafficStore {
     }
     async fn clear_focus_hosts(&self) -> crate::Result<()> {
         self.clear_focus_hosts().await
+    }
+    async fn flush(&self) -> crate::Result<()> {
+        Ok(())
     }
 
     fn subscribe(&self) -> broadcast::Receiver<TrafficEvent> {
@@ -2368,5 +2468,122 @@ mod recording_limits_tests {
     fn test_host_matches_pattern_case_insensitive() {
         assert!(host_matches_pattern("API.Example.COM", "api.example.com"));
         assert!(host_matches_pattern("api.example.com", "API.EXAMPLE.COM"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 10 tests: session counter, cursor pagination, lazy body loading
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_session_counter() {
+        let store = make_store().await;
+        let session_id = store.current_session_id();
+        store.clear_traffic().await.expect("clear");
+
+        // Store 5 entries.
+        for i in 0..5 {
+            let entry = make_simple_entry(&session_id, &format!("counter-{i}"));
+            store.store_request(&entry).await.expect("store");
+        }
+
+        // Counter should report 5 (O(1) lookup).
+        let count = store.get_entry_count().await.expect("count");
+        assert_eq!(count, 5);
+
+        // Delete 2 and verify counter decremented.
+        store
+            .delete_traffic(&["counter-0".to_string(), "counter-1".to_string()])
+            .await
+            .expect("delete");
+        let count = store.get_entry_count().await.expect("count");
+        assert_eq!(count, 3);
+
+        // Clear and verify counter reset.
+        store.clear_traffic().await.expect("clear");
+        let count = store.get_entry_count().await.expect("count");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cursor_pagination() {
+        let store = make_store().await;
+        let session_id = store.current_session_id();
+        store.clear_traffic().await.expect("clear");
+
+        // Store 10 entries with distinct timestamps.
+        for i in 0..10 {
+            let mut entry = make_simple_entry(&session_id, &format!("cursor-{i}"));
+            entry.timestamp = chrono::Utc::now() + chrono::Duration::seconds(i);
+            store.store_request(&entry).await.expect("store");
+        }
+
+        // First page: limit 3, no cursor.
+        let filter = TrafficFilter {
+            limit: Some(3),
+            ..Default::default()
+        };
+        let page1 = store.get_traffic(&filter).await.expect("page1");
+        assert_eq!(page1.len(), 3);
+
+        // Get cursor from last entry of page 1.
+        let cursor = crate::traffic::TrafficCursor::from_entry(page1.last().unwrap());
+
+        // Second page: limit 3, with cursor.
+        let filter2 = TrafficFilter {
+            limit: Some(3),
+            cursor: Some(cursor),
+            ..Default::default()
+        };
+        let page2 = store.get_traffic(&filter2).await.expect("page2");
+        assert_eq!(page2.len(), 3);
+
+        // Verify no overlap between pages.
+        let page1_ids: std::collections::HashSet<_> = page1.iter().map(|e| &e.id).collect();
+        let page2_ids: std::collections::HashSet<_> = page2.iter().map(|e| &e.id).collect();
+        assert!(page1_ids.is_disjoint(&page2_ids));
+    }
+
+    #[tokio::test]
+    async fn test_lazy_body_loading() {
+        let store = make_store().await;
+        let session_id = store.current_session_id();
+        store.clear_traffic().await.expect("clear");
+
+        let entry = make_simple_entry(&session_id, "lazy-body-test");
+        store.store_request(&entry).await.expect("store");
+
+        // With include_bodies = false, bodies should be None.
+        let filter = TrafficFilter {
+            include_bodies: Some(false),
+            ..Default::default()
+        };
+        let entries = store.get_traffic(&filter).await.expect("get");
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].request.body.is_none());
+
+        // With include_bodies = true (default), bodies should be present.
+        let filter2 = TrafficFilter {
+            ..Default::default()
+        };
+        let entries2 = store.get_traffic(&filter2).await.expect("get");
+        assert_eq!(entries2.len(), 1);
+        assert!(entries2[0].request.body.is_some());
+    }
+
+    /// Helper: create a simple traffic entry for Phase 10 tests.
+    fn make_simple_entry(session_id: &str, id: &str) -> TrafficEntry {
+        let req = RequestData {
+            method: crate::traffic::HttpMethod::Get,
+            url: format!("https://example.com/{id}"),
+            host: "example.com".to_string(),
+            path: format!("/{id}"),
+            headers: HashMap::new(),
+            body: Some(b"test body".to_vec()),
+            content_type: Some("text/plain".to_string()),
+            http_version: Some("HTTP/1.1".to_string()),
+        };
+        let mut entry = TrafficEntry::new(session_id, req);
+        entry.id = id.to_string();
+        entry
     }
 }
