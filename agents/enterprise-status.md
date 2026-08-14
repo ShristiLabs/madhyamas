@@ -20,6 +20,11 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 2c-4 Traffic+Session | #36 | done | skipped | approved | done (hot-path preserved; 481 tests pass) | committed (046f9b3, 8d14db7) | done |
 | 2d Remove rusqlite | #37 | done | skipped | approved | done (rusqlite fully removed; Error::Database dropped) | committed (6c1484c) | done |
 | 3 License (Ed25519) | #38 | done | skipped | approved | done (verify at startup, /api/license, health, 7 tests) | committed (2fdd753) | done |
+| 4a Users (Argon2id) | #39 | done | skipped | approved | done (Argon2id, bootstrap admin, 3 cred tests) | committed (1d52f4f) | done |
+| 4b JWT auth | #40 | done | skipped | approved | done (HS256 pin, leeway, refresh, idle timeout, 4 tests) | committed (f03001d) | done |
+| 4c API key scopes | #41 | — | — | — | — | — | pending |
+| 4d RBAC enforcement | #42 | — | — | — | — | — | pending |
+| 4e Audit persistence | #43 | — | — | — | — | — | pending |
 
 ## Agent Log
 
