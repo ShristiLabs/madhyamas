@@ -30,6 +30,12 @@ impl SqliteEnterpriseStore {
         sqlx::query(SCHEMA_API_KEYS).execute(&pool).await?;
         sqlx::query(SCHEMA_AUTH_SESSIONS).execute(&pool).await?;
         sqlx::query(SCHEMA_AUDIT_EVENTS).execute(&pool).await?;
+        // Phase 4e: add `hash` column to pre-existing audit_events tables.
+        // ALTER TABLE ... ADD COLUMN is idempotent-safe via try/catch: if the
+        // column already exists the error is ignored.
+        let _ = sqlx::query("ALTER TABLE audit_events ADD COLUMN hash TEXT")
+            .execute(&pool)
+            .await;
         Ok(Self { pool })
     }
 
@@ -83,7 +89,8 @@ const SCHEMA_AUDIT_EVENTS: &str = "CREATE TABLE IF NOT EXISTS audit_events (
     client_ip TEXT,
     description TEXT NOT NULL,
     metadata TEXT NOT NULL,
-    prev_hash TEXT
+    prev_hash TEXT,
+    hash TEXT
 )";
 
 #[async_trait]
@@ -324,8 +331,8 @@ impl EnterpriseStore for SqliteEnterpriseStore {
         let rec = AuditEventRecord::from(event);
         sqlx::query(
             "INSERT INTO audit_events \
-             (id, event_type, timestamp, user_id, api_key_id, client_ip, description, metadata, prev_hash) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, event_type, timestamp, user_id, api_key_id, client_ip, description, metadata, prev_hash, hash) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&rec.id)
         .bind(&rec.event_type)
@@ -336,6 +343,7 @@ impl EnterpriseStore for SqliteEnterpriseStore {
         .bind(&rec.description)
         .bind(&rec.metadata)
         .bind(&rec.prev_hash)
+        .bind(&rec.hash)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -426,6 +434,14 @@ impl EnterpriseStore for SqliteEnterpriseStore {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    async fn get_latest_audit_hash(&self) -> Result<Option<String>> {
+        let hash: Option<Option<String>> =
+            sqlx::query_scalar("SELECT hash FROM audit_events ORDER BY timestamp DESC LIMIT 1")
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(hash.flatten())
     }
 }
 

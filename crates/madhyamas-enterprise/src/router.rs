@@ -15,7 +15,10 @@ use axum::{
 use madhyamas_api::AppState;
 use std::sync::Arc;
 
-use crate::{handlers, middleware, AuditLogger, AuthManager, EnterpriseStore, License};
+use crate::{
+    handlers, middleware, AuditLogger, AuthManager, EnterpriseStore, License, Permission,
+    RbacManager, ResourceType,
+};
 
 /// Create the enterprise router (all enterprise endpoints under `/api`).
 ///
@@ -35,6 +38,37 @@ pub fn create_enterprise_router(
     audit: Arc<AuditLogger>,
     license: Option<License>,
 ) -> Router<Arc<AppState>> {
+    let rbac = Arc::new(RbacManager::new());
+
+    // Routes that require admin-level RBAC permission (user management).
+    let user_routes = Router::new()
+        .route("/users", get(handlers::get_users))
+        .route("/users", post(handlers::create_user))
+        .route("/users/{id}", get(handlers::get_user))
+        .route("/users/{id}", put(handlers::update_user))
+        .route("/users/{id}", delete(handlers::delete_user))
+        .layer(from_fn_with_state(
+            middleware::PermissionState {
+                rbac: rbac.clone(),
+                resource_type: ResourceType::Config,
+                permission: Permission::Write,
+            },
+            middleware::require_permission_middleware,
+        ));
+
+    // Audit routes: read for everyone authenticated, clear requires admin.
+    let audit_clear_routes = Router::new().route(
+        "/audit/clear",
+        delete(handlers::clear_audit_events).layer(from_fn_with_state(
+            middleware::PermissionState {
+                rbac: rbac.clone(),
+                resource_type: ResourceType::Config,
+                permission: Permission::Delete,
+            },
+            middleware::require_permission_middleware,
+        )),
+    );
+
     let router = Router::new()
         // Performance & Monitoring
         .route("/metrics", get(handlers::get_metrics))
@@ -51,12 +85,8 @@ pub fn create_enterprise_router(
         .route("/auth/api-keys", get(handlers::get_api_keys))
         .route("/auth/api-keys", post(handlers::create_api_key))
         .route("/auth/api-keys/{id}", delete(handlers::revoke_api_key))
-        // User Management
-        .route("/users", get(handlers::get_users))
-        .route("/users", post(handlers::create_user))
-        .route("/users/{id}", get(handlers::get_user))
-        .route("/users/{id}", put(handlers::update_user))
-        .route("/users/{id}", delete(handlers::delete_user))
+        // User Management (admin-only via RBAC)
+        .merge(user_routes)
         // RBAC
         .route("/rbac/roles", get(handlers::get_roles))
         .route("/rbac/permissions", get(handlers::get_permissions))
@@ -65,7 +95,7 @@ pub fn create_enterprise_router(
         .route("/audit", get(handlers::get_audit_events))
         .route("/audit/stats", get(handlers::get_audit_stats))
         .route("/audit/export", get(handlers::export_audit_events))
-        .route("/audit/clear", delete(handlers::clear_audit_events))
+        .merge(audit_clear_routes)
         // Onboarding
         .route("/onboarding", get(handlers::get_onboarding_status))
         .route(
@@ -86,19 +116,21 @@ pub fn create_enterprise_router(
         .layer(Extension(audit.clone()))
         .layer(Extension(license));
 
-    // Enforce JWT authentication on enterprise routes. The middleware
+    // Enforce JWT/API-key authentication on enterprise routes. The middleware
     // honors `AuthManager::require_auth()`, so it only rejects requests
     // when strict auth is enabled. Public routes (login, refresh,
     // detailed health, license info) and static assets bypass the check
     // inside the middleware (see `is_public_path`).
     //
-    // The store is re-injected as an outer extension layer (applied before
-    // the middleware) so the auth middleware can access it for session idle
-    // timeout checks. In axum, the last `.layer()` is outermost and runs
-    // first; inner `Extension` layers insert their values only after outer
-    // middleware has already executed, so the store must be provided outside
-    // the middleware as well.
+    // The store and audit logger are re-injected as outer extension layers
+    // (applied before the middleware) so the auth middleware can access them
+    // for session idle timeout checks and audit logging. In axum, the last
+    // `.layer()` is outermost and runs first; inner `Extension` layers
+    // insert their values only after outer middleware has already executed,
+    // so the store must be provided outside the middleware as well.
     router
-        .layer(from_fn_with_state(auth, middleware::auth_middleware))
+        .layer(axum::middleware::from_fn(middleware::auth_middleware))
+        .layer(Extension(auth))
+        .layer(Extension(audit))
         .layer(Extension(store))
 }

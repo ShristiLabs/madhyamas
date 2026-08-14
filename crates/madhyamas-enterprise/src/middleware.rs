@@ -2,11 +2,12 @@
 //!
 //! This module provides:
 //! - [`auth_middleware`]: a tower/Axum middleware that validates the
-//!   `Authorization: Bearer <token>` header using [`AuthManager::validate_jwt`]
-//!   and injects the resulting [`JwtClaims`] into request extensions. Requests
-//!   to public paths bypass authentication.
-//! - [`AuthUser`]: an extractor that pulls the authenticated [`JwtClaims`] out
-//!   of request extensions (set by [`auth_middleware`]).
+//!   `Authorization: Bearer <token>` header OR the `X-API-Key` header OR the
+//!   `?api_key=` query parameter, and injects an [`AuthUser`] into request
+//!   extensions. Requests to public paths bypass authentication.
+//! - [`AuthUser`]: an extractor that pulls the authenticated identity (JWT
+//!   claims or API key scopes) out of request extensions (set by
+//!   [`auth_middleware`]).
 //! - [`PermissionState`] / [`require_permission_middleware`]: a middleware
 //!   pair that checks the authenticated user's role has a required
 //!   [`Permission`] via [`RbacManager`]. Apply with
@@ -40,17 +41,18 @@
 //! ```
 
 use axum::{
-    extract::{Request, State},
+    extract::{Query, Request, State},
     http::{header, StatusCode, Uri},
     middleware::Next,
     response::{IntoResponse, Response},
     Extension, Json,
 };
 use madhyamas_api::AppState;
+use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::{
-    AuthManager, EnterpriseStore, JwtClaims, Permission, RbacManager, ResourceType, UserRole,
+    AuthManager, EnterpriseStore, JwtClaims, Permission, RbacManager, ResourceType, Scope, UserRole,
 };
 
 /// Paths that never require authentication. These are matched against the
@@ -66,16 +68,31 @@ const PUBLIC_PATHS: &[&str] = &[
 
 /// Returns true if the request path is exempt from authentication.
 ///
-/// Static web assets (served via the router fallback) are also considered
-/// public — they have no `/api` prefix and are not API endpoints.
+/// This function handles both the full path (e.g. `/api/auth/login`) and
+/// the nested path (e.g. `/auth/login`) because axum's `.nest("/api", ...)`
+/// strips the `/api` prefix before the nested router processes the request.
 fn is_public_path(uri: &Uri) -> bool {
     let path = uri.path();
+    // Check exact matches for both with and without /api prefix.
     if PUBLIC_PATHS.contains(&path) {
         return true;
     }
-    // Anything outside the `/api` namespace is a static asset / web UI route
-    // and does not require a JWT.
-    !path.starts_with("/api/")
+    // Also check without the /api prefix (for nested router context).
+    let stripped = path.strip_prefix("/api/").unwrap_or(path);
+    if PUBLIC_PATHS.contains(&stripped) {
+        return true;
+    }
+    // In the nested router context, all paths start with `/` (the /api
+    // prefix has been stripped). Auth routes like `/auth/login` are public.
+    // Non-API paths (static assets) don't start with `/` in the nested
+    // context, but in the top-level router they don't start with `/api/`.
+    // Since the enterprise router is nested under /api, all its paths
+    // start with `/` after stripping. We consider a path "public" if it
+    // matches a known public path pattern.
+    matches!(
+        stripped,
+        "/health" | "/health/detailed" | "/auth/login" | "/auth/refresh" | "/license"
+    )
 }
 
 /// Build a `401 Unauthorized` JSON response.
@@ -102,38 +119,167 @@ fn forbidden(message: &str) -> Response {
         .into_response()
 }
 
-/// Axum middleware that enforces JWT authentication.
+/// Query params extracted for `?api_key=` support.
+#[derive(Debug, Deserialize)]
+struct ApiKeyQuery {
+    api_key: Option<String>,
+}
+
+/// Determine the required scope for a given HTTP method + path.
 ///
-/// Extracts the `Authorization: Bearer <token>` header, validates it via
-/// [`AuthManager::validate_jwt`], and on success inserts the [`JwtClaims`]
-/// into the request extensions so downstream handlers and extractors (e.g.
-/// [`AuthUser`], [`require_permission_middleware`]) can access the
-/// authenticated user.
+/// Returns `None` for routes that don't map to a scope (e.g. auth routes,
+/// onboarding). The scope format is `<resource>:<permission>` where
+/// `permission` is derived from the HTTP method: GET → `read`,
+/// POST/PUT/PATCH → `write`, DELETE → `delete`.
+pub fn required_scope(method: &axum::http::Method, path: &str) -> Option<Scope> {
+    // Strip /api prefix if present (handles both nested and non-nested paths).
+    let path = path.strip_prefix("/api/").unwrap_or(path);
+    // Auth/onboarding/license routes are not scope-gated.
+    if path.starts_with("/auth/")
+        || path.starts_with("/onboarding")
+        || path == "/license"
+        || path == "/health"
+        || path == "/health/detailed"
+        || path == "/metrics"
+        || path == "/performance"
+    {
+        return None;
+    }
+    let permission = match *method {
+        axum::http::Method::GET => "read",
+        axum::http::Method::POST | axum::http::Method::PUT | axum::http::Method::PATCH => "write",
+        axum::http::Method::DELETE => "delete",
+        _ => "read",
+    };
+    let resource = if path.starts_with("/traffic") || path.starts_with("/sessions") {
+        "traffic"
+    } else if path.starts_with("/mocks") {
+        "mocks"
+    } else if path.starts_with("/rewrites") {
+        "rewrites"
+    } else if path.starts_with("/breakpoints") {
+        "breakpoints"
+    } else if path.starts_with("/throttle") {
+        "throttle"
+    } else if path.starts_with("/blocklist") {
+        "blocklist"
+    } else if path.starts_with("/focus") {
+        "focus"
+    } else if path.starts_with("/scripts") {
+        "scripts"
+    } else if path.starts_with("/plugins") {
+        "plugins"
+    } else if path.starts_with("/config") {
+        "config"
+    } else if path.starts_with("/users") {
+        "users"
+    } else if path.starts_with("/audit") {
+        "audit"
+    } else if path.starts_with("/rbac") {
+        "rbac"
+    } else {
+        return None;
+    };
+    Some(Scope::parse(&format!("{resource}:{permission}")))
+}
+
+/// Check whether any of the granted scopes satisfies the required scope.
+fn scope_authorized(required: &Scope, granted: &[String]) -> bool {
+    granted.iter().any(|g| {
+        let parsed = Scope::parse(g);
+        Scope::matches(required, &parsed)
+    })
+}
+
+/// Axum middleware that enforces authentication via JWT or API key.
 ///
-/// Public paths (see [`PUBLIC_PATHS`]) and non-`/api` static assets bypass
-/// this check entirely.
+/// Authentication is attempted in this order:
+/// 1. `X-API-Key` header → [`AuthManager::validate_api_key`]
+/// 2. `?api_key=` query parameter → [`AuthManager::validate_api_key`]
+/// 3. `Authorization: Bearer <token>` header → [`AuthManager::validate_jwt`]
 ///
-/// Apply with `axum::middleware::from_fn_with_state(auth_manager, auth_middleware)`.
+/// On success, an [`AuthUser`] is inserted into request extensions. For API
+/// key auth, the granted scopes are checked against the route's required
+/// scope (see [`required_scope`]); a mismatch yields `403 Forbidden`.
+///
+/// Public paths (see [`PUBLIC_PATHS`]) bypass this check entirely.
+///
+/// Apply with `axum::middleware::from_fn(auth_middleware)` and ensure
+/// `Extension<Arc<AuthManager>>`, `Extension<Arc<dyn EnterpriseStore>>`,
+/// and `Extension<Arc<AuditLogger>>` are added as outer extension layers.
 pub async fn auth_middleware(
-    State(state): State<Arc<AuthManager>>,
+    Extension(state): Extension<Arc<AuthManager>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
     mut request: Request,
     next: Next,
 ) -> Response {
-    // Public routes and static assets skip authentication.
+    // Public routes skip authentication.
     if is_public_path(request.uri()) {
         return next.run(request).await;
     }
 
-    // When strict auth is not required, let requests through (the auth system
-    // is still available for login/token endpoints). This allows bootstrap
-    // (e.g. creating the first admin user) before any credentials exist.
+    // When strict auth is not required, let requests through. This allows
+    // bootstrap (e.g. creating the first admin user) before any credentials
+    // exist.
     if !state.require_auth() {
         return next.run(request).await;
     }
 
-    // Extract the bearer token, producing an owned value so the immutable
-    // borrow of `request.headers()` is released before we mutate extensions.
+    tracing::debug!(
+        "auth_middleware: path={}, require_auth=true",
+        request.uri().path()
+    );
+
+    let method = request.method().clone();
+    let path = request.uri().path().to_string();
+
+    // 1. Try X-API-Key header.
+    let api_key_header = request
+        .headers()
+        .get("X-API-Key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // 2. Try ?api_key= query param.
+    let api_key_query = if api_key_header.is_none() {
+        Query::<ApiKeyQuery>::try_from_uri(request.uri())
+            .ok()
+            .and_then(|q| q.api_key.clone())
+    } else {
+        None
+    };
+
+    if let Some(key) = api_key_header.or(api_key_query) {
+        match state.validate_api_key(&key).await {
+            Ok(api_key_auth) => {
+                // Scope enforcement for API key auth.
+                if let Some(ref required) = required_scope(&method, &path) {
+                    if !scope_authorized(required, &api_key_auth.scopes) {
+                        return forbidden("Insufficient API key scope");
+                    }
+                }
+                let auth_user = AuthUser {
+                    claims: None,
+                    scopes: Some(api_key_auth.scopes.clone()),
+                    user_id: api_key_auth.user_id.clone(),
+                    role: "user".to_string(),
+                    key_id: Some(api_key_auth.key_id.clone()),
+                    session_id: None,
+                };
+                audit.log(
+                    crate::AuditEvent::new(crate::AuditEventType::Login, "API key authenticated")
+                        .with_user(api_key_auth.user_id.clone())
+                        .with_api_key(api_key_auth.key_id.clone()),
+                );
+                request.extensions_mut().insert(auth_user);
+                return next.run(request).await;
+            }
+            Err(err) => return unauthorized(&err.to_string()),
+        }
+    }
+
+    // 3. Try Authorization: Bearer <token>.
     let token = request
         .headers()
         .get(header::AUTHORIZATION)
@@ -148,11 +294,8 @@ pub async fn auth_middleware(
 
     match state.validate_jwt(&token) {
         Ok(claims) => {
-            // Session idle timeout (Phase 4b.8): if the JWT carries a session
-            // ID, check the session's last_activity in the store. If the
-            // session has been idle longer than the configured timeout,
-            // revoke it and reject the request. On success, update
-            // last_activity to the current time.
+            // Session idle timeout: if the JWT carries a session ID, check
+            // the session's last_activity in the store.
             if let Some(ref sid) = claims.sid {
                 match store.get_session(sid).await {
                     Ok(Some(session)) => {
@@ -173,30 +316,46 @@ pub async fn auth_middleware(
                         let _ = store.update_session_activity(sid).await;
                     }
                     Ok(None) => {
-                        // No persisted session — allow through only when auth
-                        // is not strictly required (already handled above).
-                        // Under strict auth, a missing session means the
-                        // token was issued before session persistence existed
-                        // or the session was cleaned up; reject to be safe.
                         return unauthorized("Session not found");
                     }
                     Err(_) => return unauthorized("Session lookup failed"),
                 }
             }
-            // Inject the validated claims for downstream handlers/extractors.
-            request.extensions_mut().insert(claims);
+            let auth_user = AuthUser {
+                user_id: claims.sub.clone(),
+                role: claims.role.clone(),
+                session_id: claims.sid.clone(),
+                claims: Some(claims),
+                scopes: None,
+                key_id: None,
+            };
+            request.extensions_mut().insert(auth_user);
             next.run(request).await
         }
         Err(err) => unauthorized(&err.to_string()),
     }
 }
 
-/// Extractor that returns the [`JwtClaims`] injected by [`auth_middleware`].
+/// Authenticated user identity injected by [`auth_middleware`].
 ///
-/// Returns a `401` response if no authenticated claims are present (e.g. the
-/// auth middleware did not run or rejected the request).
+/// When authentication was via JWT, `claims` is `Some` and `scopes` is
+/// `None`. When authentication was via API key, `claims` is `None` and
+/// `scopes` is `Some`. The `user_id` and `role` fields are always set.
 #[derive(Debug, Clone)]
-pub struct AuthUser(pub JwtClaims);
+pub struct AuthUser {
+    /// JWT claims, when authenticated via bearer token.
+    pub claims: Option<JwtClaims>,
+    /// API key scopes, when authenticated via API key.
+    pub scopes: Option<Vec<String>>,
+    /// User ID (from JWT `sub` or API key owner).
+    pub user_id: String,
+    /// Role label (from JWT `role` claim, or `"user"` for API keys).
+    pub role: String,
+    /// API key record ID, when authenticated via API key.
+    pub key_id: Option<String>,
+    /// Session ID, when authenticated via JWT with a session claim.
+    pub session_id: Option<String>,
+}
 
 impl axum::extract::FromRequestParts<Arc<AppState>> for AuthUser {
     type Rejection = StatusCode;
@@ -207,18 +366,17 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for AuthUser {
     ) -> Result<Self, Self::Rejection> {
         parts
             .extensions
-            .get::<JwtClaims>()
+            .get::<AuthUser>()
             .cloned()
-            .map(AuthUser)
             .ok_or(StatusCode::UNAUTHORIZED)
     }
 }
 
-/// Parse a [`UserRole`] from the `role` string embedded in JWT claims.
+/// Parse a [`UserRole`] from the `role` string in [`AuthUser`].
 ///
 /// Unknown roles fall back to [`UserRole::ReadOnly`] (least privilege).
-fn role_from_claims(claims: &JwtClaims) -> UserRole {
-    UserRole::from_label(&claims.role)
+fn role_from_auth_user(auth_user: &AuthUser) -> UserRole {
+    UserRole::from_label(&auth_user.role)
 }
 
 /// Middleware state for permission checks via [`require_permission_middleware`].
@@ -235,9 +393,15 @@ pub struct PermissionState {
 /// Middleware that checks the authenticated user's role has the required
 /// permission; otherwise returns `403 Forbidden`.
 ///
-/// Expects [`auth_middleware`] to have run first and injected [`JwtClaims`]
-/// into the request extensions. If no claims are present the request is
+/// Expects [`auth_middleware`] to have run first and injected an [`AuthUser`]
+/// into the request extensions. If no [`AuthUser`] is present the request is
 /// rejected with `401`.
+///
+/// For JWT-authenticated users, the role from the JWT claims is checked
+/// against the RBAC matrix. For API-key-authenticated users, scope
+/// enforcement has already been applied in [`auth_middleware`], so this
+/// middleware allows the request through (the scopes were already validated
+/// against the route's required scope).
 ///
 /// Apply with `axum::middleware::from_fn_with_state(state, require_permission_middleware)`.
 pub async fn require_permission_middleware(
@@ -245,11 +409,16 @@ pub async fn require_permission_middleware(
     request: Request,
     next: Next,
 ) -> Response {
-    let Some(claims) = request.extensions().get::<JwtClaims>() else {
+    let Some(auth_user) = request.extensions().get::<AuthUser>() else {
         return unauthorized("Authentication required");
     };
 
-    let role = role_from_claims(claims);
+    // API key auth: scope already enforced in auth_middleware.
+    if auth_user.scopes.is_some() {
+        return next.run(request).await;
+    }
+
+    let role = role_from_auth_user(auth_user);
     if state
         .rbac
         .has_permission(&role, state.resource_type, state.permission)

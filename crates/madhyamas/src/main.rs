@@ -933,7 +933,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         });
         let auth_config = madhyamas_enterprise::AuthConfig {
             enabled: args.enable_auth,
-            jwt_secret,
+            jwt_secret: jwt_secret.clone(),
             ..madhyamas_enterprise::AuthConfig::default()
         };
         // Phase 3: Ed25519 license verification. If --license-file is
@@ -1004,14 +1004,28 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         let enterprise = madhyamas_enterprise::EnterpriseState::new(auth_config)
             .with_store(store.clone())
             .with_license(license);
+        // Wire the store into AuthManager (for API key validation) and
+        // AuditLogger (for persistent audit events + hash chain).
+        let auth = std::sync::Arc::new(
+            madhyamas_enterprise::AuthManager::new(madhyamas_enterprise::AuthConfig {
+                enabled: args.enable_auth,
+                require_auth: args.enable_auth,
+                jwt_secret: jwt_secret.clone(),
+                ..madhyamas_enterprise::AuthConfig::default()
+            })
+            .with_store(store.clone()),
+        );
+        let audit = std::sync::Arc::new(
+            madhyamas_enterprise::AuditLogger::default().with_store(store.clone()),
+        );
         let api_state = api_state
-            .with_auth_provider(enterprise.auth.clone())
+            .with_auth_provider(auth.clone())
             .with_authorizer(enterprise.rbac.clone())
-            .with_audit_sink(enterprise.audit.clone());
+            .with_audit_sink(audit.clone());
         let router = madhyamas_enterprise::create_enterprise_router(
             store,
-            enterprise.auth.clone(),
-            enterprise.audit.clone(),
+            auth.clone(),
+            audit.clone(),
             enterprise.license.clone(),
         );
         (api_state, Some(router))

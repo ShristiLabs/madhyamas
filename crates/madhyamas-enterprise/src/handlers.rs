@@ -21,7 +21,8 @@ use crate::audit::{AuditEventType, AuditFilter};
 use crate::credentials::{hash_password, verify_password};
 use crate::store::{ApiKeyRecord, AuthSession, EnterpriseStore, UserUpdate};
 use crate::{
-    ApiKey, AuditEvent, AuthManager, JwtClaims, License, Permission, User, UserRole, UserStatus,
+    ApiKey, AuditEvent, AuthManager, JwtClaims, License, Permission, RbacManager, ResourceType,
+    User, UserRole, UserStatus,
 };
 
 // ============== Stub Types ==============
@@ -359,7 +360,7 @@ pub async fn logout(
     Extension(audit): Extension<Arc<crate::AuditLogger>>,
     claims: axum::Extension<crate::middleware::AuthUser>,
 ) -> Result<StatusCode, StatusCode> {
-    if let Some(sid) = &claims.0 .0.sid {
+    if let Some(ref sid) = claims.session_id {
         store
             .revoke_session(sid)
             .await
@@ -367,7 +368,7 @@ pub async fn logout(
     }
     audit.log(
         AuditEvent::new(AuditEventType::Logout, "user logged out")
-            .with_user(claims.0 .0.sub.clone()),
+            .with_user(claims.user_id.clone()),
     );
     Ok(StatusCode::OK)
 }
@@ -379,7 +380,7 @@ pub async fn get_current_user(
     claims: axum::Extension<crate::middleware::AuthUser>,
 ) -> Result<Json<UserInfo>, StatusCode> {
     let user = store
-        .get_user(&claims.0 .0.sub)
+        .get_user(&claims.user_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -462,7 +463,7 @@ pub async fn get_api_keys(
     claims: axum::Extension<crate::middleware::AuthUser>,
 ) -> Result<Json<Vec<ApiKey>>, StatusCode> {
     let records = store
-        .list_api_keys(&claims.0 .0.sub)
+        .list_api_keys(&claims.user_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(
@@ -487,6 +488,7 @@ pub async fn get_api_keys(
                         .ok()
                         .map(|dt| dt.with_timezone(&chrono::Utc).timestamp())
                 }),
+                scopes: serde_json::from_str(&r.scopes).unwrap_or_default(),
             })
             .collect(),
     ))
@@ -495,28 +497,32 @@ pub async fn get_api_keys(
 #[derive(Debug, Deserialize)]
 pub struct CreateApiKeyRequest {
     pub name: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
     pub expires_in_days: Option<i64>,
 }
 
-/// Create new API key. Generates a key, persists a hashed record, and returns
-/// the plaintext key once to the caller.
+/// Create new API key. Generates a key, hashes it with SHA-256, persists the
+/// record with scopes, and returns the plaintext key once to the caller.
 pub async fn create_api_key(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
     claims: axum::Extension<crate::middleware::AuthUser>,
     Json(req): Json<CreateApiKeyRequest>,
 ) -> Result<Json<ApiKey>, StatusCode> {
-    let api_key = ApiKey::generate(&claims.0 .0.sub, &req.name);
+    let api_key = ApiKey::generate(&claims.user_id, &req.name);
     let now = chrono::Utc::now();
     let expires_at = req.expires_in_days.map(|d| now + chrono::Duration::days(d));
-    let key_hash = hash_password(&api_key.key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let key_hash = crate::auth::hash_api_key(&api_key.key);
+    let scopes_json = serde_json::to_string(&req.scopes).unwrap_or_else(|_| "[]".into());
     let record = ApiKeyRecord {
         id: api_key.id.clone(),
         user_id: api_key.user_id.clone(),
         name: api_key.name.clone(),
         key_hash,
         key_prefix: api_key.key.chars().take(12).collect(),
-        scopes: "[]".to_string(),
+        scopes: scopes_json,
         expires_at: expires_at.map(|t| t.to_rfc3339()),
         last_used_at: None,
         created_at: now.to_rfc3339(),
@@ -525,19 +531,33 @@ pub async fn create_api_key(
         .create_api_key(&record)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(api_key))
+    let mut response_key = api_key.clone();
+    response_key.scopes = req.scopes.clone();
+    audit.log(
+        AuditEvent::new(AuditEventType::ApiKeyCreated, "API key created")
+            .with_user(claims.user_id.clone())
+            .with_metadata("key_name", serde_json::json!(req.name)),
+    );
+    Ok(Json(response_key))
 }
 
 /// Revoke API key
 pub async fn revoke_api_key(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
     Path(key_id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     store
         .revoke_api_key(&key_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit.log(
+        AuditEvent::new(AuditEventType::ApiKeyRevoked, "API key revoked")
+            .with_user(claims.user_id.clone())
+            .with_metadata("key_id", serde_json::json!(key_id)),
+    );
     Ok(StatusCode::OK)
 }
 
@@ -585,6 +605,7 @@ pub struct CreateUserRequest {
 pub async fn create_user(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
     Json(req): Json<CreateUserRequest>,
 ) -> Result<Json<User>, StatusCode> {
     if store
@@ -609,6 +630,11 @@ pub async fn create_user(
         .create_user(&user, &password_hash)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit.log(
+        AuditEvent::new(AuditEventType::Custom, "user created")
+            .with_metadata("username", serde_json::json!(req.username))
+            .with_metadata("user_id", serde_json::json!(user.id)),
+    );
     Ok(Json(user))
 }
 
@@ -626,6 +652,7 @@ pub struct UpdateUserRequest {
 pub async fn update_user(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
     Path(user_id): Path<String>,
     Json(req): Json<UpdateUserRequest>,
 ) -> Result<Json<User>, StatusCode> {
@@ -661,6 +688,10 @@ pub async fn update_user(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    audit.log(
+        AuditEvent::new(AuditEventType::Custom, "user updated")
+            .with_metadata("user_id", serde_json::json!(user_id)),
+    );
     Ok(Json(user))
 }
 
@@ -668,12 +699,17 @@ pub async fn update_user(
 pub async fn delete_user(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
     Path(user_id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     store
         .delete_user(&user_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit.log(
+        AuditEvent::new(AuditEventType::Custom, "user deleted")
+            .with_metadata("user_id", serde_json::json!(user_id)),
+    );
     Ok(StatusCode::OK)
 }
 
@@ -681,29 +717,135 @@ pub async fn delete_user(
 // RBAC Handlers
 // ============================================================================
 
-/// Get all roles
+/// Get all roles with their permissions from the RBAC matrix.
 pub async fn get_roles(State(_state): State<Arc<AppState>>) -> Json<Vec<Role>> {
-    Json(Vec::new())
+    let rbac = RbacManager::new();
+    let roles = vec![
+        UserRole::Admin,
+        UserRole::User,
+        UserRole::Viewer,
+        UserRole::ReadOnly,
+    ];
+    Json(
+        roles
+            .into_iter()
+            .map(|role| {
+                let perms: Vec<String> = rbac
+                    .get_permissions(&role)
+                    .into_iter()
+                    .map(|(rt, p)| format!("{:?}:{:?}", rt, p))
+                    .collect();
+                Role {
+                    name: role.as_label().to_string(),
+                    description: role_description(&role),
+                    permissions: perms,
+                }
+            })
+            .collect(),
+    )
 }
 
-/// Get all permissions
-pub async fn get_permissions(State(_state): State<Arc<AppState>>) -> Json<Vec<Permission>> {
-    Json(Vec::new())
+fn role_description(role: &UserRole) -> String {
+    match role {
+        UserRole::Admin => "Full access to all resources and administrative actions".to_string(),
+        UserRole::User => {
+            "Read and write access to traffic, mocks, rewrites, breakpoints".to_string()
+        }
+        UserRole::Viewer => "Read-only access to all resources".to_string(),
+        UserRole::ReadOnly => "Read-only access (same as viewer)".to_string(),
+    }
+}
+
+/// Get all permissions for a given role (query param `?role=<label>`).
+/// If no role is specified, returns all known permission labels.
+pub async fn get_permissions(
+    State(_state): State<Arc<AppState>>,
+    Query(query): Query<PermissionQuery>,
+) -> Json<Vec<String>> {
+    let rbac = RbacManager::new();
+    if let Some(ref role_label) = query.role {
+        let role = UserRole::from_label(role_label);
+        let perms: Vec<String> = rbac
+            .get_permissions(&role)
+            .into_iter()
+            .map(|(rt, p)| format!("{:?}:{:?}", rt, p))
+            .collect();
+        return Json(perms);
+    }
+    // No role specified — return the full set of distinct permission labels.
+    let mut all: Vec<String> = Vec::new();
+    for role in [
+        UserRole::Admin,
+        UserRole::User,
+        UserRole::Viewer,
+        UserRole::ReadOnly,
+    ] {
+        for (rt, p) in rbac.get_permissions(&role) {
+            let label = format!("{:?}:{:?}", rt, p);
+            if !all.contains(&label) {
+                all.push(label);
+            }
+        }
+    }
+    Json(all)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PermissionQuery {
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CheckPermissionRequest {
     pub user_id: String,
+    pub resource: String,
     pub permission: String,
-    pub resource: Option<String>,
 }
 
-/// Check if user has permission
+/// Check if a user has a permission. Looks up the user's role from the store
+/// and checks it against the RBAC matrix.
 pub async fn check_permission(
     State(_state): State<Arc<AppState>>,
-    Json(_req): Json<CheckPermissionRequest>,
-) -> Json<bool> {
-    Json(false)
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Json(req): Json<CheckPermissionRequest>,
+) -> Result<Json<bool>, StatusCode> {
+    let user = store
+        .get_user(&req.user_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let rbac = RbacManager::new();
+    let resource_type = parse_resource_type(&req.resource);
+    let permission = parse_permission(&req.permission);
+    let (rt, perm) = match (resource_type, permission) {
+        (Some(rt), Some(p)) => (rt, p),
+        _ => return Ok(Json(false)),
+    };
+    Ok(Json(rbac.has_permission(&user.role, rt, perm)))
+}
+
+fn parse_resource_type(s: &str) -> Option<ResourceType> {
+    match s.to_lowercase().as_str() {
+        "traffic" => Some(ResourceType::Traffic),
+        "session" => Some(ResourceType::Session),
+        "mock" => Some(ResourceType::Mock),
+        "rewrite" => Some(ResourceType::Rewrite),
+        "breakpoint" => Some(ResourceType::Breakpoint),
+        "script" => Some(ResourceType::Script),
+        "plugin" => Some(ResourceType::Plugin),
+        "config" => Some(ResourceType::Config),
+        _ => None,
+    }
+}
+
+fn parse_permission(s: &str) -> Option<Permission> {
+    match s.to_lowercase().as_str() {
+        "read" => Some(Permission::Read),
+        "write" => Some(Permission::Write),
+        "delete" => Some(Permission::Delete),
+        "execute" => Some(Permission::Execute),
+        _ => None,
+    }
 }
 
 // ============================================================================

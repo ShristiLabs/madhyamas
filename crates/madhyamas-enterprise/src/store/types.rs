@@ -124,6 +124,10 @@ pub struct AuditEventRecord {
     pub description: String,
     pub metadata: String,
     pub prev_hash: Option<String>,
+    /// This event's own hash (SHA-256 of canonical fields + prev_hash).
+    /// Populated by [`crate::AuditLogger`] before persistence.
+    #[sqlx(default)]
+    pub hash: Option<String>,
 }
 
 impl From<AuditEventRecord> for AuditEvent {
@@ -143,6 +147,7 @@ impl From<AuditEventRecord> for AuditEvent {
             description: r.description,
             metadata,
             prev_hash: r.prev_hash,
+            hash: r.hash,
         }
     }
 }
@@ -160,6 +165,7 @@ impl From<&AuditEvent> for AuditEventRecord {
             description: e.description.clone(),
             metadata,
             prev_hash: e.prev_hash.clone(),
+            hash: e.hash.clone(),
         }
     }
 }

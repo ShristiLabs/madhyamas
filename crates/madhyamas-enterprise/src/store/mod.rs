@@ -75,4 +75,8 @@ pub trait EnterpriseStore: Send + Sync {
     async fn query_audit_events(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>>;
     async fn get_audit_stats(&self) -> Result<AuditStats>;
     async fn clear_audit_events(&self) -> Result<()>;
+    /// Fetch the `hash` of the most recently logged audit event, or `None`
+    /// if the table is empty. Used by the hash-chain computation in
+    /// [`crate::AuditLogger`].
+    async fn get_latest_audit_hash(&self) -> Result<Option<String>>;
 }
