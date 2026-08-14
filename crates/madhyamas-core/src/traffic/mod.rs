@@ -1,7 +1,7 @@
 //! Traffic storage and management
 
 mod events;
-mod store;
+pub(crate) mod store;
 mod types;
 
 pub use events::{

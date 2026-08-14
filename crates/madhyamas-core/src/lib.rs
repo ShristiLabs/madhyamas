@@ -128,6 +128,10 @@ pub use performance::{
 // Re-exports from storage (Phase 2b async backend traits)
 #[cfg(feature = "plugins")]
 pub use storage::PluginStoreBackend;
+#[cfg(feature = "plugins")]
+pub use storage::PostgresPluginStore;
+#[cfg(feature = "scripting")]
+pub use storage::PostgresScriptStore;
 #[cfg(feature = "scripting")]
 pub use storage::ScriptStoreBackend;
 #[cfg(feature = "plugins")]
@@ -135,8 +139,8 @@ pub use storage::SqlitePluginStore;
 #[cfg(feature = "scripting")]
 pub use storage::SqliteScriptStore;
 pub use storage::{
-    ConfigStoreBackend, InterceptStoreBackend, SqliteConfigStore, SqliteInterceptStore,
-    TrafficStoreBackend,
+    ConfigStoreBackend, InterceptStoreBackend, PostgresConfigStore, PostgresInterceptStore,
+    PostgresTrafficStore, SqliteConfigStore, SqliteInterceptStore, TrafficStoreBackend,
 };
 
 /// Result type

@@ -528,7 +528,7 @@ impl TrafficStore {
         )
         .bind(&session_id)
         .bind(count as i64)
-        .map(|row| row.try_get::<String, _>(0).unwrap_or_default())
+        .map(|row: sqlx::sqlite::SqliteRow| row.try_get::<String, _>(0).unwrap_or_default())
         .fetch_all(&self.pool)
         .await?;
 
@@ -581,7 +581,7 @@ impl TrafficStore {
              ORDER BY r.timestamp ASC",
         )
         .bind(&session_id)
-        .map(|row| {
+        .map(|row: sqlx::sqlite::SqliteRow| {
             (
                 row.try_get::<String, _>(0).unwrap_or_default(),
                 row.try_get::<i64, _>(1).unwrap_or(0),
@@ -1472,7 +1472,10 @@ async fn delete_requests_and_responses(pool: &SqlitePool, ids: &[String]) -> cra
 /// Convert a single HAR `log.entries[]` object into a [`TrafficEntry`]
 /// belonging to `session_id`. Returns an error when the entry is missing
 /// the required `request` object.
-fn convert_har_entry(entry: &serde_json::Value, session_id: &str) -> crate::Result<TrafficEntry> {
+pub(crate) fn convert_har_entry(
+    entry: &serde_json::Value,
+    session_id: &str,
+) -> crate::Result<TrafficEntry> {
     let request = entry
         .get("request")
         .ok_or_else(|| Error::Config("HAR entry missing 'request' field".to_string()))?;
@@ -1580,7 +1583,7 @@ fn convert_har_entry(entry: &serde_json::Value, session_id: &str) -> crate::Resu
 ///
 /// Uses the `url` crate when the string is a valid absolute URL; otherwise
 /// falls back to a simple manual split on the first `/` after the host.
-fn parse_url(url: &str) -> (String, String) {
+pub(crate) fn parse_url(url: &str) -> (String, String) {
     if let Ok(parsed) = url::Url::parse(url) {
         let host = parsed.host_str().unwrap_or("").to_string();
         let path = if let Some(query) = parsed.query() {
@@ -1610,7 +1613,7 @@ fn parse_url(url: &str) -> (String, String) {
 
 /// Convert a HAR `httpVersion` string (e.g. `"HTTP/1.1"`, `"http/2.0"`) into
 /// the canonical form used by Madhyamas (`"HTTP/1.1"`, `"HTTP/2"`).
-fn normalize_http_version(version: &str) -> String {
+pub(crate) fn normalize_http_version(version: &str) -> String {
     let upper = version.to_uppercase();
     match upper.as_str() {
         "HTTP/1.0" | "HTTP/1" => "HTTP/1.0".to_string(),
@@ -1623,7 +1626,7 @@ fn normalize_http_version(version: &str) -> String {
 
 /// Parse a HAR `headers` array (`[{"name":..,"value":..}, ...]`) into a
 /// `HashMap<String, String>`. Malformed entries are silently skipped.
-fn parse_har_headers(headers: Option<&serde_json::Value>) -> HashMap<String, String> {
+pub(crate) fn parse_har_headers(headers: Option<&serde_json::Value>) -> HashMap<String, String> {
     let mut map = HashMap::new();
     if let Some(arr) = headers.and_then(|h| h.as_array()) {
         for h in arr {
@@ -1641,7 +1644,7 @@ fn parse_har_headers(headers: Option<&serde_json::Value>) -> HashMap<String, Str
 }
 
 /// Look up a header value case-insensitively.
-fn header_value(headers: &HashMap<String, String>, name: &str) -> Option<String> {
+pub(crate) fn header_value(headers: &HashMap<String, String>, name: &str) -> Option<String> {
     headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case(name))
@@ -1650,7 +1653,7 @@ fn header_value(headers: &HashMap<String, String>, name: &str) -> Option<String>
 
 /// Parse a HAR request `postData` object into an optional byte body.
 /// Handles `encoding: "base64"` for binary payloads.
-fn parse_har_post_data(post_data: Option<&serde_json::Value>) -> Option<Vec<u8>> {
+pub(crate) fn parse_har_post_data(post_data: Option<&serde_json::Value>) -> Option<Vec<u8>> {
     let pd = post_data?;
     let text = pd.get("text").and_then(|t| t.as_str())?;
     let encoding = pd.get("encoding").and_then(|e| e.as_str()).unwrap_or("");
@@ -1667,7 +1670,7 @@ fn parse_har_post_data(post_data: Option<&serde_json::Value>) -> Option<Vec<u8>>
 
 /// Parse a HAR response `content` object into an optional byte body.
 /// Handles `encoding: "base64"` for binary payloads.
-fn parse_har_content(content: Option<&serde_json::Value>) -> Option<Vec<u8>> {
+pub(crate) fn parse_har_content(content: Option<&serde_json::Value>) -> Option<Vec<u8>> {
     let content = content?;
     let text = content.get("text").and_then(|t| t.as_str())?;
     let encoding = content

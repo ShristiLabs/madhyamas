@@ -21,8 +21,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+pub mod postgres;
 pub mod sqlite;
 
+#[cfg(feature = "plugins")]
+pub use postgres::PostgresPluginStore;
+#[cfg(feature = "scripting")]
+pub use postgres::PostgresScriptStore;
+pub use postgres::{PostgresConfigStore, PostgresInterceptStore, PostgresTrafficStore};
 #[cfg(feature = "plugins")]
 pub use sqlite::SqlitePluginStore;
 #[cfg(feature = "scripting")]
