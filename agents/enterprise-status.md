@@ -13,7 +13,10 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 1d | #32 | done | skipped | approved | done | committed (6948ac6) | done |
 | 1e | #33 | done | skipped | approved | done (routes verified) | committed (8f3229c) | done |
 | 2a | #34 | done | skipped | approved | done (handlers return real data) | committed (e960a8b) | done |
-| 2b | #35 | — | — | — | — | — | pending |
+| 2b | #35 | done | skipped | approved | done (additive, 487 tests unchanged) | committed (da155fb) | done |
+| 2c-1 Config | #36 | done | skipped | approved | done (both builds green) | committed (ebe5426) | done |
+| 2c-2 Intercept | #36 | done | skipped | approved | done (both builds green, intercept pipeline async) | committed (5a0f131) | done |
+| 2c-3 Plugin+Script | #36 | — | — | — | — | — | pending |
 
 ## Agent Log
 
