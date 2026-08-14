@@ -25,6 +25,7 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 4c API key scopes | #41 | done | skipped | approved | done (SHA-256 hash, X-API-Key, scope matching, 7 tests) | committed (64f5207) | done |
 | 4d RBAC enforcement | #42 | done | skipped | approved | done (role→permission matrix, require_permission middleware, 3 tests) | committed (0554b2c) | done |
 | 4e Audit persistence | #43 | done | skipped | approved | done (store-backed, SHA-256 hash chain, tamper detection, 4 tests) | committed (08000ab) | done |
+| 5 PostgreSQL backends | #44 | done | skipped | approved | done (6 Pg stores, --database-url, advisory lock, 7 Pg tests pass) | committed (78e7766, d2c98ca) | done |
 
 ## Agent Log
 
