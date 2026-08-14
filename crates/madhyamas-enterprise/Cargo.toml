@@ -31,6 +31,7 @@ base64.workspace = true
 argon2.workspace = true
 password-hash.workspace = true
 rand.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 # OS RNG for Ed25519 keypair generation in license tests.

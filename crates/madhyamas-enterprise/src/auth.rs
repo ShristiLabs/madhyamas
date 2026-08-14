@@ -3,13 +3,16 @@
 //! Supports API keys and JWT tokens
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use madhyamas_api::auth::{AuthError, AuthMethod, AuthProvider, Identity};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::enterprise_error::EnterpriseError;
+use super::store::EnterpriseStore;
 
 /// Authentication configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,14 +94,17 @@ pub struct ApiKey {
     pub is_active: bool,
     /// Last used timestamp
     pub last_used: Option<i64>,
+    /// Scopes granted to this key (e.g. `["traffic:read"]`).
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 impl ApiKey {
-    /// Generate a new API key
+    /// Generate a new API key with the `madhyamas_` prefix and 32 hex chars.
     pub fn generate(user_id: &str, name: &str) -> Self {
         let id = uuid::Uuid::new_v4().to_string();
         let key = format!(
-            "mad_{}",
+            "madhyamas_{}",
             uuid::Uuid::new_v4().simple().to_string().replace('-', "")
         );
         let now = chrono::Utc::now().timestamp();
@@ -112,6 +118,7 @@ impl ApiKey {
             expires_at: None,
             is_active: true,
             last_used: None,
+            scopes: Vec::new(),
         }
     }
 
@@ -129,6 +136,80 @@ impl ApiKey {
 
         true
     }
+}
+
+/// Result of validating an API key: carries the owner, granted scopes, and
+/// key ID for downstream scope enforcement and audit logging.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyAuth {
+    /// User ID that owns the key.
+    pub user_id: String,
+    /// Scopes granted to this key (e.g. `["traffic:read"]`).
+    pub scopes: Vec<String>,
+    /// Key record ID (for audit logging / last-used updates).
+    pub key_id: String,
+}
+
+/// A parsed scope string of the form `<resource>:<permission>`.
+///
+/// Both halves support `*` as a wildcard. `*:*` (or just `*`) grants all
+/// scopes. Scopes are only enforced for API-key-authenticated requests;
+/// JWT users are authorized via RBAC roles instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scope {
+    /// Resource name (e.g. `traffic`, `mocks`, `*`).
+    pub resource: String,
+    /// Permission name (e.g. `read`, `write`, `*`).
+    pub permission: String,
+}
+
+impl Scope {
+    /// Parse a scope string `"<resource>:<permission>"` into a [`Scope`].
+    ///
+    /// A bare `"*"` is treated as `"*:*"`. Invalid scopes (empty halves,
+    /// missing colon) return a [`Scope`] with empty strings — callers should
+    /// validate via [`Scope::is_valid`] before relying on the fields.
+    pub fn parse(s: &str) -> Self {
+        let trimmed = s.trim();
+        if trimmed == "*" {
+            return Self {
+                resource: "*".to_string(),
+                permission: "*".to_string(),
+            };
+        }
+        let (resource, permission) = match trimmed.split_once(':') {
+            Some((r, p)) => (r.to_string(), p.to_string()),
+            None => (trimmed.to_string(), String::new()),
+        };
+        Self {
+            resource,
+            permission,
+        }
+    }
+
+    /// Whether this scope has non-empty resource and permission halves.
+    pub fn is_valid(&self) -> bool {
+        !self.resource.is_empty() && !self.permission.is_empty()
+    }
+
+    /// Check whether `granted` satisfies `required`. A `*` in either half of
+    /// the granted scope matches any value in the corresponding required half.
+    pub fn matches(required: &Scope, granted: &Scope) -> bool {
+        let resource_ok = granted.resource == "*" || granted.resource == required.resource;
+        let permission_ok = granted.permission == "*" || granted.permission == required.permission;
+        resource_ok && permission_ok
+    }
+}
+
+/// Hash a plaintext API key with SHA-256 and return the hex digest.
+///
+/// API keys are high-entropy random tokens, so SHA-256 is sufficient (unlike
+/// passwords, which use Argon2id). SHA-256 is fast enough for per-request
+/// validation.
+pub fn hash_api_key(key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 /// JWT Claims
@@ -215,16 +296,23 @@ impl RefreshTokenClaims {
 }
 
 /// Authentication manager
-#[derive(Debug)]
 pub struct AuthManager {
     /// Configuration
     config: AuthConfig,
-    /// API keys by key value
-    api_keys: RwLock<HashMap<String, ApiKey>>,
-    /// API keys by user ID
-    user_keys: RwLock<HashMap<String, Vec<String>>>,
     /// Active sessions (session ID -> user ID)
     sessions: RwLock<HashMap<String, String>>,
+    /// Persistent enterprise store for API key validation (Phase 4c).
+    store: Option<Arc<dyn EnterpriseStore>>,
+}
+
+impl std::fmt::Debug for AuthManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthManager")
+            .field("config", &self.config)
+            .field("sessions", &self.sessions)
+            .field("store", &self.store.is_some())
+            .finish()
+    }
 }
 
 impl AuthManager {
@@ -232,10 +320,15 @@ impl AuthManager {
     pub fn new(config: AuthConfig) -> Self {
         Self {
             config,
-            api_keys: RwLock::new(HashMap::new()),
-            user_keys: RwLock::new(HashMap::new()),
             sessions: RwLock::new(HashMap::new()),
+            store: None,
         }
+    }
+
+    /// Attach a persistent enterprise store for API key validation.
+    pub fn with_store(mut self, store: Arc<dyn EnterpriseStore>) -> Self {
+        self.store = Some(store);
+        self
     }
 
     /// Check if authentication is enabled
@@ -250,73 +343,52 @@ impl AuthManager {
         self.config.require_auth
     }
 
-    /// Validate an API key
-    pub fn validate_api_key(&self, key: &str) -> Result<String, EnterpriseError> {
-        let keys = self.api_keys.read();
-        let api_key = keys.get(key).ok_or_else(|| EnterpriseError::AuthFailed {
-            message: "Invalid API key".to_string(),
-        })?;
-
-        if !api_key.is_valid() {
-            return Err(EnterpriseError::AuthFailed {
-                message: "API key expired or inactive".to_string(),
-            });
-        }
-
-        // Update last used
-        let mut keys = self.api_keys.write();
-        if let Some(k) = keys.get_mut(key) {
-            k.last_used = Some(chrono::Utc::now().timestamp());
-        }
-
-        Ok(api_key.user_id.clone())
-    }
-
-    /// Create a new API key for a user
-    pub fn create_api_key(&self, user_id: &str, name: &str) -> ApiKey {
-        let api_key = ApiKey::generate(user_id, name);
-
-        // Store by key value
-        self.api_keys
-            .write()
-            .insert(api_key.key.clone(), api_key.clone());
-
-        // Store by user ID
-        self.user_keys
-            .write()
-            .entry(user_id.to_string())
-            .or_default()
-            .push(api_key.id.clone());
-
-        api_key
-    }
-
-    /// Revoke an API key
-    pub fn revoke_api_key(&self, key_id: &str) -> Result<(), EnterpriseError> {
-        let mut keys = self.api_keys.write();
-        let api_key = keys
-            .remove(key_id)
+    /// Validate an API key against the persistent store.
+    ///
+    /// Hashes the input with SHA-256, looks up the record by hash, checks
+    /// expiry, fire-and-forgets a `last_used` update, and returns the owner
+    /// user ID plus granted scopes. Returns `AuthFailed` if the key is
+    /// unknown, expired, or no store is configured.
+    pub async fn validate_api_key(&self, key: &str) -> Result<ApiKeyAuth, EnterpriseError> {
+        let store = self
+            .store
+            .as_ref()
             .ok_or_else(|| EnterpriseError::AuthFailed {
-                message: "API key not found".to_string(),
+                message: "API key validation requires a persistent store".to_string(),
             })?;
-
-        // Remove from user's keys
-        if let Some(user_keys) = self.user_keys.write().get_mut(&api_key.user_id) {
-            user_keys.retain(|id| id != key_id);
+        let hash = hash_api_key(key);
+        let record = store
+            .get_api_key_by_hash(&hash)
+            .await
+            .map_err(|e| EnterpriseError::AuthFailed {
+                message: format!("API key lookup failed: {e}"),
+            })?
+            .ok_or_else(|| EnterpriseError::AuthFailed {
+                message: "Invalid API key".to_string(),
+            })?;
+        if let Some(ref expires_str) = record.expires_at {
+            if let Ok(expires) = chrono::DateTime::parse_from_rfc3339(expires_str) {
+                if chrono::Utc::now() > expires.with_timezone(&chrono::Utc) {
+                    return Err(EnterpriseError::AuthFailed {
+                        message: "API key expired".to_string(),
+                    });
+                }
+            }
         }
-
-        Ok(())
-    }
-
-    /// Get all API keys for a user
-    pub fn get_user_api_keys(&self, user_id: &str) -> Vec<ApiKey> {
-        let user_keys = self.user_keys.read();
-        let keys = self.api_keys.read();
-
-        user_keys
-            .get(user_id)
-            .map(|ids| ids.iter().filter_map(|id| keys.get(id).cloned()).collect())
-            .unwrap_or_default()
+        let scopes: Vec<String> = serde_json::from_str(&record.scopes).unwrap_or_default();
+        let key_id = record.id.clone();
+        let user_id = record.user_id.clone();
+        // Fire-and-forget last-used update — don't block the request.
+        let store_clone = Arc::clone(store);
+        let kid = key_id.clone();
+        tokio::spawn(async move {
+            let _ = store_clone.update_api_key_last_used(&kid).await;
+        });
+        Ok(ApiKeyAuth {
+            user_id,
+            scopes,
+            key_id,
+        })
     }
 
     /// Generate a JWT access token for a user using HMAC-SHA256 signing.
@@ -478,14 +550,14 @@ impl AuthProvider for AuthManager {
     }
 
     async fn validate_api_key(&self, key: &str) -> Result<Identity, AuthError> {
-        let user_id = self.validate_api_key(key)?;
+        let auth = self.validate_api_key(key).await?;
         Ok(Identity {
-            user_id: user_id.clone(),
-            username: user_id,
+            user_id: auth.user_id.clone(),
+            username: auth.user_id,
             role: "user".to_string(),
             email: None,
             display_name: None,
-            api_key_id: Some(key.to_string()),
+            api_key_id: Some(auth.key_id),
             session_id: None,
             status: Some("active".to_string()),
             method: AuthMethod::ApiKey,
@@ -510,12 +582,20 @@ impl AuthProvider for AuthManager {
     }
 
     async fn create_api_key(&self, user_id: &str, name: &str) -> Result<String, AuthError> {
-        let api_key = self.create_api_key(user_id, name);
+        let api_key = ApiKey::generate(user_id, name);
         Ok(api_key.key)
     }
 
     async fn revoke_api_key(&self, key_id: &str) -> Result<(), AuthError> {
-        self.revoke_api_key(key_id).map_err(From::from)
+        let store = self.store.as_ref().ok_or_else(|| AuthError::AuthFailed {
+            message: "API key revocation requires a persistent store".to_string(),
+        })?;
+        store
+            .revoke_api_key(key_id)
+            .await
+            .map_err(|e| AuthError::AuthFailed {
+                message: format!("revoke failed: {e}"),
+            })
     }
 }
 
@@ -596,5 +676,134 @@ mod tests {
         assert!(mgr.validate_refresh_token(&access).is_err());
         // Refresh token is rejected by validate_jwt (wrong typ).
         assert!(mgr.validate_jwt(&refresh).is_err());
+    }
+
+    // ---- Phase 4c: API key scopes + store-backed validation ----
+
+    async fn test_store() -> Arc<dyn EnterpriseStore> {
+        let pool = sqlx::SqlitePool::connect(":memory:")
+            .await
+            .expect("open in-memory pool");
+        Arc::new(
+            crate::store::SqliteEnterpriseStore::new(pool)
+                .await
+                .expect("init store"),
+        )
+    }
+
+    async fn seed_user(store: &Arc<dyn EnterpriseStore>) -> String {
+        let user = crate::user::User::new(
+            "u-test".to_string(),
+            "testuser".to_string(),
+            None,
+            crate::user::UserRole::Admin,
+            "testuser".to_string(),
+            crate::user::UserStatus::Active,
+        );
+        store
+            .create_user(&user, "$argon2id$stub")
+            .await
+            .expect("create user");
+        user.id
+    }
+
+    #[tokio::test]
+    async fn test_api_key_create_and_validate() {
+        let store = test_store().await;
+        let uid = seed_user(&store).await;
+        let mgr = test_manager().with_store(store.clone());
+
+        let api_key = ApiKey::generate(&uid, "test-key");
+        let hash = hash_api_key(&api_key.key);
+        let record = crate::store::ApiKeyRecord {
+            id: api_key.id.clone(),
+            user_id: uid.clone(),
+            name: api_key.name.clone(),
+            key_hash: hash,
+            key_prefix: api_key.key.chars().take(12).collect(),
+            scopes: serde_json::to_string(&["traffic:read"]).unwrap(),
+            expires_at: None,
+            last_used_at: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        store.create_api_key(&record).await.expect("persist key");
+
+        let auth = mgr.validate_api_key(&api_key.key).await.expect("validate");
+        assert_eq!(auth.user_id, uid);
+        assert_eq!(auth.scopes, vec!["traffic:read"]);
+        assert_eq!(auth.key_id, api_key.id);
+    }
+
+    #[tokio::test]
+    async fn test_api_key_expired() {
+        let store = test_store().await;
+        let uid = seed_user(&store).await;
+        let mgr = test_manager().with_store(store.clone());
+
+        let api_key = ApiKey::generate(&uid, "expired-key");
+        let hash = hash_api_key(&api_key.key);
+        let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        let record = crate::store::ApiKeyRecord {
+            id: api_key.id.clone(),
+            user_id: uid.clone(),
+            name: api_key.name.clone(),
+            key_hash: hash,
+            key_prefix: api_key.key.chars().take(12).collect(),
+            scopes: "[]".to_string(),
+            expires_at: Some(past),
+            last_used_at: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        store.create_api_key(&record).await.expect("persist key");
+
+        let result = mgr.validate_api_key(&api_key.key).await;
+        assert!(result.is_err(), "expired key should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_api_key_revoked() {
+        let store = test_store().await;
+        let uid = seed_user(&store).await;
+        let mgr = test_manager().with_store(store.clone());
+
+        let api_key = ApiKey::generate(&uid, "temp-key");
+        let hash = hash_api_key(&api_key.key);
+        let record = crate::store::ApiKeyRecord {
+            id: api_key.id.clone(),
+            user_id: uid.clone(),
+            name: api_key.name.clone(),
+            key_hash: hash,
+            key_prefix: api_key.key.chars().take(12).collect(),
+            scopes: "[]".to_string(),
+            expires_at: None,
+            last_used_at: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        store.create_api_key(&record).await.expect("persist key");
+        store.revoke_api_key(&api_key.id).await.expect("revoke");
+
+        let result = mgr.validate_api_key(&api_key.key).await;
+        assert!(result.is_err(), "revoked key should be rejected");
+    }
+
+    #[test]
+    fn test_scope_matching() {
+        let traffic_read = Scope::parse("traffic:read");
+        let traffic_write = Scope::parse("traffic:write");
+        let wildcard = Scope::parse("*:*");
+        let star = Scope::parse("*");
+
+        assert!(traffic_read.is_valid());
+        assert!(wildcard.is_valid());
+        assert!(star.is_valid());
+        assert_eq!(star, wildcard);
+
+        assert!(Scope::matches(&traffic_read, &traffic_read));
+        assert!(!Scope::matches(&traffic_read, &traffic_write));
+        assert!(Scope::matches(&traffic_read, &wildcard));
+        assert!(Scope::matches(&traffic_write, &wildcard));
+        assert!(Scope::matches(&traffic_read, &Scope::parse("traffic:*")));
+        assert!(Scope::matches(&traffic_read, &Scope::parse("*:read")));
+        assert!(!Scope::matches(&traffic_read, &Scope::parse("mocks:read")));
     }
 }
