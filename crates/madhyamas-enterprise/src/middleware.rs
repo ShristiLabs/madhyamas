@@ -44,12 +44,14 @@ use axum::{
     http::{header, StatusCode, Uri},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
+    Extension, Json,
 };
 use madhyamas_api::AppState;
 use std::sync::Arc;
 
-use crate::{AuthManager, JwtClaims, Permission, RbacManager, ResourceType, UserRole};
+use crate::{
+    AuthManager, EnterpriseStore, JwtClaims, Permission, RbacManager, ResourceType, UserRole,
+};
 
 /// Paths that never require authentication. These are matched against the
 /// full request path (including the `/api` prefix used by nested routes).
@@ -58,6 +60,7 @@ const PUBLIC_PATHS: &[&str] = &[
     "/api/health",
     "/api/health/detailed",
     "/api/auth/login",
+    "/api/auth/refresh",
     "/api/license",
 ];
 
@@ -113,6 +116,7 @@ fn forbidden(message: &str) -> Response {
 /// Apply with `axum::middleware::from_fn_with_state(auth_manager, auth_middleware)`.
 pub async fn auth_middleware(
     State(state): State<Arc<AuthManager>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
     mut request: Request,
     next: Next,
 ) -> Response {
@@ -144,6 +148,41 @@ pub async fn auth_middleware(
 
     match state.validate_jwt(&token) {
         Ok(claims) => {
+            // Session idle timeout (Phase 4b.8): if the JWT carries a session
+            // ID, check the session's last_activity in the store. If the
+            // session has been idle longer than the configured timeout,
+            // revoke it and reject the request. On success, update
+            // last_activity to the current time.
+            if let Some(ref sid) = claims.sid {
+                match store.get_session(sid).await {
+                    Ok(Some(session)) => {
+                        if session.revoked {
+                            return unauthorized("Session revoked");
+                        }
+                        if let Ok(parsed) =
+                            chrono::DateTime::parse_from_rfc3339(&session.last_activity)
+                        {
+                            let last = parsed.with_timezone(&chrono::Utc);
+                            let idle_secs =
+                                chrono::Utc::now().signed_duration_since(last).num_seconds();
+                            if idle_secs > state.session_idle_timeout_secs() as i64 {
+                                let _ = store.revoke_session(sid).await;
+                                return unauthorized("Session idle timeout exceeded");
+                            }
+                        }
+                        let _ = store.update_session_activity(sid).await;
+                    }
+                    Ok(None) => {
+                        // No persisted session — allow through only when auth
+                        // is not strictly required (already handled above).
+                        // Under strict auth, a missing session means the
+                        // token was issued before session persistence existed
+                        // or the session was cleaned up; reject to be safe.
+                        return unauthorized("Session not found");
+                    }
+                    Err(_) => return unauthorized("Session lookup failed"),
+                }
+            }
             // Inject the validated claims for downstream handlers/extractors.
             request.extensions_mut().insert(claims);
             next.run(request).await
