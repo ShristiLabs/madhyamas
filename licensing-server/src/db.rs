@@ -89,6 +89,28 @@ pub struct AuditLogRow {
     pub metadata: serde_json::Value,
 }
 
+/// Row in the `team_members` table.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct TeamMemberRow {
+    pub id: Uuid,
+    pub customer_id: Uuid,
+    pub email: String,
+    pub role: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Row in the `admins` table.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AdminRow {
+    pub id: Uuid,
+    pub email: String,
+    #[serde(skip_serializing)]
+    pub password_hash: String,
+    pub role: String,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Run the full schema DDL (idempotent). Called on server startup.
 pub async fn init_schema(pool: &PgPool) -> Result<(), DbError> {
     sqlx::query(
@@ -170,12 +192,46 @@ pub async fn init_schema(pool: &PgPool) -> Result<(), DbError> {
     .execute(pool)
     .await?;
 
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS team_members (
+            id          UUID PRIMARY KEY,
+            customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            email       TEXT NOT NULL,
+            role        TEXT NOT NULL DEFAULT 'developer',
+            status      TEXT NOT NULL DEFAULT 'invited',
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS admins (
+            id            UUID PRIMARY KEY,
+            email         TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            role          TEXT NOT NULL DEFAULT 'admin',
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_licenses_customer_id ON licenses(customer_id);")
         .execute(pool)
         .await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_seats_license_id ON seats(license_id);")
         .execute(pool)
         .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_team_members_customer_id ON team_members(customer_id);",
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -401,4 +457,317 @@ pub async fn insert_audit(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Account / customer helpers (Phase 12b)
+// ---------------------------------------------------------------------------
+
+/// Insert an account record.
+pub async fn insert_account(
+    pool: &PgPool,
+    id: Uuid,
+    name: &str,
+    email: &str,
+    password_hash: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"
+        INSERT INTO accounts (id, name, email, password_hash, status)
+        VALUES ($1, $2, $3, $4, 'active');
+        "#,
+    )
+    .bind(id)
+    .bind(name)
+    .bind(email)
+    .bind(password_hash)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Look up an account by email. Returns the full row (including password hash).
+pub async fn get_account_by_email(pool: &PgPool, email: &str) -> Result<AccountRow, DbError> {
+    sqlx::query_as::<_, AccountRow>(
+        r#"
+        SELECT id, name, email, password_hash, created_at, status
+        FROM accounts WHERE email = $1;
+        "#,
+    )
+    .bind(email)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(DbError::LicenseNotFound(email.to_string()))
+}
+
+/// Get an account by ID.
+pub async fn get_account_by_id(pool: &PgPool, id: Uuid) -> Result<AccountRow, DbError> {
+    sqlx::query_as::<_, AccountRow>(
+        r#"
+        SELECT id, name, email, password_hash, created_at, status
+        FROM accounts WHERE id = $1;
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(DbError::LicenseNotFound(id.to_string()))
+}
+
+/// Insert a customer record linked to an account.
+pub async fn insert_customer(
+    pool: &PgPool,
+    id: Uuid,
+    account_id: Uuid,
+    company_name: &str,
+    contact_email: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"
+        INSERT INTO customers (id, account_id, company_name, contact_email)
+        VALUES ($1, $2, $3, $4);
+        "#,
+    )
+    .bind(id)
+    .bind(account_id)
+    .bind(company_name)
+    .bind(contact_email)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get the customer record for an account.
+pub async fn get_customer_by_account(
+    pool: &PgPool,
+    account_id: Uuid,
+) -> Result<CustomerRow, DbError> {
+    sqlx::query_as::<_, CustomerRow>(
+        r#"
+        SELECT id, account_id, company_name, contact_email, created_at
+        FROM customers WHERE account_id = $1;
+        "#,
+    )
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(DbError::LicenseNotFound(account_id.to_string()))
+}
+
+/// List all customers with pagination.
+pub async fn list_all_customers(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<CustomerRow>, DbError> {
+    sqlx::query_as::<_, CustomerRow>(
+        r#"
+        SELECT id, account_id, company_name, contact_email, created_at
+        FROM customers ORDER BY created_at DESC LIMIT $1 OFFSET $2;
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+/// Count total customers.
+pub async fn count_customers(pool: &PgPool) -> Result<i64, DbError> {
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM customers;")
+        .fetch_one(pool)
+        .await?;
+    Ok(row.0)
+}
+
+/// Set an account's status (e.g. 'active' or 'suspended').
+pub async fn set_account_status(
+    pool: &PgPool,
+    account_id: Uuid,
+    status: &str,
+) -> Result<(), DbError> {
+    let result = sqlx::query("UPDATE accounts SET status = $1 WHERE id = $2;")
+        .bind(status)
+        .bind(account_id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(DbError::LicenseNotFound(account_id.to_string()));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Team member helpers (Phase 12b.4)
+// ---------------------------------------------------------------------------
+
+/// Insert a team member invitation.
+pub async fn insert_team_member(
+    pool: &PgPool,
+    id: Uuid,
+    customer_id: Uuid,
+    email: &str,
+    role: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"
+        INSERT INTO team_members (id, customer_id, email, role, status)
+        VALUES ($1, $2, $3, $4, 'invited');
+        "#,
+    )
+    .bind(id)
+    .bind(customer_id)
+    .bind(email)
+    .bind(role)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// List team members for a customer.
+pub async fn list_team_members(
+    pool: &PgPool,
+    customer_id: Uuid,
+) -> Result<Vec<TeamMemberRow>, DbError> {
+    sqlx::query_as::<_, TeamMemberRow>(
+        r#"
+        SELECT id, customer_id, email, role, status, created_at
+        FROM team_members WHERE customer_id = $1 ORDER BY created_at DESC;
+        "#,
+    )
+    .bind(customer_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+/// Remove a team member. Returns `NotFound` if the member does not exist or
+/// does not belong to the given customer.
+pub async fn delete_team_member(
+    pool: &PgPool,
+    customer_id: Uuid,
+    member_id: Uuid,
+) -> Result<(), DbError> {
+    let result = sqlx::query("DELETE FROM team_members WHERE id = $1 AND customer_id = $2;")
+        .bind(member_id)
+        .bind(customer_id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(DbError::LicenseNotFound(member_id.to_string()));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Admin helpers (Phase 12d.1)
+// ---------------------------------------------------------------------------
+
+/// Insert an admin record.
+pub async fn insert_admin(
+    pool: &PgPool,
+    id: Uuid,
+    email: &str,
+    password_hash: &str,
+    role: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"
+        INSERT INTO admins (id, email, password_hash, role)
+        VALUES ($1, $2, $3, $4);
+        "#,
+    )
+    .bind(id)
+    .bind(email)
+    .bind(password_hash)
+    .bind(role)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Look up an admin by email.
+pub async fn get_admin_by_email(pool: &PgPool, email: &str) -> Result<AdminRow, DbError> {
+    sqlx::query_as::<_, AdminRow>(
+        r#"
+        SELECT id, email, password_hash, role, created_at
+        FROM admins WHERE email = $1;
+        "#,
+    )
+    .bind(email)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(DbError::LicenseNotFound(email.to_string()))
+}
+
+/// Count total admins (used to detect first-run bootstrap).
+pub async fn count_admins(pool: &PgPool) -> Result<i64, DbError> {
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM admins;")
+        .fetch_one(pool)
+        .await?;
+    Ok(row.0)
+}
+
+// ---------------------------------------------------------------------------
+// License status helpers (Phase 12c + 12d)
+// ---------------------------------------------------------------------------
+
+/// Update a license's status by its string license_id.
+pub async fn set_license_status(
+    pool: &PgPool,
+    license_id: &str,
+    status: &str,
+) -> Result<LicenseRow, DbError> {
+    sqlx::query_as::<_, LicenseRow>(
+        r#"
+        UPDATE licenses SET status = $2
+        WHERE license_id = $1
+        RETURNING id, customer_id, license_id, plan, seats, instance_id,
+                  issued_at, expires_at, features, status, signature;
+        "#,
+    )
+    .bind(license_id)
+    .bind(status)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| DbError::LicenseNotFound(license_id.to_string()))
+}
+
+/// Extend a license's expiry. Returns the updated row.
+pub async fn extend_license(
+    pool: &PgPool,
+    license_id: &str,
+    new_expires_at: DateTime<Utc>,
+) -> Result<LicenseRow, DbError> {
+    sqlx::query_as::<_, LicenseRow>(
+        r#"
+        UPDATE licenses SET expires_at = $2
+        WHERE license_id = $1
+        RETURNING id, customer_id, license_id, plan, seats, instance_id,
+                  issued_at, expires_at, features, status, signature;
+        "#,
+    )
+    .bind(license_id)
+    .bind(new_expires_at)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| DbError::LicenseNotFound(license_id.to_string()))
+}
+
+/// Count active licenses.
+pub async fn count_active_licenses(pool: &PgPool) -> Result<i64, DbError> {
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM licenses WHERE status = 'active';")
+        .fetch_one(pool)
+        .await?;
+    Ok(row.0)
+}
+
+/// Sum the seat counts across all active licenses.
+pub async fn sum_active_seats(pool: &PgPool) -> Result<i64, DbError> {
+    let row: (i64,) =
+        sqlx::query_as("SELECT COALESCE(SUM(seats), 0) FROM licenses WHERE status = 'active';")
+            .fetch_one(pool)
+            .await?;
+    Ok(row.0)
 }

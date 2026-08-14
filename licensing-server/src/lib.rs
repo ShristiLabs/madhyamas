@@ -5,5 +5,6 @@
 //! `main.rs` binary wraps these into a standalone server application.
 
 pub mod api;
+pub mod auth;
 pub mod db;
 pub mod license;

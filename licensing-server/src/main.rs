@@ -184,19 +184,83 @@ async fn run_server(cli: Cli) -> anyhow::Result<()> {
     tracing::info!("initializing database schema...");
     db::init_schema(&pool).await?;
 
+    // Bootstrap a default admin on first run (Phase 12d.1).
+    bootstrap_admin(&pool).await?;
+
+    let stripe_api_key = std::env::var("STRIPE_API_KEY")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let stripe_webhook_secret = std::env::var("STRIPE_WEBHOOK_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty());
+
+    if stripe_api_key.is_none() {
+        tracing::warn!(
+            "STRIPE_API_KEY is not set — billing endpoints will return 503. \
+             Set STRIPE_API_KEY, STRIPE_PRICE_STARTER, STRIPE_PRICE_PRO, \
+             STRIPE_PRICE_ENTERPRISE, and STRIPE_WEBHOOK_SECRET to enable Stripe."
+        );
+    }
+
     let state = api::AppState {
         pool,
         signer: Arc::new(signer),
         public_key,
         admin_key: cli.admin_key,
+        stripe_api_key,
+        stripe_webhook_secret,
     };
 
-    let app = api::router(state);
+    let api_router = api::router(state);
+
+    // Serve the customer portal frontend (if built) at /portal/*.
+    let portal_dir = std::env::var("PORTAL_DIST_DIR")
+        .unwrap_or_else(|_| "licensing-server/web/dist".to_string());
+    let portal_path = std::path::Path::new(&portal_dir);
+    let app = if portal_path.is_dir() {
+        tracing::info!(dir = %portal_dir, "serving customer portal at /portal/*");
+        api_router.nest_service("/portal", tower_http::services::ServeDir::new(portal_path))
+    } else {
+        tracing::debug!(dir = %portal_dir, "portal dist dir not found — portal disabled");
+        api_router
+    };
+
     let addr = format!("{}:{}", cli.bind_addr, cli.port);
     tracing::info!(addr = %addr, "licensing server listening");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
 
+    Ok(())
+}
+
+/// Create a default admin account on first run using `ADMIN_EMAIL` and
+/// `ADMIN_PASSWORD` env vars. If no admins exist and the env vars are unset,
+/// a development admin (`admin@madhyamas.local` / `admin123`) is created with
+/// a warning. This is idempotent — if admins already exist, it does nothing.
+async fn bootstrap_admin(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    let count = db::count_admins(pool).await?;
+    if count > 0 {
+        tracing::debug!(count, "admins already exist — skipping bootstrap");
+        return Ok(());
+    }
+
+    let email =
+        std::env::var("ADMIN_EMAIL").unwrap_or_else(|_| "admin@madhyamas.local".to_string());
+    let password = std::env::var("ADMIN_PASSWORD").unwrap_or_else(|_| "admin123".to_string());
+    let role = "super_admin";
+
+    if std::env::var("ADMIN_PASSWORD").is_err() {
+        tracing::warn!(
+            "ADMIN_PASSWORD env var not set — creating default admin \
+             (admin@madhyamas.local / admin123). Set ADMIN_EMAIL and \
+             ADMIN_PASSWORD for production."
+        );
+    }
+
+    let hash = madhyamas_licensing::auth::hash_password(&password)?;
+    db::insert_admin(pool, uuid::Uuid::new_v4(), &email, &hash, role).await?;
+
+    tracing::info!(email = %email, role, "default admin created");
     Ok(())
 }

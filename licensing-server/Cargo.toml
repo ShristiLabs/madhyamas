@@ -25,9 +25,17 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower = { workspace = true }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 rand = "0.8"
+jsonwebtoken.workspace = true
+argon2.workspace = true
+password-hash.workspace = true
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "form"] }
 
 [dev-dependencies]
 tempfile = "3"
