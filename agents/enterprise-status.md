@@ -35,9 +35,9 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 7c+7d Web UI admin | #52,53 | done | skipped | approved | done (Users/Audit/Metrics/License/ApiKeys/Instances panels, lazy chunks, OSS hides enterprise) | committed (93d98df) | done |
 | 8a MCP auth | #54 | done | skipped | approved | done (McpAuth, default_headers injection, 7 tests) | committed (ab8044f) | done |
 | 8b CLI auth | #55 | done | skipped | approved | done (CliAuth, --api-key/--token, default_headers, 7 tests) | committed (a5465de) | done |
-| 8c Ent MCP tools | #56 | — | — | — | — | — | pending |
-| 8d MCP protocol | #57 | — | — | — | — | — | pending |
-| 8e Ent CLI commands | #58 | — | — | — | — | — | pending |
+| 8c Ent MCP tools | #56 | done | skipped | approved | done (11 ent tools, tier detection, conditional registration) | committed (ade0279) | done |
+| 8d MCP protocol | #57 | done | skipped | approved | done (HTTP transport, annotations, resources, 6 prompts) | committed (ade0279) | done |
+| 8e Ent CLI commands | #58 | done | skipped | approved | done (users/audit/license/auth commands, skill docs updated) | committed (a0054fe) | done |
 
 ## Agent Log
 
