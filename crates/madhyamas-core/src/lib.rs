@@ -132,6 +132,8 @@ pub use storage::PluginStoreBackend;
 pub use storage::ScriptStoreBackend;
 #[cfg(feature = "plugins")]
 pub use storage::SqlitePluginStore;
+#[cfg(feature = "scripting")]
+pub use storage::SqliteScriptStore;
 pub use storage::{
     ConfigStoreBackend, InterceptStoreBackend, SqliteConfigStore, SqliteInterceptStore,
     TrafficStoreBackend,

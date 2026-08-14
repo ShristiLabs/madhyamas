@@ -28,7 +28,7 @@ use madhyamas_core::{
     PluginExtension, PluginInstaller, PluginManager, PluginStoreBackend, SqlitePluginStore,
 };
 #[cfg(feature = "scripting")]
-use madhyamas_core::{ScriptExtension, ScriptRuntime};
+use madhyamas_core::{ScriptExtension, ScriptRuntime, ScriptStoreBackend, SqliteScriptStore};
 
 use tracing::{debug, info, Level};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
@@ -691,32 +691,47 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     #[cfg(feature = "scripting")]
     let script_runtime = {
         let runtime = ScriptRuntime::default();
-        // Attach SQLite persistence so scripts and execution history
-        // survive restarts. We open a second connection to the same
-        // database file used by TrafficStore (WAL mode is already
-        // enabled there, so concurrent access is safe). Loaded scripts
-        // are registered with the runtime before it is shared with the
-        // proxy pipeline and API layer.
-        match rusqlite::Connection::open(&config.db_path) {
-            Ok(conn) => {
-                // Match TrafficStore pragmas for safe concurrent access.
-                let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
-                let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
-                let _ = conn.execute_batch("PRAGMA synchronous=NORMAL;");
-                let conn = Arc::new(parking_lot::Mutex::new(conn));
-                if let Err(e) = runtime.with_persistence(conn) {
-                    tracing::warn!("Failed to attach script persistence: {}", e);
-                } else {
-                    let count = runtime.get_scripts().len();
-                    info!("Loaded {} persisted script(s) from database", count);
+        // Attach async script store so scripts and execution history
+        // survive restarts. We open a SqlitePool to the same database
+        // file used by TrafficStore. Loaded scripts are registered with
+        // the runtime before it is shared with the proxy pipeline and
+        // API layer.
+        let script_db_url = format!("sqlite://{}", config.db_path);
+        let script_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&script_db_url)
+            .map(|opts| opts.create_if_missing(true))
+            .map_err(|e| anyhow::anyhow!("failed to parse script db url: {e}"));
+        match script_opts {
+            Ok(opts) => {
+                match sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(5)
+                    .connect_with(opts)
+                    .await
+                {
+                    Ok(pool) => match SqliteScriptStore::new(pool).await {
+                        Ok(store) => {
+                            let store: Arc<dyn ScriptStoreBackend + Send + Sync> = Arc::new(store);
+                            if let Err(e) = runtime.with_persistence(store).await {
+                                tracing::warn!("Failed to attach script persistence: {}", e);
+                            } else {
+                                let count = runtime.get_scripts().len();
+                                info!("Loaded {} persisted script(s) from database", count);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to initialize script store: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to open script persistence database at {}: {}",
+                            config.db_path,
+                            e
+                        );
+                    }
                 }
             }
             Err(e) => {
-                tracing::warn!(
-                    "Failed to open script persistence database at {}: {}",
-                    config.db_path,
-                    e
-                );
+                tracing::warn!("Failed to parse script db url: {}", e);
             }
         }
         Arc::new(runtime)

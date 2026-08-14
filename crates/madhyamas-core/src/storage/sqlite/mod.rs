@@ -11,8 +11,12 @@ pub mod config;
 pub mod intercept;
 #[cfg(feature = "plugins")]
 pub mod plugin;
+#[cfg(feature = "scripting")]
+pub mod script;
 
 pub use config::SqliteConfigStore;
 pub use intercept::SqliteInterceptStore;
 #[cfg(feature = "plugins")]
 pub use plugin::SqlitePluginStore;
+#[cfg(feature = "scripting")]
+pub use script::SqliteScriptStore;

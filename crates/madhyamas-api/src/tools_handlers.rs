@@ -331,7 +331,8 @@ pub async fn get_traffic_script_traces(
 ) -> impl IntoResponse {
     let traces = state
         .script_runtime
-        .get_executions_for_traffic_entry(&id, 200);
+        .get_executions_for_traffic_entry(&id, 200)
+        .await;
 
     // Enrich each trace with the script name (if the script still exists).
     #[derive(serde::Serialize)]
@@ -453,7 +454,8 @@ pub async fn get_script_history(
         Some(_) => {
             let history = state
                 .script_runtime
-                .get_script_history(&id, query.limit.unwrap_or(50));
+                .get_script_history(&id, query.limit.unwrap_or(50))
+                .await;
             Json(history).into_response()
         }
         None => (
@@ -469,7 +471,7 @@ pub async fn get_scripts_history(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ScriptHistoryQuery>,
 ) -> impl IntoResponse {
-    let history = state.script_runtime.get_history(query.limit);
+    let history = state.script_runtime.get_history(query.limit).await;
 
     // Enrich each execution with the script name (if the script still
     // exists) so the UI can display a human-readable label instead of

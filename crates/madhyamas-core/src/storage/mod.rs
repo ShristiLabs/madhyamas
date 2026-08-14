@@ -25,6 +25,8 @@ pub mod sqlite;
 
 #[cfg(feature = "plugins")]
 pub use sqlite::SqlitePluginStore;
+#[cfg(feature = "scripting")]
+pub use sqlite::SqliteScriptStore;
 pub use sqlite::{SqliteConfigStore, SqliteInterceptStore};
 
 use crate::intercept::{BlockListEntry, BreakpointRule, MockRule, RewriteRule, ThrottleProfile};

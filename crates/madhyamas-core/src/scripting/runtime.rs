@@ -7,6 +7,8 @@ use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::storage::ScriptStoreBackend;
+
 /// Declarative match filter for a script.
 ///
 /// When present, the proxy checks the request against these fields *before*
@@ -281,8 +283,8 @@ pub struct ScriptRuntime {
     config: RwLock<ScriptConfig>,
     /// Maximum in-memory history size
     max_history: usize,
-    /// Optional SQLite connection for persistence
-    db: RwLock<Option<Arc<parking_lot::Mutex<rusqlite::Connection>>>>,
+    /// Optional async script store for persistence
+    store: RwLock<Option<Arc<dyn ScriptStoreBackend + Send + Sync>>>,
 }
 
 impl ScriptRuntime {
@@ -292,30 +294,40 @@ impl ScriptRuntime {
             history: RwLock::new(Vec::new()),
             config: RwLock::new(config),
             max_history: 1000,
-            db: RwLock::new(None),
+            store: RwLock::new(None),
         }
     }
 
-    /// Attach a SQLite connection for script and execution persistence.
-    /// Creates the `scripts` / `script_executions` tables and loads any
-    /// previously saved scripts.
-    pub fn with_persistence(
+    /// Attach an async script store for script and execution persistence.
+    /// Loads any previously saved scripts into the in-memory registry.
+    /// The store must already have its tables created (via
+    /// [`crate::storage::SqliteScriptStore::new`]).
+    pub async fn with_persistence(
         &self,
-        conn: Arc<parking_lot::Mutex<rusqlite::Connection>>,
+        store: Arc<dyn ScriptStoreBackend + Send + Sync>,
     ) -> crate::Result<()> {
-        {
-            let conn = conn.lock();
-            super::persistence::ScriptPersistence::create_tables(&conn)?;
-            let loaded = super::persistence::ScriptPersistence::load_scripts(&conn)?;
-            if !loaded.is_empty() {
-                let mut scripts = self.scripts.write();
-                for script in loaded {
-                    scripts.insert(script.id.clone(), script);
-                }
+        let loaded = store.load_scripts().await?;
+        if !loaded.is_empty() {
+            let mut scripts = self.scripts.write();
+            for script in loaded {
+                scripts.insert(script.id.clone(), script);
             }
         }
-        *self.db.write() = Some(conn);
+        *self.store.write() = Some(store);
         Ok(())
+    }
+
+    /// Spawn a fire-and-forget async task on the current tokio runtime.
+    /// If no runtime is available (e.g. in a non-async test), the task is
+    /// silently dropped. This is used for DB writes from sync contexts
+    /// (boa execution, in-memory mutations) where we cannot `.await`.
+    fn try_spawn<F>(future: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(future);
+        }
     }
 
     /// Get the current script configuration.
@@ -328,26 +340,33 @@ impl ScriptRuntime {
         *self.config.write() = config;
     }
 
-    /// Register a script (and persist it if a DB connection is attached).
+    /// Register a script (and persist it if a store is attached).
+    /// DB persistence is fire-and-forget via `tokio::spawn` so this method
+    /// remains callable from sync contexts.
     pub fn register_script(&self, script: Script) -> String {
         let id = script.id.clone();
-        if let Some(ref db) = *self.db.read() {
-            let conn = db.lock();
-            if let Err(e) = super::persistence::ScriptPersistence::save_script(&conn, &script) {
-                tracing::warn!("Failed to persist script {}: {}", script.id, e);
-            }
+        if let Some(store) = self.store.read().clone() {
+            let script_clone = script.clone();
+            Self::try_spawn(async move {
+                if let Err(e) = store.save_script(&script_clone).await {
+                    tracing::warn!("Failed to persist script {}: {}", script_clone.id, e);
+                }
+            });
         }
         self.scripts.write().insert(id.clone(), script);
         id
     }
 
     /// Remove a script (and delete it from the DB if attached).
+    /// DB persistence is fire-and-forget via `tokio::spawn`.
     pub fn remove_script(&self, id: &str) -> bool {
-        if let Some(ref db) = *self.db.read() {
-            let conn = db.lock();
-            if let Err(e) = super::persistence::ScriptPersistence::delete_script(&conn, id) {
-                tracing::warn!("Failed to delete script {} from DB: {}", id, e);
-            }
+        if let Some(store) = self.store.read().clone() {
+            let id_owned = id.to_string();
+            Self::try_spawn(async move {
+                if let Err(e) = store.delete_script(&id_owned).await {
+                    tracing::warn!("Failed to delete script {} from DB: {}", id_owned, e);
+                }
+            });
         }
         self.scripts.write().remove(id).is_some()
     }
@@ -507,12 +526,15 @@ impl ScriptRuntime {
     }
 
     /// Persist a script to the database (if attached).
+    /// Fire-and-forget via `tokio::spawn`.
     fn persist_script(&self, script: &Script) {
-        if let Some(ref db) = *self.db.read() {
-            let conn = db.lock();
-            if let Err(e) = super::persistence::ScriptPersistence::save_script(&conn, script) {
-                tracing::warn!("Failed to persist script {}: {}", script.id, e);
-            }
+        if let Some(store) = self.store.read().clone() {
+            let script_clone = script.clone();
+            Self::try_spawn(async move {
+                if let Err(e) = store.save_script(&script_clone).await {
+                    tracing::warn!("Failed to persist script {}: {}", script_clone.id, e);
+                }
+            });
         }
     }
 
@@ -626,13 +648,16 @@ impl ScriptRuntime {
     }
 
     /// Record an execution in history (in-memory + DB if attached).
+    /// DB persistence is fire-and-forget via `tokio::spawn` so this method
+    /// remains callable from the sync boa execution path.
     fn record_execution(&self, execution: ScriptExecution) {
-        if let Some(ref db) = *self.db.read() {
-            let conn = db.lock();
-            if let Err(e) = super::persistence::ScriptPersistence::save_execution(&conn, &execution)
-            {
-                tracing::debug!("Failed to persist script execution: {}", e);
-            }
+        if let Some(store) = self.store.read().clone() {
+            let exec_clone = execution.clone();
+            Self::try_spawn(async move {
+                if let Err(e) = store.save_execution(&exec_clone).await {
+                    tracing::debug!("Failed to persist script execution: {}", e);
+                }
+            });
         }
         let mut history = self.history.write();
         history.push(execution);
@@ -646,13 +671,11 @@ impl ScriptRuntime {
     ///
     /// Reads from the database if attached (which has the full history),
     /// otherwise falls back to the in-memory ring buffer.
-    pub fn get_history(&self, limit: Option<usize>) -> Vec<ScriptExecution> {
+    pub async fn get_history(&self, limit: Option<usize>) -> Vec<ScriptExecution> {
         let limit = limit.unwrap_or(100);
-        if let Some(ref db) = *self.db.read() {
-            let conn = db.lock();
-            if let Ok(execs) =
-                super::persistence::ScriptPersistence::load_all_executions(&conn, limit)
-            {
+        let store = self.store.read().clone();
+        if let Some(store) = store {
+            if let Ok(execs) = store.load_all_executions(limit).await {
                 return execs;
             }
         }
@@ -666,12 +689,10 @@ impl ScriptRuntime {
     ///
     /// Reads from the database if attached (which has the full history),
     /// otherwise falls back to the in-memory ring buffer.
-    pub fn get_script_history(&self, script_id: &str, limit: usize) -> Vec<ScriptExecution> {
-        if let Some(ref db) = *self.db.read() {
-            let conn = db.lock();
-            if let Ok(execs) =
-                super::persistence::ScriptPersistence::load_executions(&conn, script_id, limit)
-            {
+    pub async fn get_script_history(&self, script_id: &str, limit: usize) -> Vec<ScriptExecution> {
+        let store = self.store.read().clone();
+        if let Some(store) = store {
+            if let Ok(execs) = store.load_executions(script_id, limit).await {
                 return execs;
             }
         }
@@ -687,10 +708,14 @@ impl ScriptRuntime {
     }
 
     /// Clear execution history (in-memory + DB if attached).
+    /// DB persistence is fire-and-forget via `tokio::spawn`.
     pub fn clear_history(&self) {
-        if let Some(ref db) = *self.db.read() {
-            let conn = db.lock();
-            let _ = super::persistence::ScriptPersistence::clear_executions(&conn, None);
+        if let Some(store) = self.store.read().clone() {
+            Self::try_spawn(async move {
+                if let Err(e) = store.clear_executions(None).await {
+                    tracing::warn!("Failed to clear script execution history: {}", e);
+                }
+            });
         }
         self.history.write().clear();
     }
@@ -699,18 +724,17 @@ impl ScriptRuntime {
     /// script executions (across all scripts) that were recorded for the
     /// given traffic entry ID, most recent first.  Reads from the database
     /// if attached, otherwise falls back to the in-memory ring buffer.
-    pub fn get_executions_for_traffic_entry(
+    pub async fn get_executions_for_traffic_entry(
         &self,
         traffic_entry_id: &str,
         limit: usize,
     ) -> Vec<ScriptExecution> {
-        if let Some(ref db) = *self.db.read() {
-            let conn = db.lock();
-            if let Ok(execs) = super::persistence::ScriptPersistence::load_executions_by_traffic(
-                &conn,
-                traffic_entry_id,
-                limit,
-            ) {
+        let store = self.store.read().clone();
+        if let Some(store) = store {
+            if let Ok(execs) = store
+                .load_executions_by_traffic(traffic_entry_id, limit)
+                .await
+            {
                 return execs;
             }
         }
@@ -727,11 +751,16 @@ impl ScriptRuntime {
 
     /// Clear execution history for a single script (in-memory + DB if
     /// attached).  Only the records for `script_id` are removed; other
-    /// scripts' history is preserved.
+    /// scripts' history is preserved.  DB persistence is fire-and-forget
+    /// via `tokio::spawn`.
     pub fn clear_script_history(&self, script_id: &str) {
-        if let Some(ref db) = *self.db.read() {
-            let conn = db.lock();
-            let _ = super::persistence::ScriptPersistence::clear_executions(&conn, Some(script_id));
+        if let Some(store) = self.store.read().clone() {
+            let id_owned = script_id.to_string();
+            Self::try_spawn(async move {
+                if let Err(e) = store.clear_executions(Some(&id_owned)).await {
+                    tracing::warn!("Failed to clear script history for {}: {}", id_owned, e);
+                }
+            });
         }
         let mut history = self.history.write();
         history.retain(|e| e.script_id != script_id);
