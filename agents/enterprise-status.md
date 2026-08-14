@@ -28,9 +28,9 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 5 PostgreSQL backends | #44 | done | skipped | approved | done (6 Pg stores, --database-url, advisory lock, 7 Pg tests pass) | committed (78e7766, d2c98ca) | done |
 | 6a Redis state | #45 | done | skipped | approved | done (pub/sub, config+intercept sync, --redis-url, 6 Redis tests) | committed (77ce3c3) | done |
 | 6c Seat coordination | #47 | done | skipped | approved | done (register/heartbeat/deregister, seat limit, SIGTERM release) | committed (47cc1c2) | done |
-| 6b Shared CA | #46 | — | — | — | — | — | pending |
-| 6d LB support | #48 | — | — | — | — | — | pending |
-| 6e Cluster metrics | #49 | — | — | — | — | — | pending |
+| 6b Shared CA | #46 | done | skipped | approved | done (--ca-cert-file/--ca-key-file, load or generate + save) | committed (4f37e5e) | done |
+| 6d LB support | #48 | done | skipped | approved | done (--base-path, health deps, graceful shutdown, K8s + docker-compose.multi) | committed (908d7f4) | done |
+| 6e Cluster metrics | #49 | done | skipped | approved | done (InstanceMetrics, /api/metrics/cluster, /api/instances, 30s heartbeat) | committed (2052fb8) | done |
 
 ## Agent Log
 
