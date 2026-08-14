@@ -28,10 +28,15 @@ Open `http://localhost:3001` for the web UI. Configure your browser to use
 | [PROXY_FLOW.md](PROXY_FLOW.md) | End-to-end proxy flow with TLS interception detail |
 | [INTERCEPT_PIPELINE.md](INTERCEPT_PIPELINE.md) | Intercept handler trait, priority pipeline (block list → rewrites → mocks → breakpoints → throttle) |
 | [EXTENSION_SYSTEM.md](EXTENSION_SYSTEM.md) | Unified `Extension` trait abstracting scripts and plugins |
-| [PERSISTENCE.md](PERSISTENCE.md) | SQLite schema, traffic/intercept/config stores, session model |
-| [WEB_FRONTEND.md](WEB_FRONTEND.md) | Frontend architecture, state management, WebSocket client, build/embed flow |
+| [PERSISTENCE.md](PERSISTENCE.md) | SQLite + PostgreSQL schema, traffic/intercept/config stores, session model, enterprise tables |
+| [WEB_FRONTEND.md](WEB_FRONTEND.md) | Frontend architecture, state management, WebSocket client, build/embed flow, enterprise UI |
 | [PERFORMANCE.md](PERFORMANCE.md) | Memory tracking, metrics collector, alerting, connection pool |
-| [ENTERPRISE.md](ENTERPRISE.md) | Auth (JWT + API keys), RBAC, audit logging, user management |
+| [ENTERPRISE.md](ENTERPRISE.md) | Auth (JWT + API keys), RBAC, audit logging (PostgreSQL hash chain), user management |
+| [ENTERPRISE_CRATE_GUIDE.md](ENTERPRISE_CRATE_GUIDE.md) | Enterprise crate structure, public API, key types, extension points |
+| [ENTERPRISE_API_INTEGRATION.md](ENTERPRISE_API_INTEGRATION.md) | AuthProvider/Authorizer/AuditSink traits, AppState injection, router merging, middleware |
+| [ENTERPRISE_STARTUP_FLOW.md](ENTERPRISE_STARTUP_FLOW.md) | 17-step enterprise initialization sequence, CLI flags, error handling, graceful shutdown |
+| [STORAGE_BACKEND_GUIDE.md](STORAGE_BACKEND_GUIDE.md) | Storage trait reference, implementation checklist for new backends, testing, migration |
+| [ENTERPRISE_TESTING.md](ENTERPRISE_TESTING.md) | Enterprise testing guide: unit, integration, multi-instance, Playwright E2E |
 
 ### API Reference
 

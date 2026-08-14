@@ -1,5 +1,15 @@
 # Enterprise Analysis Overview
 
+> **Implementation complete.** This was the master analysis document written
+> before implementation began. Some references to "stubs" and "in-memory ring
+> buffer" reflect the pre-implementation state and are no longer accurate.
+> For current developer documentation, see:
+> - [ENTERPRISE_CRATE_GUIDE.md](ENTERPRISE_CRATE_GUIDE.md) — Crate structure and public API
+> - [ENTERPRISE_API_INTEGRATION.md](ENTERPRISE_API_INTEGRATION.md) — API trait abstractions
+> - [ENTERPRISE_STARTUP_FLOW.md](ENTERPRISE_STARTUP_FLOW.md) — Startup sequence
+> - [STORAGE_BACKEND_GUIDE.md](STORAGE_BACKEND_GUIDE.md) — Storage backend implementation
+> - [ENTERPRISE_TESTING.md](ENTERPRISE_TESTING.md) — Testing guide
+
 > **Master document** for the Madhyamas enterprise tier analysis. This
 > document provides the high-level architecture, two-tier model, and
 > cross-references to detailed sub-documents.

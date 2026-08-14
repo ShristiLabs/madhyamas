@@ -171,3 +171,4 @@ Some features have their own dedicated configuration pages:
 - [HTTP/2 & gRPC](./http2-grpc) — enable HTTP/2 downstream
 - [Auto Save](./auto-save) — periodic session backup and rotation
 - [Mirror](./mirror) — save response bodies to disk
+- [Enterprise Configuration](./enterprise/configuration) — enterprise-specific CLI flags (auth, database, Redis, license, CA, base path)

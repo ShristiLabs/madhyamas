@@ -37,6 +37,7 @@ export default defineConfig({
     nav: [
       { text: "Guides", link: "/getting-started" },
       { text: "Features", link: "/traffic-inspection" },
+      { text: "Enterprise", link: "/enterprise/" },
       { text: "Reference", link: "/cli" },
       { text: "AI Agents", link: "/mcp" },
       { text: "GitHub", link: "https://github.com/ShristiLabs/madhyamas" },
@@ -102,12 +103,27 @@ export default defineConfig({
         ],
       },
       {
+        text: "Enterprise",
+        items: [
+          { text: "Overview", link: "/enterprise/" },
+          { text: "Getting Started", link: "/enterprise/getting-started" },
+          { text: "Authentication", link: "/enterprise/authentication" },
+          { text: "User Management", link: "/enterprise/user-management" },
+          { text: "Role-Based Access Control", link: "/enterprise/rbac" },
+          { text: "Audit Logging", link: "/enterprise/audit-logging" },
+          { text: "Performance & Monitoring", link: "/enterprise/monitoring" },
+          { text: "Licensing", link: "/enterprise/licensing" },
+          { text: "Multi-Instance Deployment", link: "/enterprise/deployment" },
+          { text: "Configuration", link: "/enterprise/configuration" },
+          { text: "CLI & MCP Tools", link: "/enterprise/cli-mcp" },
+        ],
+      },
+      {
         text: "Reference",
         items: [
           { text: "CLI Reference", link: "/cli" },
           { text: "REST API Reference", link: "/rest-api" },
           { text: "MCP & AI Agents", link: "/mcp" },
-          { text: "Enterprise Features", link: "/enterprise" },
           { text: "Security Overview", link: "/security" },
           { text: "Migrating from Charles Proxy", link: "/migration-from-charles" },
           { text: "Troubleshooting", link: "/troubleshooting" },

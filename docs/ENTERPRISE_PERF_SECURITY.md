@@ -1,5 +1,11 @@
 # Enterprise Performance and Security Analysis
 
+> **Implementation complete.** This analysis was written before implementation.
+> References to "in-memory ring buffer" for audit logging are outdated — audit
+> events are now persisted in PostgreSQL with a SHA-256 hash chain. For current
+> documentation, see [ENTERPRISE_CRATE_GUIDE.md](ENTERPRISE_CRATE_GUIDE.md) and
+> [ENTERPRISE_TESTING.md](ENTERPRISE_TESTING.md).
+
 > Part of: [Enterprise Analysis Overview](ENTERPRISE_OVERVIEW.md)
 
 This document provides a comprehensive performance and security

@@ -140,7 +140,7 @@ These Charles features have no Madhyamas equivalent today:
 - [Plugins](./plugins) — sandboxed WebAssembly extensions
 - Documented [REST API](./rest-api) with 177 endpoints
 - [CLI](./cli) with 128 subcommands
-- [Enterprise](./enterprise) auth, RBAC, and audit logging
+- [Enterprise](./enterprise/) auth, RBAC, and audit logging
 
 ## See also
 

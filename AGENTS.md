@@ -183,8 +183,13 @@ Each feature has a dedicated doc page. Read the relevant one before working on t
 | Persistence layer | [docs/PERSISTENCE.md](docs/PERSISTENCE.md) | SQLite schema, traffic/intercept/config stores, session model |
 | Web frontend | [docs/WEB_FRONTEND.md](docs/WEB_FRONTEND.md) | React architecture, TanStack Query, WebSocket client, build/embed flow |
 | Performance | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Memory tracking, metrics collector, alerting, connection pool |
-| Enterprise (current internals) | [docs/ENTERPRISE.md](docs/ENTERPRISE.md) | Auth (JWT + API keys), RBAC, audit logging, user management (pre-refactor) |
-| Enterprise analysis (overview) | [docs/ENTERPRISE_OVERVIEW.md](docs/ENTERPRISE_OVERVIEW.md) | Two-tier model, crate architecture, database strategy, licensing overview, roadmap |
+| Enterprise (current internals) | [docs/ENTERPRISE.md](docs/ENTERPRISE.md) | Auth (JWT + API keys), RBAC, audit logging (PostgreSQL hash chain), user management |
+| Enterprise crate guide | [docs/ENTERPRISE_CRATE_GUIDE.md](docs/ENTERPRISE_CRATE_GUIDE.md) | Enterprise crate structure, public API, key types, extension points, Mermaid diagrams |
+| Enterprise API integration | [docs/ENTERPRISE_API_INTEGRATION.md](docs/ENTERPRISE_API_INTEGRATION.md) | AuthProvider/Authorizer/AuditSink traits, AppState injection, router merging, middleware, Mermaid sequence diagrams |
+| Enterprise startup flow | [docs/ENTERPRISE_STARTUP_FLOW.md](docs/ENTERPRISE_STARTUP_FLOW.md) | 17-step initialization sequence, CLI flags, error handling, graceful shutdown, Mermaid flowchart + sequence diagrams |
+| Storage backend guide | [docs/STORAGE_BACKEND_GUIDE.md](docs/STORAGE_BACKEND_GUIDE.md) | Storage trait reference, implementation checklist for new backends, schema design, testing, migration, Mermaid ER diagrams |
+| Enterprise testing | [docs/ENTERPRISE_TESTING.md](docs/ENTERPRISE_TESTING.md) | Enterprise testing guide: unit, integration, multi-instance, Playwright E2E, CI/CD, Mermaid diagrams |
+| Enterprise analysis (overview) | [docs/ENTERPRISE_OVERVIEW.md](docs/ENTERPRISE_OVERVIEW.md) | Two-tier model, crate architecture, database strategy, licensing overview, roadmap (historical — written pre-implementation) |
 | Enterprise licensing server | [docs/ENTERPRISE_LICENSING_SERVER.md](docs/ENTERPRISE_LICENSING_SERVER.md) | SaaS licensing: accounts, Stripe payments, license issuance/revocation, support tickets, admin dashboard |
 | Enterprise storage traits | [docs/ENTERPRISE_STORAGE_TRAITS.md](docs/ENTERPRISE_STORAGE_TRAITS.md) | Shared async storage traits, rusqlite → sqlx migration, SQLite + PostgreSQL backends |
 | Enterprise auth/RBAC/IdP | [docs/ENTERPRISE_AUTH_RBAC.md](docs/ENTERPRISE_AUTH_RBAC.md) | Authentication modes, RBAC model, OIDC/header/LDAP/SAML integration |

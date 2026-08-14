@@ -1,5 +1,10 @@
 # Enterprise Implementation Plan
 
+> **All 13 phases (0–12) are complete.** This document is retained as a
+> historical record of the implementation plan. For the current state of
+> the enterprise crate, see [ENTERPRISE_CRATE_GUIDE.md](ENTERPRISE_CRATE_GUIDE.md)
+> and [ENTERPRISE_STARTUP_FLOW.md](ENTERPRISE_STARTUP_FLOW.md).
+
 > Part of: [Enterprise Analysis Overview](ENTERPRISE_OVERVIEW.md)
 
 This document synthesizes the findings from all 12 enterprise

@@ -1,6 +1,6 @@
 # Enterprise Features
 
-> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+> **Last verified:** 2025-01 against Madhyamas `0.1.6` (enterprise crate fully implemented).
 
 ## Overview
 
@@ -117,10 +117,13 @@ returning `403` on insufficient permissions.
 
 ## Audit Logging
 
-Source: `enterprise/audit.rs`
+Source: `crates/madhyamas-enterprise/src/audit.rs`
 
-`AuditLogger` records security-relevant events in an in-memory ring buffer
-capped at 10,000 events (FIFO eviction).
+`AuditLogger` records security-relevant events in PostgreSQL with a
+SHA-256 hash chain for tamper evidence. Each event's `prev_hash` field
+contains the hash of the previous event, making any modification or
+deletion detectable. Insertion is serialized across instances using a
+PostgreSQL advisory lock (`pg_advisory_xact_lock`).
 
 ### Event types
 
@@ -140,12 +143,13 @@ capped at 10,000 events (FIFO eviction).
 | `client_ip` | Client IP address (optional) |
 | `description` | Human-readable description |
 | `metadata` | Arbitrary `HashMap<String, serde_json::Value>` |
+| `prev_hash` | SHA-256 hash of the previous event (tamper-evidence chain) |
 
 Events are queried via `AuditFilter` (by type, user, time range, limit/offset).
 
 ## User Management
 
-Source: `enterprise/user.rs`
+Source: `crates/madhyamas-enterprise/src/user.rs`
 
 | Type | Variants / Fields |
 |------|-------------------|
@@ -168,5 +172,8 @@ See [API_ENTERPRISE.md](API_ENTERPRISE.md) for the full endpoint reference.
 ## See Also
 
 - [API_ENTERPRISE.md](API_ENTERPRISE.md) — Enterprise API endpoints
+- [ENTERPRISE_CRATE_GUIDE.md](ENTERPRISE_CRATE_GUIDE.md) — Enterprise crate developer guide
+- [ENTERPRISE_API_INTEGRATION.md](ENTERPRISE_API_INTEGRATION.md) — API layer trait abstractions
+- [ENTERPRISE_STARTUP_FLOW.md](ENTERPRISE_STARTUP_FLOW.md) — Startup initialization sequence
 - [PERFORMANCE.md](PERFORMANCE.md) — Performance monitoring (exposed via enterprise endpoints)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture

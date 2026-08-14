@@ -1,5 +1,10 @@
 # madhyamas-enterprise Crate Migration Analysis
 
+> **Migration complete.** The `madhyamas-enterprise` crate has been extracted
+> and all stubs replaced with functional implementations. This document is
+> retained as a historical record of the migration analysis. For the current
+> crate structure, see [ENTERPRISE_CRATE_GUIDE.md](ENTERPRISE_CRATE_GUIDE.md).
+
 > Part of: [Enterprise Analysis Overview](ENTERPRISE_OVERVIEW.md)
 
 This document analyzes the current state of enterprise code across

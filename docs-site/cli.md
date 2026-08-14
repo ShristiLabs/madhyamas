@@ -187,3 +187,4 @@ kill $PROXY_PID
 - [MCP & AI Agents](./mcp) — drive Madhyamas from an LLM via MCP
 - [REST API reference](./rest-api) — the HTTP API the CLI calls under the hood
 - [Troubleshooting](./troubleshooting) — common CLI and proxy issues
+- [Enterprise CLI & MCP Tools](./enterprise/cli-mcp) — enterprise commands (users, audit, license, auth, API keys)

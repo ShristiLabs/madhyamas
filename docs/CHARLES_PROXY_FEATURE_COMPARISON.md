@@ -364,8 +364,8 @@ by impact and effort:
 
 - Keep investing in **MCP tools** — this is a unique differentiator vs. Charles.
 - Keep the **REST API** documented and stable — Charles has nothing comparable.
-- Complete the **scripting** and **plugin** runtimes (currently stubs) to
-  deliver on the advertised extensibility.
+- The **scripting** (boa_engine) and **plugin** (wasmtime) runtimes are now
+  fully implemented — see [SCRIPTING.md](SCRIPTING.md) and [PLUGINS.md](PLUGINS.md).
 - Keep the **single-binary** deployment story — a major advantage over
   Charles's Java/JVM requirement.
 

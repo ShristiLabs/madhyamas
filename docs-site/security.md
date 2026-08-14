@@ -35,7 +35,7 @@ The [Access Control](./access-control) feature restricts which client IPs can co
 
 ## Authentication and RBAC (Enterprise)
 
-For team or shared deployments, enable the [enterprise](./enterprise) layer to require authentication:
+For team or shared deployments, enable the [enterprise](./enterprise/) layer to require authentication:
 
 - **JWT (HMAC-SHA256)** for interactive users.
 - **API keys** (`mad_<uuid>`) for automation and CI.
@@ -96,7 +96,9 @@ You can expect acknowledgment within 48 hours and an initial assessment within 5
 ## See also
 
 - [Access Control](./access-control) — IP allowlist
-- [Enterprise](./enterprise) — auth, RBAC, audit logging
+- [Enterprise Overview](./enterprise/) — auth, RBAC, audit logging, licensing, and multi-instance deployment
+- [Enterprise Authentication](./enterprise/authentication) — JWT, API keys, SSO, and MFA
+- [Enterprise Audit Logging](./enterprise/audit-logging) — tamper-evident audit trail
 - [HTTPS & Certificates](./https-certificates) — CA installation and pinning
 - [Scripting](./scripting) — sandboxed JavaScript
 - [Plugins](./plugins) — sandboxed WebAssembly

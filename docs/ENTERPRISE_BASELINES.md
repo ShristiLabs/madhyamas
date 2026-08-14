@@ -1,5 +1,8 @@
 # Enterprise Baselines (Phase 0)
 
+> **Historical document.** This baseline was recorded before the enterprise
+> crate extraction. All phases are now complete. Retained for reference only.
+
 > **Phase 0 — Preparation.** Verification-only record of the codebase state
 > before the enterprise crate extraction (Phase 1). No source code was modified
 > to produce these baselines.
