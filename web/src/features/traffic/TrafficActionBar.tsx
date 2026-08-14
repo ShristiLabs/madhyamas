@@ -204,9 +204,11 @@ export function TrafficActionBar({
               onChange={(e) => setNamePrefix(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  showNameDialog === 'replay'
-                    ? handleSaveToReplay()
-                    : handleCreateMock()
+                  if (showNameDialog === 'replay') {
+                    handleSaveToReplay()
+                  } else {
+                    handleCreateMock()
+                  }
                 }
                 if (e.key === 'Escape') setShowNameDialog(null)
               }}

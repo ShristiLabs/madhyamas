@@ -255,7 +255,7 @@ Typed helpers for all admin endpoints:
 
 ### Adding a New Admin Panel
 
-1. Create `web/src/features/admin/YourPanel.tsx` — use shadcn/ui components
+1. Create a new component in the admin features directory — use shadcn/ui components
 2. Add the view ID to `ADMIN_VIEWS` in `App.tsx`:
    ```typescript
    { id: "yourpanel", label: "Your Panel", icon: "SomeIcon" }
@@ -264,7 +264,7 @@ Typed helpers for all admin endpoints:
    ```typescript
    {activeView === "yourpanel" && isEnterprise && <YourPanel />}
    ```
-4. Add API helpers in `web/src/lib/api/admin.ts`
+4. Add API helpers in the admin API client
 5. Build the frontend (`cd web && npm run build`) before rebuilding Rust
 
 ## See Also

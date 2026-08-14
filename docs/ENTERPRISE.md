@@ -10,23 +10,22 @@ behind the `enterprise` Cargo feature and conditionally enabled at startup via
 `create_routes_with_enterprise`. When an auth service is provided, enterprise
 endpoints are JWT-protected via `auth_middleware`.
 
-Source: `crates/madhyamas-core/src/enterprise/` and
-`crates/madhyamas-api/src/enterprise_handlers.rs`,
-`crates/madhyamas-api/src/middleware.rs`.
+Source: `crates/madhyamas-enterprise/src/` (auth, rbac, audit, user,
+handlers, middleware, router).
 
 ## Architecture
 
 ```mermaid
 graph TD
-    subgraph "Core (madhyamas-core/src/enterprise)"
+    subgraph "Enterprise crate (madhyamas-enterprise/src)"
         AUTH["auth.rs<br/>AuthManager"]
         RBAC["rbac.rs<br/>RbacManager"]
         AUDIT["audit.rs<br/>AuditLogger"]
         USER["user.rs<br/>User, UserRole"]
     end
-    subgraph "API (madhyamas-api)"
+    subgraph "Enterprise crate (cont.)"
         MW["middleware.rs<br/>auth_middleware"]
-        HAND["enterprise_handlers.rs"]
+        HAND["handlers.rs"]
     end
     REQ["HTTP Request"] --> MW
     MW -->|"validate JWT"| AUTH
@@ -40,7 +39,7 @@ graph TD
 
 ## Authentication
 
-Source: `enterprise/auth.rs`
+Source: `crates/madhyamas-enterprise/src/auth.rs`
 
 `AuthManager` supports two authentication mechanisms:
 
@@ -64,7 +63,7 @@ Source: `enterprise/auth.rs`
 
 ### Auth middleware
 
-`auth_middleware` (in `middleware.rs`) runs on enterprise routes when an auth
+`auth_middleware` (in `crates/madhyamas-enterprise/src/middleware.rs`) runs on enterprise routes when an auth
 service is configured:
 
 1. Extracts the `Authorization: Bearer <token>` header.
@@ -94,7 +93,7 @@ Presets: `AuthConfig::development()` (no secret) and
 
 ## Role-Based Access Control
 
-Source: `enterprise/rbac.rs`
+Source: `crates/madhyamas-enterprise/src/rbac.rs`
 
 `RbacManager` holds a `role_permissions` map. Roles and their default
 permissions:

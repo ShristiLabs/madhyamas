@@ -9,7 +9,7 @@ SQLite (OSS) or PostgreSQL (enterprise). The persistence layer is split across
 three stores:
 
 - **Traffic store** — `crates/madhyamas-core/src/traffic/store.rs` (SQLite) or `crates/madhyamas-core/src/storage/postgres/traffic.rs` (PostgreSQL)
-- **Intercept store** — `crates/madhyamas-core/src/persistence/intercept_store.rs`
+- **Intercept store** — `crates/madhyamas-core/src/storage/sqlite/intercept.rs` (SQLite) or `crates/madhyamas-core/src/storage/postgres/intercept.rs` (PostgreSQL)
 - **Config store** — `crates/madhyamas-core/src/persistence/config_store.rs`
 
 The `Persistable` trait (`persistence/mod.rs`) defines a common interface for
@@ -125,7 +125,7 @@ Tables: `sessions`, `requests`, `responses`, `ws_connections`, `ws_messages`,
 Indexes optimize the common query patterns: per-session lookups, URL/method
 filtering, and timestamp ordering.
 
-## Intercept Store (`persistence/intercept_store.rs`)
+## Intercept Store (`storage/sqlite/intercept.rs`)
 
 Stores the five intercept rule types plus the throttle profile. Each rule table
 includes `enabled`, `priority`, `hit_count`, and timestamps.

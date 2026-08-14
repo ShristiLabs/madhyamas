@@ -53,6 +53,7 @@ export function ProtectedApp({ tierInfo, children }: {
 }
 
 /** Convenience hook for components that need both tier + auth state. */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useEnterpriseGate() {
   const { tierInfo } = useTier()
   const { isAuthenticated } = useAuth()

@@ -68,6 +68,7 @@ export function TierProvider({ children }: { children: ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useTier(): TierContextValue {
   const ctx = useContext(TierContext)
   if (!ctx) throw new Error("useTier must be used within TierProvider")

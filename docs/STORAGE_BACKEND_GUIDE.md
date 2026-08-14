@@ -467,10 +467,21 @@ Step-by-step for adding a new backend (e.g. MySQL) for all six traits:
 1. **Add the driver.** Add `sqlx` with the `mysql` feature to `madhyamas-core`
    and `madhyamas-enterprise` `Cargo.toml`. Gate behind a `mysql` Cargo feature.
 
-2. **Create the module skeleton.** Add `crates/madhyamas-core/src/storage/mysql/`
-   (`mod.rs`, `traffic.rs`, `config.rs`, `intercept.rs`, `plugin.rs`,
-   `script.rs`) and `crates/madhyamas-enterprise/src/store/mysql.rs`. Re-export
-   from `storage/mod.rs` behind the feature flag.
+2. **Create the module skeleton.** Add a `mysql/` directory under the
+   storage module with the following files:
+
+   ```text
+   storage/mysql/
+   ├── mod.rs
+   ├── traffic.rs
+   ├── config.rs
+   ├── intercept.rs
+   ├── plugin.rs
+   └── script.rs
+   ```
+
+   Also add an enterprise MySQL store. Re-export from `storage/mod.rs`
+   behind the feature flag.
 
 3. **Define the schema DDL.** Translate `SCHEMA_CORE_STMTS` to MySQL syntax
    (`BYTEA` → `LONGBLOB`; `BOOLEAN` → `TINYINT(1)`; IDs are app-generated
