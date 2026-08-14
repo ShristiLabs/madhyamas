@@ -302,7 +302,8 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation tools
-        if: matrix.cross
+        if: matrix.cross && runner.os == 'Linux'
+        shell: bash
         run: |
           sudo apt-get update
           if [ "${{ matrix.cross_arch }}" = "armv7" ]; then
