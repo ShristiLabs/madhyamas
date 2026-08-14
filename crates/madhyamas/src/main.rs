@@ -263,6 +263,21 @@ struct Args {
     /// URL, the default SQLite backends are used (existing behavior).
     #[arg(long, env = "MADHYAMAS_DATABASE_URL", global = true)]
     database_url: Option<String>,
+
+    /// Redis URL for cross-instance state synchronization (enterprise tier,
+    /// multi-instance mode). When provided, the binary connects to Redis and
+    /// enables pub/sub event broadcasting (WebSocket traffic events, config
+    /// changes, intercept rule changes) and license seat coordination across
+    /// instances. When omitted, the binary runs in single-instance mode (all
+    /// multi-instance features disabled — current behavior).
+    ///
+    /// Accepted URL schemes:
+    /// - `redis://host:port` — plain TCP
+    /// - `redis://:password@host:port` — auth
+    /// - `rediss://host:port` — TLS
+    /// - `rediss://:password@host:port` — TLS + auth
+    #[arg(long, env = "MADHYAMAS_REDIS_URL", global = true)]
+    redis_url: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1048,7 +1063,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     // compiled out in the OSS build (--no-default-features), so no
     // enterprise code is linked.
     #[cfg(feature = "enterprise")]
-    let (api_state, enterprise_router) = {
+    let (api_state, enterprise_router, redis_state_for_shutdown) = {
         let jwt_secret = args.jwt_secret.clone().unwrap_or_else(|| {
             tracing::warn!(
                 "No --jwt-secret provided; using default development secret. \
@@ -1173,9 +1188,72 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             args.admin_password.clone(),
         )
         .await?;
+        // Phase 6a/6c: Redis cross-instance state coordination. When
+        // --redis-url is provided, connect to Redis and enable pub/sub event
+        // broadcasting + license seat tracking. When omitted, multi-instance
+        // features are disabled (single-instance mode).
+        let instance_id = uuid::Uuid::new_v4().to_string();
+        let redis_state: Option<std::sync::Arc<madhyamas_enterprise::RedisState>> =
+            if let Some(ref redis_url) = args.redis_url {
+                tracing::info!(
+                    "Connecting to Redis for multi-instance state: {}",
+                    redis_url
+                );
+                let state = madhyamas_enterprise::RedisState::new(redis_url, instance_id.clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to connect to Redis: {e}"))?;
+                tracing::info!("Redis connected (instance_id={})", instance_id);
+                Some(std::sync::Arc::new(state))
+            } else {
+                tracing::info!(
+                    "No --redis-url provided; running in single-instance mode \
+                     (multi-instance features disabled)"
+                );
+                None
+            };
+        // Phase 6c: license seat coordination. When both --license-file and
+        // --redis-url are provided, register this instance in Redis and check
+        // the active instance count against the license seat limit.
+        if let (Some(ref rs), Some(ref lic)) = (&redis_state, &license) {
+            let addr = format!("{}:{}", config.host, config.api_port);
+            let license_id = lic.claims.license_id.clone();
+            rs.register_instance(&instance_id, &license_id, &addr)
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to register instance in Redis: {e}"))?;
+            let active = rs
+                .active_instance_count()
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to query active instance count: {e}"))?;
+            let seats = lic.claims.seats as usize;
+            tracing::info!(
+                "License seat check: {active} active instances, license allows {seats} seats"
+            );
+            if active > seats {
+                if let Err(e) = rs.deregister_instance(&instance_id).await {
+                    tracing::warn!("failed to deregister instance: {e}");
+                }
+                return Err(anyhow::anyhow!(
+                    "license seat limit exceeded: {active} active instances, license allows {seats} seats"
+                ));
+            }
+            // Start heartbeat task (every 60s, refresh instance score + TTL).
+            let rs_heartbeat = rs.clone();
+            let hb_id = instance_id.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                interval.tick().await; // skip immediate tick
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = rs_heartbeat.heartbeat(&hb_id).await {
+                        tracing::warn!("Redis heartbeat failed: {e}");
+                    }
+                }
+            });
+        }
         let enterprise = madhyamas_enterprise::EnterpriseState::new(auth_config)
             .with_store(store.clone())
-            .with_license(license);
+            .with_license(license)
+            .with_redis(redis_state.clone());
         // Wire the store into AuthManager (for API key validation) and
         // AuditLogger (for persistent audit events + hash chain).
         let auth = std::sync::Arc::new(
@@ -1194,16 +1272,167 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             .with_auth_provider(auth.clone())
             .with_authorizer(enterprise.rbac.clone())
             .with_audit_sink(audit.clone());
+        // Wire the Redis event publisher into AppState so API handlers can
+        // publish config/intercept change notifications cross-instance.
+        let api_state = if let Some(ref rs) = redis_state {
+            api_state.with_event_publisher(rs.clone())
+        } else {
+            api_state
+        };
+        // Phase 6a: start Redis pub/sub bridge tasks for cross-instance
+        // WebSocket event broadcasting, config propagation, and intercept
+        // rule sync. These are no-ops when redis_state is None.
+        if let Some(ref rs) = redis_state {
+            // WS event bridge: local broadcast → Redis publish.
+            let rs_pub = rs.clone();
+            let local_sender = api_state.traffic_store.event_sender();
+            let mut local_rx = api_state.traffic_store.subscribe();
+            let pub_instance_id = instance_id.clone();
+            tokio::spawn(async move {
+                loop {
+                    match local_rx.recv().await {
+                        Ok(event) => {
+                            let wrapper = madhyamas_enterprise::RedisTrafficEvent {
+                                instance_id: pub_instance_id.clone(),
+                                event,
+                            };
+                            if let Ok(json) = serde_json::to_string(&wrapper) {
+                                if let Err(e) =
+                                    rs_pub.publish(madhyamas_core::CHANNEL_EVENTS, &json).await
+                                {
+                                    tracing::warn!("Redis event publish failed: {e}");
+                                }
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!("Redis bridge lagged behind by {n} local events");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tracing::debug!("Local event channel closed, stopping Redis bridge");
+                            break;
+                        }
+                    }
+                }
+            });
+            // WS event bridge: Redis subscribe → local broadcast.
+            let rs_sub = rs.clone();
+            let local_sender_clone = local_sender;
+            let sub_instance_id = instance_id.clone();
+            tokio::spawn(async move {
+                use futures::StreamExt;
+                loop {
+                    match rs_sub.subscribe(madhyamas_core::CHANNEL_EVENTS).await {
+                        Ok(mut stream) => {
+                            while let Some(msg) = stream.next().await {
+                                if let Ok(payload) = msg.get_payload::<String>() {
+                                    if let Ok(wrapper) =
+                                        serde_json::from_str::<
+                                            madhyamas_enterprise::RedisTrafficEvent,
+                                        >(&payload)
+                                    {
+                                        if wrapper.instance_id == sub_instance_id {
+                                            continue;
+                                        }
+                                        let _ = local_sender_clone.send(wrapper.event);
+                                    }
+                                }
+                            }
+                            tracing::warn!("Redis events stream ended, reconnecting...");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Redis events subscribe failed: {e}");
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            });
+            // Config change subscriber: on notification, log (reload from
+            // shared store is future work — config is currently local file +
+            // in-memory).
+            let rs_cfg = rs.clone();
+            tokio::spawn(async move {
+                use futures::StreamExt;
+                loop {
+                    match rs_cfg.subscribe(madhyamas_core::CHANNEL_CONFIG_EVENT).await {
+                        Ok(mut stream) => {
+                            while let Some(msg) = stream.next().await {
+                                if let Ok(payload) = msg.get_payload::<String>() {
+                                    tracing::info!(
+                                        "Config change notification from Redis: {payload}"
+                                    );
+                                }
+                            }
+                            tracing::debug!("Redis config stream ended, reconnecting...");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Redis config subscribe failed: {e}");
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            });
+            // Intercept rule change subscriber: on notification, reload all
+            // intercept rules from the shared store so this instance picks up
+            // changes made on other instances.
+            let rs_int = rs.clone();
+            let int_mock = api_state.mock_manager.clone();
+            let int_rewrite = api_state.rewrite_manager.clone();
+            let int_breakpoint = api_state.breakpoint_manager.clone();
+            let int_throttle = api_state.throttle_manager.clone();
+            let int_block_list = api_state.block_list_manager.clone();
+            tokio::spawn(async move {
+                use futures::StreamExt;
+                use madhyamas_core::Persistable;
+                loop {
+                    match rs_int
+                        .subscribe(madhyamas_core::CHANNEL_INTERCEPT_EVENT)
+                        .await
+                    {
+                        Ok(mut stream) => {
+                            while let Some(msg) = stream.next().await {
+                                if let Ok(payload) = msg.get_payload::<String>() {
+                                    tracing::info!(
+                                        "Intercept rule change notification from Redis: {payload}; reloading rules"
+                                    );
+                                    if let Err(e) = int_mock.load().await {
+                                        tracing::warn!("Failed to reload mock rules: {e}");
+                                    }
+                                    if let Err(e) = int_rewrite.load().await {
+                                        tracing::warn!("Failed to reload rewrite rules: {e}");
+                                    }
+                                    if let Err(e) = int_breakpoint.load().await {
+                                        tracing::warn!("Failed to reload breakpoint rules: {e}");
+                                    }
+                                    if let Err(e) = int_throttle.load().await {
+                                        tracing::warn!("Failed to reload throttle profile: {e}");
+                                    }
+                                    if let Err(e) = int_block_list.load().await {
+                                        tracing::warn!("Failed to reload block list: {e}");
+                                    }
+                                }
+                            }
+                            tracing::debug!("Redis intercept stream ended, reconnecting...");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Redis intercept subscribe failed: {e}");
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            });
+        }
         let router = madhyamas_enterprise::create_enterprise_router(
             store,
             auth.clone(),
             audit.clone(),
             enterprise.license.clone(),
         );
-        (api_state, Some(router))
+        (api_state, Some(router), redis_state)
     };
     #[cfg(not(feature = "enterprise"))]
     let enterprise_router: Option<axum::Router<std::sync::Arc<madhyamas_api::AppState>>> = None;
+    #[cfg(not(feature = "enterprise"))]
+    let _redis_state_for_shutdown: Option<()> = None;
 
     let rate_limit_config = if args.rate_limit {
         RateLimitConfig::enabled(args.rate_limit_rps, args.rate_limit_burst)
@@ -1270,12 +1499,46 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
 
     // Graceful shutdown: wait for SIGINT/SIGTERM, then drain the API server
     // and abort the proxy task so in-flight work is not abandoned abruptly.
+    // In multi-instance mode (Redis enabled), the instance is deregistered
+    // from the Redis seat tracker so the seat is released promptly.
+    #[cfg(feature = "enterprise")]
+    let shutdown_redis = redis_state_for_shutdown.clone();
     let shutdown = async move {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            tracing::warn!("signal handler error: {e}");
-            return;
+        // Wait for either SIGINT (ctrl_c) or SIGTERM (Unix signal).
+        let sigint = tokio::signal::ctrl_c();
+        #[cfg(unix)]
+        let sigterm = async {
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(mut s) => {
+                    s.recv().await;
+                }
+                Err(e) => {
+                    tracing::warn!("SIGTERM handler setup error: {e}");
+                }
+            }
+        };
+        #[cfg(not(unix))]
+        let sigterm = std::future::pending::<()>();
+        tokio::select! {
+            res = sigint => {
+                if let Err(e) = res {
+                    tracing::warn!("signal handler error: {e}");
+                    return;
+                }
+            }
+            _ = sigterm => {}
         }
         info!("Shutdown signal received, draining connections...");
+        // Phase 6c: deregister this instance from the Redis seat tracker so
+        // the seat is released promptly (no waiting for the 120s TTL).
+        #[cfg(feature = "enterprise")]
+        if let Some(rs) = shutdown_redis {
+            if let Err(e) = rs.deregister_instance(rs.instance_id()).await {
+                tracing::warn!("Failed to deregister instance from Redis: {e}");
+            } else {
+                tracing::info!("Instance deregistered from Redis seat tracker");
+            }
+        }
     };
 
     let api_handle = axum::serve(
