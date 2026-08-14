@@ -32,7 +32,7 @@ pub async fn handle_ws(socket: WebSocket, traffic_store: Arc<TrafficStore>) {
     }
 
     // Send initial traffic data
-    if let Ok(entries) = traffic_store.get_traffic(&TrafficFilter::default()) {
+    if let Ok(entries) = traffic_store.get_traffic(&TrafficFilter::default()).await {
         let snapshots: Vec<TrafficEntrySnapshot> =
             entries.iter().map(TrafficEntrySnapshot::from).collect();
         let initial_msg = WsServerMessage::InitialTraffic(snapshots);
@@ -155,7 +155,7 @@ async fn handle_client_message(
                 limit: *limit,
                 ..Default::default()
             };
-            if let Ok(entries) = traffic_store.get_traffic(&filter) {
+            if let Ok(entries) = traffic_store.get_traffic(&filter).await {
                 let snapshots: Vec<TrafficEntrySnapshot> =
                     entries.iter().map(TrafficEntrySnapshot::from).collect();
                 debug!(

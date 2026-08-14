@@ -621,7 +621,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     let cert_manager = CertificateManager::new(&config.cert_path).await?;
 
     // Initialize traffic store
-    let traffic_store = TrafficStore::new(config.db_path.clone())?;
+    let traffic_store = TrafficStore::new(config.db_path.clone()).await?;
     traffic_store.set_max_body_size(config.max_body_size);
     traffic_store.set_max_entries(config.max_requests);
     if let Some(mb) = config.max_total_size_mb {

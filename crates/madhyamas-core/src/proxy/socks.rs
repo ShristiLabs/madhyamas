@@ -637,7 +637,7 @@ pub async fn handle_socks5_connection(
         },
     );
     entry.is_passthrough = true;
-    let _ = traffic_store.store_request(&entry);
+    let _ = traffic_store.store_request(&entry).await;
     let _ = traffic_tx.send(entry.clone());
 
     // ── 5. Dial the target ─────────────────────────────────────────────
@@ -652,30 +652,32 @@ pub async fn handle_socks5_connection(
                 let _ = client_socket
                     .write_all(&build_connect_reply(reply, None))
                     .await;
-                let _ = traffic_store.store_response(
-                    &entry.id,
-                    &crate::traffic::ResponseData {
-                        status_code: 502,
-                        status_message: Some(format!(
-                            "Bad Gateway (SOCKS5 connect failed: {})",
-                            reply.as_str()
-                        )),
-                        headers: std::collections::HashMap::new(),
-                        body: Some(
-                            format!(
-                                "SOCKS5 CONNECT to {} failed.\n\nError: {}\n\n\
+                let _ = traffic_store
+                    .store_response(
+                        &entry.id,
+                        &crate::traffic::ResponseData {
+                            status_code: 502,
+                            status_message: Some(format!(
+                                "Bad Gateway (SOCKS5 connect failed: {})",
+                                reply.as_str()
+                            )),
+                            headers: std::collections::HashMap::new(),
+                            body: Some(
+                                format!(
+                                    "SOCKS5 CONNECT to {} failed.\n\nError: {}\n\n\
                                  The target was unreachable. SOCKS5 tunnels the \
                                  connection directly; the request/response contents \
                                  are not inspected.",
-                                target_addr, e
-                            )
-                            .into_bytes(),
-                        ),
-                        content_type: Some("text/plain".to_string()),
-                        duration_ms: 0,
-                        http_version: Some("SOCKS5".to_string()),
-                    },
-                );
+                                    target_addr, e
+                                )
+                                .into_bytes(),
+                            ),
+                            content_type: Some("text/plain".to_string()),
+                            duration_ms: 0,
+                            http_version: Some("SOCKS5".to_string()),
+                        },
+                    )
+                    .await;
                 let _ = traffic_tx.send(entry);
                 return Err(Error::Proxy(format!("SOCKS5 connect failed: {}", e)));
             }
@@ -684,21 +686,23 @@ pub async fn handle_socks5_connection(
                 let _ = client_socket
                     .write_all(&build_connect_reply(SocksReply::TtlExpired, None))
                     .await;
-                let _ = traffic_store.store_response(
-                    &entry.id,
-                    &crate::traffic::ResponseData {
-                        status_code: 504,
-                        status_message: Some("Gateway Timeout (SOCKS5)".to_string()),
-                        headers: std::collections::HashMap::new(),
-                        body: Some(
-                            format!("SOCKS5 CONNECT to {} timed out (30s).", target_addr)
-                                .into_bytes(),
-                        ),
-                        content_type: Some("text/plain".to_string()),
-                        duration_ms: 30000,
-                        http_version: Some("SOCKS5".to_string()),
-                    },
-                );
+                let _ = traffic_store
+                    .store_response(
+                        &entry.id,
+                        &crate::traffic::ResponseData {
+                            status_code: 504,
+                            status_message: Some("Gateway Timeout (SOCKS5)".to_string()),
+                            headers: std::collections::HashMap::new(),
+                            body: Some(
+                                format!("SOCKS5 CONNECT to {} timed out (30s).", target_addr)
+                                    .into_bytes(),
+                            ),
+                            content_type: Some("text/plain".to_string()),
+                            duration_ms: 30000,
+                            http_version: Some("SOCKS5".to_string()),
+                        },
+                    )
+                    .await;
                 let _ = traffic_tx.send(entry);
                 return Err(Error::Proxy("SOCKS5 connect timeout".into()));
             }
@@ -711,27 +715,29 @@ pub async fn handle_socks5_connection(
         .await
         .map_err(|e| Error::Proxy(format!("Failed to write SOCKS5 success reply: {}", e)))?;
 
-    let _ = traffic_store.store_response(
-        &entry.id,
-        &crate::traffic::ResponseData {
-            status_code: 200,
-            status_message: Some("Connection Established (SOCKS5)".to_string()),
-            headers: std::collections::HashMap::new(),
-            body: Some(
-                format!(
-                    "SOCKS5 tunnel established to {}.\n\n\
+    let _ = traffic_store
+        .store_response(
+            &entry.id,
+            &crate::traffic::ResponseData {
+                status_code: 200,
+                status_message: Some("Connection Established (SOCKS5)".to_string()),
+                headers: std::collections::HashMap::new(),
+                body: Some(
+                    format!(
+                        "SOCKS5 tunnel established to {}.\n\n\
                      The connection is relayed as a blind TCP tunnel. Request and \
                      response contents are not inspected. To intercept HTTPS, use \
                      the HTTP proxy port with CONNECT instead.",
-                    target_addr
-                )
-                .into_bytes(),
-            ),
-            content_type: Some("text/plain".to_string()),
-            duration_ms: 0,
-            http_version: Some("SOCKS5".to_string()),
-        },
-    );
+                        target_addr
+                    )
+                    .into_bytes(),
+                ),
+                content_type: Some("text/plain".to_string()),
+                duration_ms: 0,
+                http_version: Some("SOCKS5".to_string()),
+            },
+        )
+        .await;
     let _ = traffic_tx.send(entry);
 
     relay(client_socket, upstream_socket).await;
@@ -1120,7 +1126,9 @@ mod tests {
         let (traffic_tx, _) = tokio::sync::broadcast::channel(16);
         let db =
             std::env::temp_dir().join(format!("madhyamas-socks-test-{}.db", uuid::Uuid::new_v4()));
-        let store = crate::traffic::TrafficStore::new(db.to_str().unwrap()).unwrap();
+        let store = crate::traffic::TrafficStore::new(db.to_str().unwrap())
+            .await
+            .unwrap();
 
         let server_task = tokio::spawn(async move {
             let (sock, _) = proxy_listener.accept().await.unwrap();
@@ -1179,7 +1187,9 @@ mod tests {
             "madhyamas-socks-auth-test-{}.db",
             uuid::Uuid::new_v4()
         ));
-        let store = crate::traffic::TrafficStore::new(db.to_str().unwrap()).unwrap();
+        let store = crate::traffic::TrafficStore::new(db.to_str().unwrap())
+            .await
+            .unwrap();
 
         let server_task = tokio::spawn(async move {
             let (sock, _) = proxy_listener.accept().await.unwrap();
@@ -1228,7 +1238,9 @@ mod tests {
             "madhyamas-socks-userpass-test-{}.db",
             uuid::Uuid::new_v4()
         ));
-        let store = crate::traffic::TrafficStore::new(db.to_str().unwrap()).unwrap();
+        let store = crate::traffic::TrafficStore::new(db.to_str().unwrap())
+            .await
+            .unwrap();
 
         let server_task = tokio::spawn(async move {
             let (sock, _) = proxy_listener.accept().await.unwrap();
@@ -1292,7 +1304,9 @@ mod tests {
             "madhyamas-socks-badauth-test-{}.db",
             uuid::Uuid::new_v4()
         ));
-        let store = crate::traffic::TrafficStore::new(db.to_str().unwrap()).unwrap();
+        let store = crate::traffic::TrafficStore::new(db.to_str().unwrap())
+            .await
+            .unwrap();
 
         let server_task = tokio::spawn(async move {
             let (sock, _) = proxy_listener.accept().await.unwrap();

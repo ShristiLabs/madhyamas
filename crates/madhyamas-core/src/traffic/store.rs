@@ -1,23 +1,35 @@
-//! Traffic storage using SQLite
+//! Traffic storage using SQLite (sqlx).
+//!
+//! [`TrafficStore`] wraps a [`sqlx::SqlitePool`] and persists captured
+//! HTTP traffic (requests, responses, sessions, focus hosts) in SQLite,
+//! mirroring the schema and JSON serialization used by the former
+//! `rusqlite` implementation. All queries use runtime SQL strings with
+//! `?` placeholders. The 21 DB-backed methods are `async fn` (matching
+//! [`TrafficStoreBackend`]); the 16 in-memory config / broadcast methods
+//! remain sync `fn` (they touch only `RwLock` / `AtomicXxx` / broadcast).
 
 use super::{
     CaptureStats, FocusHost, ImportResult, RequestData, ResponseData, Session, TrafficEntry,
     TrafficEntrySnapshot, TrafficEvent, TrafficFilter,
 };
 use crate::mirror::MirrorWriter;
+use crate::storage::TrafficStoreBackend;
 use crate::Error;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use parking_lot::{Mutex, RwLock};
-use rusqlite::{params, Connection};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::{FromRow, Row};
 use std::collections::HashMap;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-/// Traffic store backed by SQLite
+/// Traffic store backed by SQLite (sqlx pool).
 pub struct TrafficStore {
-    conn: Mutex<Connection>,
+    pool: SqlitePool,
     current_session_id: Mutex<String>,
     /// When false the proxy forwards traffic but does not record it (passthrough mode)
     capture_enabled: AtomicBool,
@@ -53,14 +65,120 @@ pub struct TrafficStore {
 /// How often (in inserts) to run the total-size pruning check.
 const SIZE_CHECK_INTERVAL: usize = 100;
 
-impl TrafficStore {
-    /// Create a new traffic store
-    pub fn new<P: AsRef<Path>>(path: P) -> crate::Result<Arc<Self>> {
-        let conn = Connection::open(path).map_err(Error::Database)?;
-        let (event_sender, _) = broadcast::channel(super::TRAFFIC_EVENT_CHANNEL_CAPACITY);
+/// DDL for the core traffic tables (sessions, requests, responses, indexes).
+const SCHEMA_CORE: &str = r#"
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    created_at INTEGER,
+    updated_at INTEGER
+);
 
+CREATE TABLE IF NOT EXISTS requests (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    method TEXT NOT NULL,
+    url TEXT NOT NULL,
+    host TEXT NOT NULL,
+    path TEXT NOT NULL,
+    headers TEXT,
+    body BLOB,
+    content_type TEXT,
+    timestamp INTEGER,
+    modified INTEGER DEFAULT 0,
+    notes TEXT,
+    is_passthrough INTEGER DEFAULT 0,
+    http_version TEXT,
+    script_intercepted INTEGER DEFAULT 0,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE TABLE IF NOT EXISTS responses (
+    request_id TEXT PRIMARY KEY,
+    status_code INTEGER NOT NULL,
+    status_message TEXT,
+    headers TEXT,
+    body BLOB,
+    content_type TEXT,
+    duration_ms INTEGER,
+    http_version TEXT,
+    FOREIGN KEY (request_id) REFERENCES requests(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_requests_url ON requests(url);
+CREATE INDEX IF NOT EXISTS idx_requests_method ON requests(method);
+CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp);
+
+CREATE TABLE IF NOT EXISTS ws_connections (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    host TEXT NOT NULL,
+    path TEXT NOT NULL,
+    state TEXT NOT NULL,
+    request_headers TEXT,
+    response_headers TEXT,
+    subprotocol TEXT,
+    created_at INTEGER NOT NULL,
+    closed_at INTEGER,
+    messages_sent INTEGER NOT NULL DEFAULT 0,
+    messages_received INTEGER NOT NULL DEFAULT 0,
+    bytes_sent INTEGER NOT NULL DEFAULT 0,
+    bytes_received INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE TABLE IF NOT EXISTS ws_messages (
+    id TEXT PRIMARY KEY,
+    connection_id TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    message_type TEXT NOT NULL,
+    payload_raw BLOB,
+    payload_text TEXT,
+    opcode INTEGER NOT NULL,
+    is_final INTEGER NOT NULL DEFAULT 1,
+    mask INTEGER,
+    timestamp INTEGER NOT NULL,
+    FOREIGN KEY (connection_id) REFERENCES ws_connections(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ws_conn_session ON ws_connections(session_id);
+CREATE INDEX IF NOT EXISTS idx_ws_conn_state ON ws_connections(state);
+CREATE INDEX IF NOT EXISTS idx_ws_msg_conn ON ws_messages(connection_id);
+CREATE INDEX IF NOT EXISTS idx_ws_msg_timestamp ON ws_messages(timestamp);
+
+CREATE TABLE IF NOT EXISTS focus_hosts (
+    id TEXT PRIMARY KEY,
+    pattern TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL
+);
+"#;
+
+impl TrafficStore {
+    /// Create a new traffic store backed by a SQLite file at `path`.
+    pub async fn new<P: AsRef<Path>>(path: P) -> crate::Result<Arc<Self>> {
+        let path_str = path
+            .as_ref()
+            .to_str()
+            .ok_or_else(|| Error::Config("invalid db path: not valid UTF-8".to_string()))?;
+        let db_url = format!("sqlite://{}", path_str);
+        let options = SqliteConnectOptions::from_str(&db_url)
+            .map_err(|e| Error::Config(format!("failed to parse db url: {e}")))?
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .pragma("cache_size", "-64000");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(8)
+            .connect_with(options)
+            .await
+            .map_err(Error::Sqlx)?;
+
+        let (event_sender, _) = broadcast::channel(super::TRAFFIC_EVENT_CHANNEL_CAPACITY);
         let store = Arc::new(Self {
-            conn: Mutex::new(conn),
+            pool,
             current_session_id: Mutex::new(String::new()),
             capture_enabled: AtomicBool::new(true),
             event_sender,
@@ -74,19 +192,31 @@ impl TrafficStore {
             mirror_writer: RwLock::new(None),
         });
 
-        store.create_tables()?;
-        store.ensure_session()?;
+        store.create_tables().await?;
+        store.ensure_session().await?;
 
         Ok(store)
     }
 
-    /// Create an in-memory traffic store
-    pub fn in_memory() -> crate::Result<Arc<Self>> {
-        let conn = Connection::open_in_memory().map_err(Error::Database)?;
-        let (event_sender, _) = broadcast::channel(super::TRAFFIC_EVENT_CHANNEL_CAPACITY);
+    /// Create an in-memory traffic store.
+    ///
+    /// Uses `max_connections(1)` so the in-memory database is shared across
+    /// all connection acquires (each `:memory:` DB is per-connection by
+    /// default in SQLite).
+    pub async fn in_memory() -> crate::Result<Arc<Self>> {
+        let options = SqliteConnectOptions::new()
+            .in_memory(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Memory)
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Off);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .map_err(Error::Sqlx)?;
 
+        let (event_sender, _) = broadcast::channel(super::TRAFFIC_EVENT_CHANNEL_CAPACITY);
         let store = Arc::new(Self {
-            conn: Mutex::new(conn),
+            pool,
             current_session_id: Mutex::new(String::new()),
             capture_enabled: AtomicBool::new(true),
             event_sender,
@@ -100,10 +230,15 @@ impl TrafficStore {
             mirror_writer: RwLock::new(None),
         });
 
-        store.create_tables()?;
-        store.ensure_session()?;
+        store.create_tables().await?;
+        store.ensure_session().await?;
 
         Ok(store)
+    }
+
+    /// Borrow the underlying pool.
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
     }
 
     /// Subscribe to traffic events
@@ -122,235 +257,91 @@ impl TrafficStore {
         let _ = self.event_sender.send(event);
     }
 
-    /// Create database tables
-    fn create_tables(&self) -> crate::Result<()> {
-        let conn = self.conn.lock();
-
-        // Enable WAL mode for better concurrent read/write performance
-        conn.execute_batch("PRAGMA journal_mode=WAL;")
-            .map_err(Error::Database)?;
-
-        // Set busy timeout to 5 seconds to avoid "database is locked" errors
-        // when multiple threads try to write simultaneously.
-        conn.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(Error::Database)?;
-
-        // Set synchronous to NORMAL (safe with WAL, much faster than FULL)
-        conn.execute_batch("PRAGMA synchronous=NORMAL;")
-            .map_err(Error::Database)?;
-
-        // Increase cache size for better read performance
-        conn.execute_batch("PRAGMA cache_size=-64000;") // 64MB cache
-            .map_err(Error::Database)?;
-
-        conn.execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                name TEXT,
-                created_at INTEGER,
-                updated_at INTEGER
-            );
-
-            CREATE TABLE IF NOT EXISTS requests (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                method TEXT NOT NULL,
-                url TEXT NOT NULL,
-                host TEXT NOT NULL,
-                path TEXT NOT NULL,
-                headers TEXT,
-                body BLOB,
-                content_type TEXT,
-                timestamp INTEGER,
-                modified INTEGER DEFAULT 0,
-                notes TEXT,
-                is_passthrough INTEGER DEFAULT 0,
-                http_version TEXT,
-                FOREIGN KEY (session_id) REFERENCES sessions(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS responses (
-                request_id TEXT PRIMARY KEY,
-                status_code INTEGER NOT NULL,
-                status_message TEXT,
-                headers TEXT,
-                body BLOB,
-                content_type TEXT,
-                duration_ms INTEGER,
-                http_version TEXT,
-                FOREIGN KEY (request_id) REFERENCES requests(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id);
-            CREATE INDEX IF NOT EXISTS idx_requests_url ON requests(url);
-            CREATE INDEX IF NOT EXISTS idx_requests_method ON requests(method);
-            CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp);
-
-            -- WebSocket connections table
-            CREATE TABLE IF NOT EXISTS ws_connections (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                url TEXT NOT NULL,
-                host TEXT NOT NULL,
-                path TEXT NOT NULL,
-                state TEXT NOT NULL,
-                request_headers TEXT,
-                response_headers TEXT,
-                subprotocol TEXT,
-                created_at INTEGER NOT NULL,
-                closed_at INTEGER,
-                messages_sent INTEGER NOT NULL DEFAULT 0,
-                messages_received INTEGER NOT NULL DEFAULT 0,
-                bytes_sent INTEGER NOT NULL DEFAULT 0,
-                bytes_received INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY (session_id) REFERENCES sessions(id)
-            );
-
-            -- WebSocket messages table
-            CREATE TABLE IF NOT EXISTS ws_messages (
-                id TEXT PRIMARY KEY,
-                connection_id TEXT NOT NULL,
-                direction TEXT NOT NULL,
-                message_type TEXT NOT NULL,
-                payload_raw BLOB,
-                payload_text TEXT,
-                opcode INTEGER NOT NULL,
-                is_final INTEGER NOT NULL DEFAULT 1,
-                mask INTEGER,
-                timestamp INTEGER NOT NULL,
-                FOREIGN KEY (connection_id) REFERENCES ws_connections(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_ws_conn_session ON ws_connections(session_id);
-            CREATE INDEX IF NOT EXISTS idx_ws_conn_state ON ws_connections(state);
-            CREATE INDEX IF NOT EXISTS idx_ws_msg_conn ON ws_messages(connection_id);
-            CREATE INDEX IF NOT EXISTS idx_ws_msg_timestamp ON ws_messages(timestamp);
-
-            -- Focus hosts table (persisted host patterns for highlighting)
-            CREATE TABLE IF NOT EXISTS focus_hosts (
-                id TEXT PRIMARY KEY,
-                pattern TEXT NOT NULL UNIQUE,
-                created_at INTEGER NOT NULL
-            );
-            "#,
-        )
-        .map_err(Error::Database)?;
+    /// Create database tables and run schema migrations.
+    async fn create_tables(&self) -> crate::Result<()> {
+        sqlx::query(SCHEMA_CORE).execute(&self.pool).await?;
 
         // Migration: add is_passthrough column to existing requests tables
         // that were created before this feature existed.
-        let needs_migration: bool = {
-            let mut stmt = conn
-                .prepare("PRAGMA table_info(requests)")
-                .map_err(Error::Database)?;
-            let cols: Vec<String> = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(Error::Database)?
-                .filter_map(|r| r.ok())
-                .collect();
-            !cols.iter().any(|c| c == "is_passthrough")
-        };
-        if needs_migration {
-            conn.execute_batch("ALTER TABLE requests ADD COLUMN is_passthrough INTEGER DEFAULT 0;")
-                .map_err(Error::Database)?;
+        let cols: Vec<String> = sqlx::query("PRAGMA table_info(requests)")
+            .map(|row: sqlx::sqlite::SqliteRow| row.try_get::<String, _>(1).unwrap_or_default())
+            .fetch_all(&self.pool)
+            .await?;
+        if !cols.iter().any(|c| c == "is_passthrough") {
+            sqlx::query("ALTER TABLE requests ADD COLUMN is_passthrough INTEGER DEFAULT 0;")
+                .execute(&self.pool)
+                .await?;
         }
 
-        // Migration: add http_version column to requests/responses tables
-        // for older databases created before HTTP/2 downstream support.
-        let needs_req_h2: bool = {
-            let mut stmt = conn
-                .prepare("PRAGMA table_info(requests)")
-                .map_err(Error::Database)?;
-            let cols: Vec<String> = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(Error::Database)?
-                .filter_map(|r| r.ok())
-                .collect();
-            !cols.iter().any(|c| c == "http_version")
-        };
-        if needs_req_h2 {
-            conn.execute_batch("ALTER TABLE requests ADD COLUMN http_version TEXT;")
-                .map_err(Error::Database)?;
+        // Migration: add http_version column to requests/responses tables.
+        let cols: Vec<String> = sqlx::query("PRAGMA table_info(requests)")
+            .map(|row: sqlx::sqlite::SqliteRow| row.try_get::<String, _>(1).unwrap_or_default())
+            .fetch_all(&self.pool)
+            .await?;
+        if !cols.iter().any(|c| c == "http_version") {
+            sqlx::query("ALTER TABLE requests ADD COLUMN http_version TEXT;")
+                .execute(&self.pool)
+                .await?;
         }
 
-        let needs_resp_h2: bool = {
-            let mut stmt = conn
-                .prepare("PRAGMA table_info(responses)")
-                .map_err(Error::Database)?;
-            let cols: Vec<String> = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(Error::Database)?
-                .filter_map(|r| r.ok())
-                .collect();
-            !cols.iter().any(|c| c == "http_version")
-        };
-        if needs_resp_h2 {
-            conn.execute_batch("ALTER TABLE responses ADD COLUMN http_version TEXT;")
-                .map_err(Error::Database)?;
+        let cols: Vec<String> = sqlx::query("PRAGMA table_info(responses)")
+            .map(|row: sqlx::sqlite::SqliteRow| row.try_get::<String, _>(1).unwrap_or_default())
+            .fetch_all(&self.pool)
+            .await?;
+        if !cols.iter().any(|c| c == "http_version") {
+            sqlx::query("ALTER TABLE responses ADD COLUMN http_version TEXT;")
+                .execute(&self.pool)
+                .await?;
         }
 
-        // Migration: add script_intercepted column to requests table for
-        // tracking which requests had script hooks fire.
-        let needs_script_intercepted: bool = {
-            let mut stmt = conn
-                .prepare("PRAGMA table_info(requests)")
-                .map_err(Error::Database)?;
-            let cols: Vec<String> = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(Error::Database)?
-                .filter_map(|r| r.ok())
-                .collect();
-            !cols.iter().any(|c| c == "script_intercepted")
-        };
-        if needs_script_intercepted {
-            conn.execute_batch(
-                "ALTER TABLE requests ADD COLUMN script_intercepted INTEGER DEFAULT 0;",
-            )
-            .map_err(Error::Database)?;
+        // Migration: add script_intercepted column to requests table.
+        let cols: Vec<String> = sqlx::query("PRAGMA table_info(requests)")
+            .map(|row: sqlx::sqlite::SqliteRow| row.try_get::<String, _>(1).unwrap_or_default())
+            .fetch_all(&self.pool)
+            .await?;
+        if !cols.iter().any(|c| c == "script_intercepted") {
+            sqlx::query("ALTER TABLE requests ADD COLUMN script_intercepted INTEGER DEFAULT 0;")
+                .execute(&self.pool)
+                .await?;
         }
 
         Ok(())
     }
 
     /// Ensure a session exists
-    fn ensure_session(&self) -> crate::Result<()> {
-        let conn = self.conn.lock();
-
-        // Check if any session exists
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+    async fn ensure_session(&self) -> crate::Result<()> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
+            .fetch_one(&self.pool)
+            .await
             .unwrap_or(0);
 
         if count == 0 {
-            // Create default session
             let session = Session::new(Some("Default Session"));
-            conn.execute(
-                "INSERT INTO sessions (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    session.id,
-                    session.name,
-                    session.created_at.timestamp(),
-                    session.updated_at.timestamp()
-                ],
+            sqlx::query(
+                "INSERT INTO sessions (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
             )
-            .map_err(Error::Database)?;
-
+            .bind(&session.id)
+            .bind(&session.name)
+            .bind(session.created_at.timestamp())
+            .bind(session.updated_at.timestamp())
+            .execute(&self.pool)
+            .await?;
             *self.current_session_id.lock() = session.id;
         } else {
-            // Get the most recent session
-            let session_id: String = conn
-                .query_row(
-                    "SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 1",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap_or_default();
-
+            let session_id: String =
+                sqlx::query_scalar("SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 1")
+                    .fetch_one(&self.pool)
+                    .await
+                    .unwrap_or_default();
             *self.current_session_id.lock() = session_id;
         }
 
         Ok(())
     }
+
+    // -----------------------------------------------------------------------
+    // In-memory config / broadcast (sync — no pool access)
+    // -----------------------------------------------------------------------
 
     /// Get the current session ID
     pub fn current_session_id(&self) -> String {
@@ -484,96 +475,68 @@ impl TrafficStore {
         false
     }
 
+    // -----------------------------------------------------------------------
+    // DB-backed methods (async)
+    // -----------------------------------------------------------------------
+
     /// Get the number of traffic entries in the current session.
-    pub fn get_entry_count(&self) -> crate::Result<usize> {
-        let conn = self.conn.lock();
+    pub async fn get_entry_count(&self) -> crate::Result<usize> {
         let session_id = self.current_session_id.lock().clone();
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM requests WHERE session_id = ?1",
-                params![&session_id],
-                |row| row.get(0),
-            )
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM requests WHERE session_id = ?")
+            .bind(&session_id)
+            .fetch_one(&self.pool)
+            .await
             .unwrap_or(0);
         Ok(count as usize)
     }
 
     /// Get the total size of all stored bodies (request + response) in the
     /// current session, in bytes.
-    fn get_total_size(&self) -> crate::Result<usize> {
-        let conn = self.conn.lock();
+    async fn get_total_size(&self) -> crate::Result<usize> {
         let session_id = self.current_session_id.lock().clone();
-        let req_size: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(LENGTH(body)), 0) FROM requests WHERE session_id = ?1",
-                params![&session_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-        let resp_size: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(LENGTH(body)), 0) FROM responses WHERE request_id IN \
-                 (SELECT id FROM requests WHERE session_id = ?1)",
-                params![&session_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+        let req_size: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(LENGTH(body)), 0) FROM requests WHERE session_id = ?",
+        )
+        .bind(&session_id)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0);
+        let resp_size: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(LENGTH(body)), 0) FROM responses WHERE request_id IN \
+             (SELECT id FROM requests WHERE session_id = ?)",
+        )
+        .bind(&session_id)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0);
         Ok((req_size + resp_size) as usize)
     }
 
     /// Prune the oldest `count` entries from the current session. Deletes
     /// associated responses first to avoid orphaned rows, then emits a
     /// `Deleted` event so the web UI updates via WebSocket.
-    fn prune_oldest(&self, count: usize) -> crate::Result<()> {
+    async fn prune_oldest(&self, count: usize) -> crate::Result<()> {
         if count == 0 {
             return Ok(());
         }
-        let conn = self.conn.lock();
         let session_id = self.current_session_id.lock().clone();
 
         // Collect the IDs of the oldest entries to be pruned (for the event).
-        let pruned_ids: Vec<String> = {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT id FROM requests WHERE session_id = ?1 \
-                     ORDER BY timestamp ASC LIMIT ?2",
-                )
-                .map_err(Error::Database)?;
-            let rows = stmt
-                .query_map(params![&session_id, count as i64], |row| {
-                    row.get::<_, String>(0)
-                })
-                .map_err(Error::Database)?;
-            let mut ids = Vec::new();
-            for row in rows {
-                ids.push(row.map_err(Error::Database)?);
-            }
-            ids
-        };
+        let pruned_ids: Vec<String> = sqlx::query(
+            "SELECT id FROM requests WHERE session_id = ? \
+             ORDER BY timestamp ASC LIMIT ?",
+        )
+        .bind(&session_id)
+        .bind(count as i64)
+        .map(|row| row.try_get::<String, _>(0).unwrap_or_default())
+        .fetch_all(&self.pool)
+        .await?;
 
         if pruned_ids.is_empty() {
             return Ok(());
         }
 
-        // Delete responses for the pruned requests.
-        let placeholders: Vec<String> = (1..=pruned_ids.len()).map(|i| format!("?{i}")).collect();
-        let placeholders_str = placeholders.join(",");
-        let delete_responses_sql =
-            format!("DELETE FROM responses WHERE request_id IN ({placeholders_str})");
-        let params_refs: Vec<&dyn rusqlite::ToSql> = pruned_ids
-            .iter()
-            .map(|s| s as &dyn rusqlite::ToSql)
-            .collect();
-        conn.execute(&delete_responses_sql, params_refs.as_slice())
-            .map_err(Error::Database)?;
-
-        // Delete the requests.
-        let delete_requests_sql = format!("DELETE FROM requests WHERE id IN ({placeholders_str})");
-        conn.execute(&delete_requests_sql, params_refs.as_slice())
-            .map_err(Error::Database)?;
-
-        // Emit a deleted event so the web UI removes the pruned entries.
-        drop(conn);
+        delete_requests_and_responses(&self.pool, &pruned_ids).await?;
         self.emit_event(TrafficEvent::Deleted(pruned_ids));
 
         Ok(())
@@ -581,14 +544,14 @@ impl TrafficStore {
 
     /// Enforce the entry-count limit: if the current session has more
     /// entries than `max_entries`, prune the oldest surplus.
-    fn enforce_entry_limit(&self) -> crate::Result<()> {
+    async fn enforce_entry_limit(&self) -> crate::Result<()> {
         let max = self.max_entries.load(Ordering::Relaxed);
         if max == 0 {
             return Ok(());
         }
-        let count = self.get_entry_count()?;
+        let count = self.get_entry_count().await?;
         if count > max {
-            self.prune_oldest(count - max)?;
+            self.prune_oldest(count - max).await?;
         }
         Ok(())
     }
@@ -596,43 +559,36 @@ impl TrafficStore {
     /// Enforce the total-size limit: if the sum of all stored bodies
     /// exceeds `max_total_size_bytes`, prune oldest entries until under
     /// the limit. Only runs when `max_total_size_bytes` is non-zero.
-    fn enforce_size_limit(&self) -> crate::Result<()> {
+    async fn enforce_size_limit(&self) -> crate::Result<()> {
         let max = self.max_total_size_bytes.load(Ordering::Relaxed);
         if max == 0 {
             return Ok(());
         }
-        let mut total = self.get_total_size()?;
+        let mut total = self.get_total_size().await?;
         if total <= max {
             return Ok(());
         }
         // Prune oldest entries in batches until under the limit.
-        let conn = self.conn.lock();
         let session_id = self.current_session_id.lock().clone();
         // Gather oldest entries with their body sizes so we can prune
         // just enough to get under the limit.
-        let entries: Vec<(String, i64)> = {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT r.id, \
-                     COALESCE(LENGTH(r.body), 0) + COALESCE(\
-                       (SELECT LENGTH(rs.body) FROM responses rs WHERE rs.request_id = r.id), 0\
-                     ) AS entry_size \
-                     FROM requests r WHERE r.session_id = ?1 \
-                     ORDER BY r.timestamp ASC",
-                )
-                .map_err(Error::Database)?;
-            let rows = stmt
-                .query_map(params![&session_id], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-                })
-                .map_err(Error::Database)?;
-            let mut v = Vec::new();
-            for row in rows {
-                v.push(row.map_err(Error::Database)?);
-            }
-            v
-        };
-        drop(conn);
+        let entries: Vec<(String, i64)> = sqlx::query(
+            "SELECT r.id, \
+             COALESCE(LENGTH(r.body), 0) + COALESCE(\
+               (SELECT LENGTH(rs.body) FROM responses rs WHERE rs.request_id = r.id), 0\
+             ) AS entry_size \
+             FROM requests r WHERE r.session_id = ? \
+             ORDER BY r.timestamp ASC",
+        )
+        .bind(&session_id)
+        .map(|row| {
+            (
+                row.try_get::<String, _>(0).unwrap_or_default(),
+                row.try_get::<i64, _>(1).unwrap_or(0),
+            )
+        })
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut to_prune: Vec<String> = Vec::new();
         for (id, size) in entries {
@@ -643,29 +599,16 @@ impl TrafficStore {
             total = total.saturating_sub(size as usize);
         }
         if !to_prune.is_empty() {
-            let conn = self.conn.lock();
-            let placeholders: Vec<String> = (1..=to_prune.len()).map(|i| format!("?{i}")).collect();
-            let placeholders_str = placeholders.join(",");
-            let delete_responses_sql =
-                format!("DELETE FROM responses WHERE request_id IN ({placeholders_str})");
-            let params_refs: Vec<&dyn rusqlite::ToSql> =
-                to_prune.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
-            conn.execute(&delete_responses_sql, params_refs.as_slice())
-                .map_err(Error::Database)?;
-            let delete_requests_sql =
-                format!("DELETE FROM requests WHERE id IN ({placeholders_str})");
-            conn.execute(&delete_requests_sql, params_refs.as_slice())
-                .map_err(Error::Database)?;
-            drop(conn);
+            delete_requests_and_responses(&self.pool, &to_prune).await?;
             self.emit_event(TrafficEvent::Deleted(to_prune));
         }
         Ok(())
     }
 
     /// Get recording quota statistics for the current session.
-    pub fn get_capture_stats(&self) -> crate::Result<CaptureStats> {
-        let entry_count = self.get_entry_count()?;
-        let total_size_bytes = self.get_total_size()?;
+    pub async fn get_capture_stats(&self) -> crate::Result<CaptureStats> {
+        let entry_count = self.get_entry_count().await?;
+        let total_size_bytes = self.get_total_size().await?;
         Ok(CaptureStats {
             entry_count,
             max_entries: self.max_entries.load(Ordering::Relaxed),
@@ -694,7 +637,7 @@ impl TrafficStore {
     }
 
     /// Store a request
-    pub fn store_request(&self, entry: &TrafficEntry) -> crate::Result<()> {
+    pub async fn store_request(&self, entry: &TrafficEntry) -> crate::Result<()> {
         if !self.capture_enabled.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -702,7 +645,6 @@ impl TrafficStore {
         if self.is_host_ignored(&entry.request.host) {
             return Ok(());
         }
-        let conn = self.conn.lock();
         let headers = serde_json::to_string(&entry.request.headers).unwrap_or_default();
         // Only store the request body if capture_request_bodies is enabled.
         let body = if self.capture_request_bodies.load(Ordering::Relaxed) {
@@ -712,54 +654,54 @@ impl TrafficStore {
         };
         let content_type = entry.request.content_type.as_ref();
 
-        conn.execute(
+        sqlx::query(
             "INSERT OR REPLACE INTO requests (id, session_id, method, url, host, path, headers, body, content_type, timestamp, modified, notes, is_passthrough, http_version, script_intercepted)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-            params![
-                entry.id,
-                entry.session_id,
-                entry.request.method.to_string(),
-                entry.request.url,
-                entry.request.host,
-                entry.request.path,
-                headers,
-                body,
-                content_type,
-                entry.timestamp.timestamp(),
-                entry.modified as i32,
-                entry.notes,
-                entry.is_passthrough as i32,
-                entry.request.http_version.as_deref(),
-                entry.script_intercepted as i32,
-            ]
-        ).map_err(Error::Database)?;
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&entry.id)
+        .bind(&entry.session_id)
+        .bind(entry.request.method.to_string())
+        .bind(&entry.request.url)
+        .bind(&entry.request.host)
+        .bind(&entry.request.path)
+        .bind(&headers)
+        .bind(body)
+        .bind(content_type)
+        .bind(entry.timestamp.timestamp())
+        .bind(entry.modified as i32)
+        .bind(&entry.notes)
+        .bind(entry.is_passthrough as i32)
+        .bind(entry.request.http_version.as_deref())
+        .bind(entry.script_intercepted as i32)
+        .execute(&self.pool)
+        .await?;
 
         // Update session updated_at
-        conn.execute(
-            "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
-            params![Utc::now().timestamp(), entry.session_id],
-        )
-        .ok();
+        let now = Utc::now().timestamp();
+        let _ = sqlx::query("UPDATE sessions SET updated_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(&entry.session_id)
+            .execute(&self.pool)
+            .await;
 
         // Emit traffic added event
         let snapshot = TrafficEntrySnapshot::from(entry);
-        drop(conn);
         self.emit_event(TrafficEvent::Added(snapshot));
 
         // Enforce entry-count limit (cheap check on every insert).
-        self.enforce_entry_limit()?;
+        self.enforce_entry_limit().await?;
 
         // Enforce total-size limit periodically (expensive check).
         let prev = self.insert_counter.fetch_add(1, Ordering::Relaxed);
         if prev.is_multiple_of(SIZE_CHECK_INTERVAL) {
-            self.enforce_size_limit()?;
+            self.enforce_size_limit().await?;
         }
 
         Ok(())
     }
 
     /// Store a response for a request
-    pub fn store_response(
+    pub async fn store_response(
         &self,
         request_id: &str,
         response: &crate::traffic::ResponseData,
@@ -767,7 +709,6 @@ impl TrafficStore {
         if !self.capture_enabled.load(Ordering::Relaxed) {
             return Ok(());
         }
-        let conn = self.conn.lock();
         let headers = serde_json::to_string(&response.headers).unwrap_or_default();
         // Only store the response body if capture_response_bodies is enabled.
         let body = if self.capture_response_bodies.load(Ordering::Relaxed) {
@@ -777,26 +718,23 @@ impl TrafficStore {
         };
         let content_type = response.content_type.as_ref();
 
-        conn.execute(
+        sqlx::query(
             "INSERT OR REPLACE INTO responses (request_id, status_code, status_message, headers, body, content_type, duration_ms, http_version)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                request_id,
-                response.status_code,
-                response.status_message,
-                headers,
-                body,
-                content_type,
-                response.duration_ms as i64,
-                response.http_version.as_deref()
-            ]
-        ).map_err(Error::Database)?;
-
-        // Drop the connection lock before fetching the full entry
-        drop(conn);
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(request_id)
+        .bind(response.status_code as i32)
+        .bind(&response.status_message)
+        .bind(&headers)
+        .bind(body)
+        .bind(content_type)
+        .bind(response.duration_ms as i64)
+        .bind(response.http_version.as_deref())
+        .execute(&self.pool)
+        .await?;
 
         // Emit traffic updated event with full entry data
-        if let Ok(Some(entry)) = self.get_by_id(request_id) {
+        if let Ok(Some(entry)) = self.get_by_id(request_id).await {
             let snapshot = TrafficEntrySnapshot::from(&entry);
             self.emit_event(TrafficEvent::Updated(snapshot));
 
@@ -844,346 +782,153 @@ impl TrafficStore {
     }
 
     /// Get traffic with optional filter
-    pub fn get_traffic(&self, filter: &TrafficFilter) -> crate::Result<Vec<TrafficEntry>> {
-        let conn = self.conn.lock();
+    pub async fn get_traffic(&self, filter: &TrafficFilter) -> crate::Result<Vec<TrafficEntry>> {
+        let session_id = self.current_session_id.lock().clone();
 
-        let mut sql = String::from(
+        let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
                     r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted,
-                    rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms, rs.http_version
+                    rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.body AS resp_body, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
-             WHERE r.session_id = ?1"
+             WHERE r.session_id = ",
         );
-
-        let mut bind_params: Vec<Box<dyn rusqlite::ToSql>> =
-            vec![Box::new(self.current_session_id.lock().clone())];
+        qb.push_bind(session_id);
 
         if let Some(ref pattern) = filter.url_pattern {
-            sql.push_str(&format!(" AND r.url LIKE ?{}", bind_params.len() + 1));
-            bind_params.push(Box::new(format!("%{}%", pattern)));
+            qb.push(" AND r.url LIKE ")
+                .push_bind(format!("%{}%", pattern));
         }
 
         if let Some(ref method) = filter.method {
-            sql.push_str(&format!(" AND r.method = ?{}", bind_params.len() + 1));
-            bind_params.push(Box::new(method.to_string()));
+            qb.push(" AND r.method = ").push_bind(method.to_string());
         }
 
         if let Some(min) = filter.status_min {
-            sql.push_str(&format!(
-                " AND rs.status_code >= ?{}",
-                bind_params.len() + 1
-            ));
-            bind_params.push(Box::new(min as i32));
+            qb.push(" AND rs.status_code >= ").push_bind(min as i32);
         }
 
         if let Some(max) = filter.status_max {
-            sql.push_str(&format!(
-                " AND rs.status_code <= ?{}",
-                bind_params.len() + 1
-            ));
-            bind_params.push(Box::new(max as i32));
+            qb.push(" AND rs.status_code <= ").push_bind(max as i32);
         }
 
         if let Some(ref search) = filter.search {
-            sql.push_str(&format!(
-                " AND (r.url LIKE ?{} OR r.path LIKE ?{})",
-                bind_params.len() + 1,
-                bind_params.len() + 2
-            ));
             let search_pattern = format!("%{}%", search);
-            bind_params.push(Box::new(search_pattern.clone()));
-            bind_params.push(Box::new(search_pattern));
+            qb.push(" AND (r.url LIKE ")
+                .push_bind(search_pattern.clone())
+                .push(" OR r.path LIKE ")
+                .push_bind(search_pattern);
         }
 
         if let Some(ref file_type) = filter.file_type {
-            sql.push_str(&format!(" AND r.path LIKE ?{}", bind_params.len() + 1));
-            bind_params.push(Box::new(format!("%{}", file_type)));
+            qb.push(" AND r.path LIKE ")
+                .push_bind(format!("%{}", file_type));
         }
 
         if let Some(ref header) = filter.header {
-            // Filter by header - supports "key:value" or just "key"
-            sql.push_str(&format!(" AND r.headers LIKE ?{}", bind_params.len() + 1));
-            bind_params.push(Box::new(format!("%{}%", header)));
+            qb.push(" AND r.headers LIKE ")
+                .push_bind(format!("%{}%", header));
         }
 
         if let Some(ref cookie) = filter.cookie {
-            // Filter by cookie - check if Cookie header contains the value
-            sql.push_str(&format!(" AND r.headers LIKE ?{}", bind_params.len() + 1));
-            bind_params.push(Box::new(format!("%Cookie%{}%", cookie)));
+            qb.push(" AND r.headers LIKE ")
+                .push_bind(format!("%Cookie%{}%", cookie));
         }
 
         if let Some(passthrough) = filter.is_passthrough {
-            sql.push_str(&format!(
-                " AND r.is_passthrough = ?{}",
-                bind_params.len() + 1
-            ));
-            bind_params.push(Box::new(passthrough as i32));
+            qb.push(" AND r.is_passthrough = ")
+                .push_bind(passthrough as i32);
         }
 
         if let Some(ref host) = filter.host {
-            sql.push_str(&format!(" AND r.host LIKE ?{}", bind_params.len() + 1));
-            bind_params.push(Box::new(format!("%{}%", host)));
+            qb.push(" AND r.host LIKE ")
+                .push_bind(format!("%{}%", host));
         }
 
-        sql.push_str(" ORDER BY r.timestamp DESC");
+        qb.push(" ORDER BY r.timestamp DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            qb.push(" LIMIT ").push_bind(limit as i64);
         }
 
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            qb.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> =
-            bind_params.iter().map(|p| p.as_ref()).collect();
-
-        let mut stmt = conn.prepare(&sql).map_err(Error::Database)?;
-        let entries = stmt
-            .query_map(params_refs.as_slice(), |row| {
-                let id: String = row.get(0)?;
-                let session_id: String = row.get(1)?;
-                let method: String = row.get(2)?;
-                let url: String = row.get(3)?;
-                let host: String = row.get(4)?;
-                let path: String = row.get(5)?;
-                let headers_json: String = row.get(6)?;
-                let body: Option<Vec<u8>> = row.get(7)?;
-                let content_type: Option<String> = row.get(8)?;
-                let timestamp_i64: i64 = row.get(9)?;
-                let modified: i32 = row.get(10)?;
-                let notes: Option<String> = row.get(11)?;
-                let is_passthrough: i32 = row.get(12)?;
-
-                let req_http_version: Option<String> = row.get(13)?;
-                let script_intercepted: i32 = row.get(14)?;
-                let status_code: Option<i32> = row.get(15)?;
-                let status_message: Option<String> = row.get(16)?;
-                let resp_headers_json: Option<String> = row.get(17)?;
-                let resp_body: Option<Vec<u8>> = row.get(18)?;
-                let resp_content_type: Option<String> = row.get(19)?;
-                let duration_ms: Option<i64> = row.get(20)?;
-                let resp_http_version: Option<String> = row.get(21)?;
-
-                let headers: std::collections::HashMap<String, String> =
-                    serde_json::from_str(&headers_json).unwrap_or_default();
-
-                let request = crate::traffic::RequestData {
-                    method: method.parse().unwrap_or(crate::traffic::HttpMethod::Get),
-                    url,
-                    host,
-                    path,
-                    headers,
-                    body,
-                    content_type,
-                    http_version: req_http_version,
-                };
-
-                let response = status_code.map(|code| {
-                    let resp_headers: std::collections::HashMap<String, String> = resp_headers_json
-                        .as_ref()
-                        .and_then(|h| serde_json::from_str(h).ok())
-                        .unwrap_or_default();
-
-                    crate::traffic::ResponseData {
-                        status_code: code as u16,
-                        status_message,
-                        headers: resp_headers,
-                        body: resp_body,
-                        content_type: resp_content_type,
-                        duration_ms: duration_ms.unwrap_or(0) as u64,
-                        http_version: resp_http_version,
-                    }
-                });
-
-                let request_size = request.size();
-                let response_size = response.as_ref().map(|r| r.size());
-                Ok(TrafficEntry {
-                    id,
-                    session_id,
-                    request,
-                    response,
-                    timestamp: DateTime::from_timestamp(timestamp_i64, 0).unwrap_or(Utc::now()),
-                    modified: modified != 0,
-                    notes,
-                    request_size,
-                    response_size,
-                    is_passthrough: is_passthrough != 0,
-                    script_intercepted: script_intercepted != 0,
-                })
-            })
-            .map_err(Error::Database)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(Error::Database)?;
-
-        Ok(entries)
+        let rows: Vec<TrafficRow> = qb
+            .build_query_as::<TrafficRow>()
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(row_to_entry).collect())
     }
 
     /// Get a single traffic entry by ID
-    pub fn get_by_id(&self, id: &str) -> crate::Result<Option<TrafficEntry>> {
-        let conn = self.conn.lock();
-
-        let mut stmt = conn.prepare(
+    pub async fn get_by_id(&self, id: &str) -> crate::Result<Option<TrafficEntry>> {
+        let row: Option<TrafficRow> = sqlx::query_as::<_, TrafficRow>(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
                     r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted,
-                    rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms, rs.http_version
+                    rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.body AS resp_body, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
-             WHERE r.id = ?1"
-        ).map_err(Error::Database)?;
+             WHERE r.id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
 
-        let entry = stmt
-            .query_row(params![id], |row| {
-                let id: String = row.get(0)?;
-                let session_id: String = row.get(1)?;
-                let method: String = row.get(2)?;
-                let url: String = row.get(3)?;
-                let host: String = row.get(4)?;
-                let path: String = row.get(5)?;
-                let headers_json: String = row.get(6)?;
-                let body: Option<Vec<u8>> = row.get(7)?;
-                let content_type: Option<String> = row.get(8)?;
-                let timestamp_i64: i64 = row.get(9)?;
-                let modified: i32 = row.get(10)?;
-                let notes: Option<String> = row.get(11)?;
-                let is_passthrough: i32 = row.get(12)?;
-
-                let req_http_version: Option<String> = row.get(13)?;
-                let script_intercepted: i32 = row.get(14)?;
-                let status_code: Option<i32> = row.get(15)?;
-                let status_message: Option<String> = row.get(16)?;
-                let resp_headers_json: Option<String> = row.get(17)?;
-                let resp_body: Option<Vec<u8>> = row.get(18)?;
-                let resp_content_type: Option<String> = row.get(19)?;
-                let duration_ms: Option<i64> = row.get(20)?;
-                let resp_http_version: Option<String> = row.get(21)?;
-
-                let headers: std::collections::HashMap<String, String> =
-                    serde_json::from_str(&headers_json).unwrap_or_default();
-
-                let request = crate::traffic::RequestData {
-                    method: method.parse().unwrap_or(crate::traffic::HttpMethod::Get),
-                    url,
-                    host,
-                    path,
-                    headers,
-                    body,
-                    content_type,
-                    http_version: req_http_version,
-                };
-
-                let response = status_code.map(|code| {
-                    let resp_headers: std::collections::HashMap<String, String> = resp_headers_json
-                        .as_ref()
-                        .and_then(|h| serde_json::from_str(h).ok())
-                        .unwrap_or_default();
-
-                    crate::traffic::ResponseData {
-                        status_code: code as u16,
-                        status_message,
-                        headers: resp_headers,
-                        body: resp_body,
-                        content_type: resp_content_type,
-                        duration_ms: duration_ms.unwrap_or(0) as u64,
-                        http_version: resp_http_version,
-                    }
-                });
-
-                let request_size = request.size();
-                let response_size = response.as_ref().map(|r| r.size());
-                Ok(TrafficEntry {
-                    id,
-                    session_id,
-                    request,
-                    response,
-                    timestamp: DateTime::from_timestamp(timestamp_i64, 0).unwrap_or(Utc::now()),
-                    modified: modified != 0,
-                    notes,
-                    request_size,
-                    response_size,
-                    is_passthrough: is_passthrough != 0,
-                    script_intercepted: script_intercepted != 0,
-                })
-            })
-            .ok();
-
-        Ok(entry)
+        Ok(row.map(row_to_entry))
     }
 
     /// Clear all traffic for the current session
-    pub fn clear_traffic(&self) -> crate::Result<()> {
-        let conn = self.conn.lock();
+    pub async fn clear_traffic(&self) -> crate::Result<()> {
         let session_id = self.current_session_id.lock().clone();
 
-        conn.execute("DELETE FROM responses WHERE request_id IN (SELECT id FROM requests WHERE session_id = ?1)", params![&session_id])
-            .map_err(Error::Database)?;
-
-        conn.execute(
-            "DELETE FROM requests WHERE session_id = ?1",
-            params![&session_id],
+        sqlx::query(
+            "DELETE FROM responses WHERE request_id IN (SELECT id FROM requests WHERE session_id = ?)",
         )
-        .map_err(Error::Database)?;
+        .bind(&session_id)
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("DELETE FROM requests WHERE session_id = ?")
+            .bind(&session_id)
+            .execute(&self.pool)
+            .await?;
 
         // Emit traffic cleared event
-        drop(conn);
         self.emit_event(TrafficEvent::Cleared);
 
         Ok(())
     }
 
     /// Delete specific traffic entries by IDs
-    pub fn delete_traffic(&self, ids: &[String]) -> crate::Result<()> {
+    pub async fn delete_traffic(&self, ids: &[String]) -> crate::Result<()> {
         if ids.is_empty() {
             return Ok(());
         }
 
-        let conn = self.conn.lock();
-        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
-        let placeholders_str = placeholders.join(",");
-
-        // Delete responses first
-        let delete_responses_sql = format!(
-            "DELETE FROM responses WHERE request_id IN ({})",
-            placeholders_str
-        );
-        let params: Vec<&dyn rusqlite::ToSql> =
-            ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
-        conn.execute(&delete_responses_sql, params.as_slice())
-            .map_err(Error::Database)?;
-
-        // Delete requests
-        let delete_requests_sql =
-            format!("DELETE FROM requests WHERE id IN ({})", placeholders_str);
-        conn.execute(&delete_requests_sql, params.as_slice())
-            .map_err(Error::Database)?;
+        delete_requests_and_responses(&self.pool, ids).await?;
 
         // Emit traffic deleted event
-        drop(conn);
         self.emit_event(TrafficEvent::Deleted(ids.to_vec()));
 
         Ok(())
     }
 
     /// Get traffic count
-    pub fn count(&self) -> crate::Result<usize> {
-        let conn = self.conn.lock();
+    pub async fn count(&self) -> crate::Result<usize> {
         let session_id = self.current_session_id.lock().clone();
-
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM requests WHERE session_id = ?1",
-                params![&session_id],
-                |row| row.get(0),
-            )
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM requests WHERE session_id = ?")
+            .bind(&session_id)
+            .fetch_one(&self.pool)
+            .await
             .unwrap_or(0);
-
         Ok(count as usize)
     }
 
     /// Export traffic as HAR format
-    pub fn export_har(&self, session_id: &str) -> crate::Result<serde_json::Value> {
-        let entries = self.get_traffic_by_session(session_id)?;
+    pub async fn export_har(&self, session_id: &str) -> crate::Result<serde_json::Value> {
+        let entries = self.get_traffic_by_session(session_id).await?;
 
         let har = serde_json::json!({
             "log": {
@@ -1241,7 +986,7 @@ impl TrafficStore {
     ///
     /// [`store_request`]: TrafficStore::store_request
     /// [`store_response`]: TrafficStore::store_response
-    pub fn import_har(
+    pub async fn import_har(
         &self,
         har: &serde_json::Value,
         session_name: Option<&str>,
@@ -1257,22 +1002,22 @@ impl TrafficStore {
 
         // Create a new session for the imported traffic.
         let name = session_name.unwrap_or("Imported HAR");
-        let session = self.create_session(Some(name))?;
+        let session = self.create_session(Some(name)).await?;
 
         let mut imported_count = 0usize;
         let mut skipped_count = 0usize;
         let mut errors: Vec<String> = Vec::new();
 
         for (idx, entry) in entries.iter().enumerate() {
-            match self.convert_har_entry(entry, &session.id) {
+            match convert_har_entry(entry, &session.id) {
                 Ok(entry) => {
-                    if let Err(e) = self.store_request(&entry) {
+                    if let Err(e) = self.store_request(&entry).await {
                         skipped_count += 1;
                         errors.push(format!("entry {}: failed to store request: {}", idx, e));
                         continue;
                     }
                     if let Some(ref response) = entry.response {
-                        if let Err(e) = self.store_response(&entry.id, response) {
+                        if let Err(e) = self.store_response(&entry.id, response).await {
                             skipped_count += 1;
                             errors.push(format!("entry {}: failed to store response: {}", idx, e));
                             continue;
@@ -1295,180 +1040,49 @@ impl TrafficStore {
         })
     }
 
-    /// Convert a single HAR `log.entries[]` object into a [`TrafficEntry`]
-    /// belonging to `session_id`. Returns an error when the entry is missing
-    /// the required `request` object.
-    fn convert_har_entry(
-        &self,
-        entry: &serde_json::Value,
-        session_id: &str,
-    ) -> crate::Result<TrafficEntry> {
-        let request = entry
-            .get("request")
-            .ok_or_else(|| Error::Config("HAR entry missing 'request' field".to_string()))?;
-
-        let method_str = request
-            .get("method")
-            .and_then(|m| m.as_str())
-            .unwrap_or("GET");
-        let method = method_str
-            .parse::<crate::traffic::HttpMethod>()
-            .unwrap_or(crate::traffic::HttpMethod::Get);
-
-        let url = request
-            .get("url")
-            .and_then(|u| u.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let (host, path) = parse_url(&url);
-
-        let headers = parse_har_headers(request.get("headers"));
-        let content_type = header_value(&headers, "content-type");
-
-        let body = parse_har_post_data(request.get("postData"));
-        let http_version = request
-            .get("httpVersion")
-            .and_then(|v| v.as_str())
-            .map(normalize_http_version);
-
-        let request_data = RequestData {
-            method,
-            url: url.clone(),
-            host,
-            path,
-            headers,
-            body,
-            content_type,
-            http_version,
-        };
-
-        let response = entry
-            .get("response")
-            .and_then(|r| r.as_object())
-            .map(|resp| {
-                let status_code = resp.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16;
-                let status_message = resp
-                    .get("statusText")
-                    .and_then(|s| s.as_str())
-                    .map(|s| s.to_string());
-                let resp_headers = parse_har_headers(resp.get("headers"));
-                let resp_content_type = header_value(&resp_headers, "content-type").or_else(|| {
-                    resp.get("content")
-                        .and_then(|c| c.get("mimeType"))
-                        .and_then(|m| m.as_str())
-                        .map(|s| s.to_string())
-                });
-                let resp_body = parse_har_content(resp.get("content"));
-                let duration_ms = entry
-                    .get("time")
-                    .and_then(|t| t.as_f64())
-                    .map(|t| t as u64)
-                    .unwrap_or(0);
-                let resp_http_version = resp
-                    .get("httpVersion")
-                    .and_then(|v| v.as_str())
-                    .map(normalize_http_version);
-
-                ResponseData {
-                    status_code,
-                    status_message,
-                    headers: resp_headers,
-                    body: resp_body,
-                    content_type: resp_content_type,
-                    duration_ms,
-                    http_version: resp_http_version,
-                }
-            });
-
-        let timestamp = entry
-            .get("startedDateTime")
-            .and_then(|t| t.as_str())
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(Utc::now);
-
-        let request_size = request_data.size();
-        let response_size = response.as_ref().map(|r| r.size());
-
-        Ok(TrafficEntry {
-            id: uuid::Uuid::new_v4().to_string(),
-            session_id: session_id.to_string(),
-            request: request_data,
-            response,
-            timestamp,
-            modified: false,
-            notes: None,
-            request_size,
-            response_size,
-            is_passthrough: false,
-            script_intercepted: false,
-        })
-    }
-
     /// List all sessions
-    pub fn list_sessions(&self) -> crate::Result<Vec<Session>> {
-        let conn = self.conn.lock();
+    pub async fn list_sessions(&self) -> crate::Result<Vec<Session>> {
+        let rows: Vec<SessionRow> = sqlx::query_as::<_, SessionRow>(
+            "SELECT id, name, created_at, updated_at FROM sessions ORDER BY updated_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
-        let sessions = conn
-            .prepare(
-                "SELECT id, name, created_at, updated_at FROM sessions ORDER BY updated_at DESC",
-            )
-            .map_err(Error::Database)?
-            .query_map([], |row| {
-                let id: String = row.get(0)?;
-                let name: Option<String> = row.get(1)?;
-                let created_at: i64 = row.get(2)?;
-                let updated_at: i64 = row.get(3)?;
-
-                Ok(Session {
-                    id,
-                    name,
-                    created_at: DateTime::from_timestamp(created_at, 0).unwrap_or(Utc::now()),
-                    updated_at: DateTime::from_timestamp(updated_at, 0).unwrap_or(Utc::now()),
-                })
+        Ok(rows
+            .into_iter()
+            .map(|r| Session {
+                id: r.id,
+                name: r.name,
+                created_at: parse_timestamp(r.created_at),
+                updated_at: parse_timestamp(r.updated_at),
             })
-            .map_err(Error::Database)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(Error::Database)?;
-
-        Ok(sessions)
+            .collect())
     }
 
     /// Create a new session
-    pub fn create_session(&self, name: Option<&str>) -> crate::Result<Session> {
+    pub async fn create_session(&self, name: Option<&str>) -> crate::Result<Session> {
         let session = Session::new(name);
-        let conn = self.conn.lock();
 
-        conn.execute(
-            "INSERT INTO sessions (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            params![
-                session.id,
-                session.name,
-                session.created_at.timestamp(),
-                session.updated_at.timestamp()
-            ],
-        )
-        .map_err(Error::Database)?;
+        sqlx::query("INSERT INTO sessions (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
+            .bind(&session.id)
+            .bind(&session.name)
+            .bind(session.created_at.timestamp())
+            .bind(session.updated_at.timestamp())
+            .execute(&self.pool)
+            .await?;
 
         Ok(session)
     }
 
     /// Switch to a different session
-    pub fn switch_session(&self, session_id: &str) -> crate::Result<()> {
-        let conn = self.conn.lock();
-
-        // Check if session exists
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sessions WHERE id = ?1",
-                params![session_id],
-                |row| row.get(0),
-            )
-            .map_err(Error::Database)?;
+    pub async fn switch_session(&self, session_id: &str) -> crate::Result<()> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id = ?")
+            .bind(session_id)
+            .fetch_one(&self.pool)
+            .await?;
 
         if count == 0 {
-            return Err(Error::Database(rusqlite::Error::QueryReturnedNoRows));
+            return Err(Error::Sqlx(sqlx::Error::RowNotFound));
         }
 
         *self.current_session_id.lock() = session_id.to_string();
@@ -1476,121 +1090,46 @@ impl TrafficStore {
     }
 
     /// Delete a session and all its traffic
-    pub fn delete_session(&self, session_id: &str) -> crate::Result<()> {
-        let conn = self.conn.lock();
-
-        // Delete responses for requests in this session
-        conn.execute(
-            "DELETE FROM responses WHERE request_id IN (SELECT id FROM requests WHERE session_id = ?1)",
-            params![session_id]
-        ).map_err(Error::Database)?;
-
-        // Delete requests in this session
-        conn.execute(
-            "DELETE FROM requests WHERE session_id = ?1",
-            params![session_id],
+    pub async fn delete_session(&self, session_id: &str) -> crate::Result<()> {
+        sqlx::query(
+            "DELETE FROM responses WHERE request_id IN (SELECT id FROM requests WHERE session_id = ?)",
         )
-        .map_err(Error::Database)?;
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
 
-        // Delete the session
-        conn.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])
-            .map_err(Error::Database)?;
+        sqlx::query("DELETE FROM requests WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("DELETE FROM sessions WHERE id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
 
     /// Get all traffic for a specific session
-    pub fn get_traffic_by_session(&self, session_id: &str) -> crate::Result<Vec<TrafficEntry>> {
-        let conn = self.conn.lock();
-
-        let mut stmt = conn.prepare(
+    pub async fn get_traffic_by_session(
+        &self,
+        session_id: &str,
+    ) -> crate::Result<Vec<TrafficEntry>> {
+        let rows: Vec<TrafficRow> = sqlx::query_as::<_, TrafficRow>(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
                     r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted,
-                    rs.status_code, rs.status_message, rs.headers, rs.body, rs.content_type, rs.duration_ms, rs.http_version
+                    rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.body AS resp_body, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
-             WHERE r.session_id = ?1
-             ORDER BY r.timestamp DESC"
-        ).map_err(Error::Database)?;
+             WHERE r.session_id = ?
+             ORDER BY r.timestamp DESC",
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
 
-        let entries = stmt
-            .query_map(params![session_id], |row| {
-                let id: String = row.get(0)?;
-                let session_id: String = row.get(1)?;
-                let method: String = row.get(2)?;
-                let url: String = row.get(3)?;
-                let host: String = row.get(4)?;
-                let path: String = row.get(5)?;
-                let headers_json: String = row.get(6)?;
-                let body: Option<Vec<u8>> = row.get(7)?;
-                let content_type: Option<String> = row.get(8)?;
-                let timestamp_i64: i64 = row.get(9)?;
-                let modified: i32 = row.get(10)?;
-                let notes: Option<String> = row.get(11)?;
-                let is_passthrough: i32 = row.get(12)?;
-
-                let req_http_version: Option<String> = row.get(13)?;
-                let script_intercepted: i32 = row.get(14)?;
-                let status_code: Option<i32> = row.get(15)?;
-                let status_message: Option<String> = row.get(16)?;
-                let resp_headers_json: Option<String> = row.get(17)?;
-                let resp_body: Option<Vec<u8>> = row.get(18)?;
-                let resp_content_type: Option<String> = row.get(19)?;
-                let duration_ms: Option<i64> = row.get(20)?;
-                let resp_http_version: Option<String> = row.get(21)?;
-
-                let headers: std::collections::HashMap<String, String> =
-                    serde_json::from_str(&headers_json).unwrap_or_default();
-
-                let request = crate::traffic::RequestData {
-                    method: method.parse().unwrap_or(crate::traffic::HttpMethod::Get),
-                    url,
-                    host,
-                    path,
-                    headers,
-                    body,
-                    content_type,
-                    http_version: req_http_version,
-                };
-
-                let response = status_code.map(|code| {
-                    let resp_headers: std::collections::HashMap<String, String> = resp_headers_json
-                        .as_ref()
-                        .and_then(|h| serde_json::from_str(h).ok())
-                        .unwrap_or_default();
-
-                    crate::traffic::ResponseData {
-                        status_code: code as u16,
-                        status_message,
-                        headers: resp_headers,
-                        body: resp_body,
-                        content_type: resp_content_type,
-                        duration_ms: duration_ms.unwrap_or(0) as u64,
-                        http_version: resp_http_version,
-                    }
-                });
-
-                let request_size = request.size();
-                let response_size = response.as_ref().map(|r| r.size());
-                Ok(TrafficEntry {
-                    id,
-                    session_id,
-                    request,
-                    response,
-                    timestamp: DateTime::from_timestamp(timestamp_i64, 0).unwrap_or(Utc::now()),
-                    modified: modified != 0,
-                    notes,
-                    request_size,
-                    response_size,
-                    is_passthrough: is_passthrough != 0,
-                    script_intercepted: script_intercepted != 0,
-                })
-            })
-            .map_err(Error::Database)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(Error::Database)?;
-
-        Ok(entries)
+        Ok(rows.into_iter().map(row_to_entry).collect())
     }
 
     // -----------------------------------------------------------------------
@@ -1599,84 +1138,442 @@ impl TrafficStore {
 
     /// Add a focus host pattern. If the pattern already exists (case-insensitive),
     /// the existing entry is returned without creating a duplicate.
-    pub fn add_focus_host(&self, pattern: &str) -> crate::Result<FocusHost> {
+    pub async fn add_focus_host(&self, pattern: &str) -> crate::Result<FocusHost> {
         let normalized = pattern.trim().to_lowercase();
         if normalized.is_empty() {
             return Err(Error::Config(
                 "focus host pattern cannot be empty".to_string(),
             ));
         }
-        let conn = self.conn.lock();
 
         // Check for an existing entry with the same pattern.
-        let existing: Option<FocusHost> = conn
-            .query_row(
-                "SELECT id, pattern, created_at FROM focus_hosts WHERE pattern = ?1",
-                params![&normalized],
-                |row| {
-                    let id: String = row.get(0)?;
-                    let pat: String = row.get(1)?;
-                    let created_at: i64 = row.get(2)?;
-                    Ok(FocusHost {
-                        id,
-                        pattern: pat,
-                        created_at: DateTime::from_timestamp(created_at, 0).unwrap_or(Utc::now()),
-                    })
-                },
-            )
-            .ok();
-        if let Some(entry) = existing {
-            return Ok(entry);
+        let existing: Option<FocusHostRow> = sqlx::query_as::<_, FocusHostRow>(
+            "SELECT id, pattern, created_at FROM focus_hosts WHERE pattern = ?",
+        )
+        .bind(&normalized)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(row) = existing {
+            return Ok(FocusHost {
+                id: row.id,
+                pattern: row.pattern,
+                created_at: parse_timestamp(row.created_at),
+            });
         }
 
         let host = FocusHost::new(&normalized);
-        conn.execute(
-            "INSERT INTO focus_hosts (id, pattern, created_at) VALUES (?1, ?2, ?3)",
-            params![&host.id, &host.pattern, host.created_at.timestamp()],
-        )
-        .map_err(Error::Database)?;
+        sqlx::query("INSERT INTO focus_hosts (id, pattern, created_at) VALUES (?, ?, ?)")
+            .bind(&host.id)
+            .bind(&host.pattern)
+            .bind(host.created_at.timestamp())
+            .execute(&self.pool)
+            .await?;
         Ok(host)
     }
 
     /// Remove a focus host by ID. Returns `true` if a row was deleted.
-    pub fn remove_focus_host(&self, id: &str) -> crate::Result<bool> {
-        let conn = self.conn.lock();
-        let affected = conn
-            .execute("DELETE FROM focus_hosts WHERE id = ?1", params![id])
-            .map_err(Error::Database)?;
-        Ok(affected > 0)
+    pub async fn remove_focus_host(&self, id: &str) -> crate::Result<bool> {
+        let result = sqlx::query("DELETE FROM focus_hosts WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// List all focus hosts ordered by creation time (oldest first).
-    pub fn list_focus_hosts(&self) -> crate::Result<Vec<FocusHost>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn
-            .prepare("SELECT id, pattern, created_at FROM focus_hosts ORDER BY created_at ASC")
-            .map_err(Error::Database)?;
-        let hosts = stmt
-            .query_map([], |row| {
-                let id: String = row.get(0)?;
-                let pattern: String = row.get(1)?;
-                let created_at: i64 = row.get(2)?;
-                Ok(FocusHost {
-                    id,
-                    pattern,
-                    created_at: DateTime::from_timestamp(created_at, 0).unwrap_or(Utc::now()),
-                })
+    pub async fn list_focus_hosts(&self) -> crate::Result<Vec<FocusHost>> {
+        let rows: Vec<FocusHostRow> = sqlx::query_as::<_, FocusHostRow>(
+            "SELECT id, pattern, created_at FROM focus_hosts ORDER BY created_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| FocusHost {
+                id: r.id,
+                pattern: r.pattern,
+                created_at: parse_timestamp(r.created_at),
             })
-            .map_err(Error::Database)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(Error::Database)?;
-        Ok(hosts)
+            .collect())
     }
 
     /// Remove all focus hosts.
-    pub fn clear_focus_hosts(&self) -> crate::Result<()> {
-        let conn = self.conn.lock();
-        conn.execute("DELETE FROM focus_hosts", [])
-            .map_err(Error::Database)?;
+    pub async fn clear_focus_hosts(&self) -> crate::Result<()> {
+        sqlx::query("DELETE FROM focus_hosts")
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
+}
+
+#[async_trait]
+impl TrafficStoreBackend for TrafficStore {
+    async fn store_request(&self, entry: &TrafficEntry) -> crate::Result<()> {
+        self.store_request(entry).await
+    }
+    async fn store_response(&self, request_id: &str, response: &ResponseData) -> crate::Result<()> {
+        self.store_response(request_id, response).await
+    }
+    async fn get_traffic(&self, filter: &TrafficFilter) -> crate::Result<Vec<TrafficEntry>> {
+        self.get_traffic(filter).await
+    }
+    async fn get_by_id(&self, id: &str) -> crate::Result<Option<TrafficEntry>> {
+        self.get_by_id(id).await
+    }
+    async fn get_entry_count(&self) -> crate::Result<usize> {
+        self.get_entry_count().await
+    }
+    async fn get_capture_stats(&self) -> crate::Result<CaptureStats> {
+        self.get_capture_stats().await
+    }
+    async fn clear_traffic(&self) -> crate::Result<()> {
+        self.clear_traffic().await
+    }
+    async fn delete_traffic(&self, ids: &[String]) -> crate::Result<()> {
+        self.delete_traffic(ids).await
+    }
+    async fn count(&self) -> crate::Result<usize> {
+        self.count().await
+    }
+    async fn export_har(&self, session_id: &str) -> crate::Result<serde_json::Value> {
+        self.export_har(session_id).await
+    }
+    async fn import_har(
+        &self,
+        har: &serde_json::Value,
+        session_name: Option<&str>,
+    ) -> crate::Result<ImportResult> {
+        self.import_har(har, session_name).await
+    }
+    async fn list_sessions(&self) -> crate::Result<Vec<Session>> {
+        self.list_sessions().await
+    }
+    async fn create_session(&self, name: Option<&str>) -> crate::Result<Session> {
+        self.create_session(name).await
+    }
+    async fn switch_session(&self, session_id: &str) -> crate::Result<()> {
+        self.switch_session(session_id).await
+    }
+    async fn delete_session(&self, session_id: &str) -> crate::Result<()> {
+        self.delete_session(session_id).await
+    }
+    async fn get_traffic_by_session(&self, session_id: &str) -> crate::Result<Vec<TrafficEntry>> {
+        self.get_traffic_by_session(session_id).await
+    }
+    async fn add_focus_host(&self, pattern: &str) -> crate::Result<FocusHost> {
+        self.add_focus_host(pattern).await
+    }
+    async fn remove_focus_host(&self, id: &str) -> crate::Result<bool> {
+        self.remove_focus_host(id).await
+    }
+    async fn list_focus_hosts(&self) -> crate::Result<Vec<FocusHost>> {
+        self.list_focus_hosts().await
+    }
+    async fn clear_focus_hosts(&self) -> crate::Result<()> {
+        self.clear_focus_hosts().await
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<TrafficEvent> {
+        self.subscribe()
+    }
+    fn event_sender(&self) -> broadcast::Sender<TrafficEvent> {
+        self.event_sender()
+    }
+    fn current_session_id(&self) -> String {
+        self.current_session_id()
+    }
+    fn is_capture_enabled(&self) -> bool {
+        self.is_capture_enabled()
+    }
+    fn set_capture_enabled(&self, enabled: bool) {
+        self.set_capture_enabled(enabled);
+    }
+    fn set_max_body_size(&self, max: usize) {
+        self.set_max_body_size(max);
+    }
+    fn max_body_size(&self) -> usize {
+        self.max_body_size()
+    }
+    fn set_max_entries(&self, max: usize) {
+        self.set_max_entries(max);
+    }
+    fn max_entries(&self) -> usize {
+        self.max_entries()
+    }
+    fn set_max_total_size_bytes(&self, max: usize) {
+        self.set_max_total_size_bytes(max);
+    }
+    fn max_total_size_bytes(&self) -> usize {
+        self.max_total_size_bytes()
+    }
+    fn set_capture_request_bodies(&self, enabled: bool) {
+        self.set_capture_request_bodies(enabled);
+    }
+    fn capture_request_bodies(&self) -> bool {
+        self.capture_request_bodies()
+    }
+    fn set_capture_response_bodies(&self, enabled: bool) {
+        self.set_capture_response_bodies(enabled);
+    }
+    fn capture_response_bodies(&self) -> bool {
+        self.capture_response_bodies()
+    }
+    fn set_ignored_domains(&self, domains: Vec<String>) {
+        self.set_ignored_domains(domains);
+    }
+    fn ignored_domains(&self) -> Vec<String> {
+        self.ignored_domains()
+    }
+    fn set_mirror_writer(&self, writer: Arc<MirrorWriter>) {
+        self.set_mirror_writer(writer);
+    }
+    fn mirror_writer(&self) -> Option<Arc<MirrorWriter>> {
+        self.mirror_writer()
+    }
+}
+
+// -----------------------------------------------------------------------
+// Row types and helpers
+// -----------------------------------------------------------------------
+
+/// Row shape for the traffic JOIN query (requests + responses).
+#[derive(Debug, FromRow)]
+struct TrafficRow {
+    id: String,
+    session_id: String,
+    method: String,
+    url: String,
+    host: String,
+    path: String,
+    headers: String,
+    body: Option<Vec<u8>>,
+    content_type: Option<String>,
+    timestamp: i64,
+    modified: i32,
+    notes: Option<String>,
+    is_passthrough: i32,
+    http_version: Option<String>,
+    script_intercepted: i32,
+    status_code: Option<i32>,
+    status_message: Option<String>,
+    resp_headers: Option<String>,
+    resp_body: Option<Vec<u8>>,
+    resp_content_type: Option<String>,
+    duration_ms: Option<i64>,
+    resp_http_version: Option<String>,
+}
+
+/// Convert a [`TrafficRow`] into a [`TrafficEntry`].
+fn row_to_entry(row: TrafficRow) -> TrafficEntry {
+    let headers: HashMap<String, String> = serde_json::from_str(&row.headers).unwrap_or_default();
+
+    let request = RequestData {
+        method: row
+            .method
+            .parse()
+            .unwrap_or(crate::traffic::HttpMethod::Get),
+        url: row.url,
+        host: row.host,
+        path: row.path,
+        headers,
+        body: row.body,
+        content_type: row.content_type,
+        http_version: row.http_version,
+    };
+
+    let response = row.status_code.map(|code| {
+        let resp_headers: HashMap<String, String> = row
+            .resp_headers
+            .as_ref()
+            .and_then(|h| serde_json::from_str(h).ok())
+            .unwrap_or_default();
+
+        ResponseData {
+            status_code: code as u16,
+            status_message: row.status_message,
+            headers: resp_headers,
+            body: row.resp_body,
+            content_type: row.resp_content_type,
+            duration_ms: row.duration_ms.unwrap_or(0) as u64,
+            http_version: row.resp_http_version,
+        }
+    });
+
+    let request_size = request.size();
+    let response_size = response.as_ref().map(|r| r.size());
+
+    TrafficEntry {
+        id: row.id,
+        session_id: row.session_id,
+        request,
+        response,
+        timestamp: parse_timestamp(row.timestamp),
+        modified: row.modified != 0,
+        notes: row.notes,
+        request_size,
+        response_size,
+        is_passthrough: row.is_passthrough != 0,
+        script_intercepted: row.script_intercepted != 0,
+    }
+}
+
+/// Row shape for the `sessions` table.
+#[derive(Debug, FromRow)]
+struct SessionRow {
+    id: String,
+    name: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+/// Row shape for the `focus_hosts` table.
+#[derive(Debug, FromRow)]
+struct FocusHostRow {
+    id: String,
+    pattern: String,
+    created_at: i64,
+}
+
+/// Convert a Unix timestamp (seconds) into a `DateTime<Utc>`, falling
+/// back to the current time when the value is invalid.
+fn parse_timestamp(ts: i64) -> DateTime<Utc> {
+    DateTime::from_timestamp(ts, 0).unwrap_or_else(Utc::now)
+}
+
+/// Delete the given request IDs and their associated responses from the
+/// database. Responses are deleted first to avoid orphaned rows.
+async fn delete_requests_and_responses(pool: &SqlitePool, ids: &[String]) -> crate::Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders = (0..ids.len()).map(|_| "?").collect::<Vec<_>>().join(",");
+
+    let delete_responses_sql = format!(
+        "DELETE FROM responses WHERE request_id IN ({})",
+        placeholders
+    );
+    let mut q = sqlx::query(&delete_responses_sql);
+    for id in ids {
+        q = q.bind(id);
+    }
+    q.execute(pool).await?;
+
+    let delete_requests_sql = format!("DELETE FROM requests WHERE id IN ({})", placeholders);
+    let mut q = sqlx::query(&delete_requests_sql);
+    for id in ids {
+        q = q.bind(id);
+    }
+    q.execute(pool).await?;
+
+    Ok(())
+}
+
+/// Convert a single HAR `log.entries[]` object into a [`TrafficEntry`]
+/// belonging to `session_id`. Returns an error when the entry is missing
+/// the required `request` object.
+fn convert_har_entry(entry: &serde_json::Value, session_id: &str) -> crate::Result<TrafficEntry> {
+    let request = entry
+        .get("request")
+        .ok_or_else(|| Error::Config("HAR entry missing 'request' field".to_string()))?;
+
+    let method_str = request
+        .get("method")
+        .and_then(|m| m.as_str())
+        .unwrap_or("GET");
+    let method = method_str
+        .parse::<crate::traffic::HttpMethod>()
+        .unwrap_or(crate::traffic::HttpMethod::Get);
+
+    let url = request
+        .get("url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let (host, path) = parse_url(&url);
+
+    let headers = parse_har_headers(request.get("headers"));
+    let content_type = header_value(&headers, "content-type");
+
+    let body = parse_har_post_data(request.get("postData"));
+    let http_version = request
+        .get("httpVersion")
+        .and_then(|v| v.as_str())
+        .map(normalize_http_version);
+
+    let request_data = RequestData {
+        method,
+        url: url.clone(),
+        host,
+        path,
+        headers,
+        body,
+        content_type,
+        http_version,
+    };
+
+    let response = entry
+        .get("response")
+        .and_then(|r| r.as_object())
+        .map(|resp| {
+            let status_code = resp.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16;
+            let status_message = resp
+                .get("statusText")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string());
+            let resp_headers = parse_har_headers(resp.get("headers"));
+            let resp_content_type = header_value(&resp_headers, "content-type").or_else(|| {
+                resp.get("content")
+                    .and_then(|c| c.get("mimeType"))
+                    .and_then(|m| m.as_str())
+                    .map(|s| s.to_string())
+            });
+            let resp_body = parse_har_content(resp.get("content"));
+            let duration_ms = entry
+                .get("time")
+                .and_then(|t| t.as_f64())
+                .map(|t| t as u64)
+                .unwrap_or(0);
+            let resp_http_version = resp
+                .get("httpVersion")
+                .and_then(|v| v.as_str())
+                .map(normalize_http_version);
+
+            ResponseData {
+                status_code,
+                status_message,
+                headers: resp_headers,
+                body: resp_body,
+                content_type: resp_content_type,
+                duration_ms,
+                http_version: resp_http_version,
+            }
+        });
+
+    let timestamp = entry
+        .get("startedDateTime")
+        .and_then(|t| t.as_str())
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(Utc::now);
+
+    let request_size = request_data.size();
+    let response_size = response.as_ref().map(|r| r.size());
+
+    Ok(TrafficEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        session_id: session_id.to_string(),
+        request: request_data,
+        response,
+        timestamp,
+        modified: false,
+        notes: None,
+        request_size,
+        response_size,
+        is_passthrough: false,
+        script_intercepted: false,
+    })
 }
 
 /// Parse a full URL string into `(host, path)` components.
@@ -1794,13 +1691,18 @@ mod har_import_tests {
     use base64::Engine;
     use serde_json::json;
 
-    fn make_store() -> Arc<TrafficStore> {
-        TrafficStore::in_memory().expect("failed to create in-memory store")
+    fn make_store() -> std::pin::Pin<Box<dyn std::future::Future<Output = Arc<TrafficStore>> + Send>>
+    {
+        Box::pin(async {
+            TrafficStore::in_memory()
+                .await
+                .expect("failed to create in-memory store")
+        })
     }
 
-    #[test]
-    fn test_import_har_two_entries() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_import_har_two_entries() {
+        let store = make_store().await;
         let har = json!({
             "log": {
                 "version": "1.2",
@@ -1843,20 +1745,24 @@ mod har_import_tests {
             }
         });
 
-        let result = store.import_har(&har, None).expect("import should succeed");
+        let result = store
+            .import_har(&har, None)
+            .await
+            .expect("import should succeed");
         assert_eq!(result.imported_count, 2);
         assert_eq!(result.skipped_count, 0);
         assert!(result.errors.is_empty());
 
         let entries = store
             .get_traffic_by_session(&result.session_id)
+            .await
             .expect("fetch entries");
         assert_eq!(entries.len(), 2);
     }
 
-    #[test]
-    fn test_import_har_missing_response() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_import_har_missing_response() {
+        let store = make_store().await;
         let har = json!({
             "log": {
                 "version": "1.2",
@@ -1873,20 +1779,24 @@ mod har_import_tests {
             }
         });
 
-        let result = store.import_har(&har, None).expect("import should succeed");
+        let result = store
+            .import_har(&har, None)
+            .await
+            .expect("import should succeed");
         assert_eq!(result.imported_count, 1);
         assert_eq!(result.skipped_count, 0);
 
         let entries = store
             .get_traffic_by_session(&result.session_id)
+            .await
             .expect("fetch entries");
         assert_eq!(entries.len(), 1);
         assert!(entries[0].response.is_none());
     }
 
-    #[test]
-    fn test_import_har_base64_body() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_import_har_base64_body() {
+        let store = make_store().await;
         // "Hello" base64-encoded
         let encoded = base64::engine::general_purpose::STANDARD.encode(b"Hello");
         let har = json!({
@@ -1911,11 +1821,15 @@ mod har_import_tests {
             }
         });
 
-        let result = store.import_har(&har, None).expect("import should succeed");
+        let result = store
+            .import_har(&har, None)
+            .await
+            .expect("import should succeed");
         assert_eq!(result.imported_count, 1);
 
         let entries = store
             .get_traffic_by_session(&result.session_id)
+            .await
             .expect("fetch entries");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].request.body.as_deref(), Some(b"Hello" as &[u8]));
@@ -1925,18 +1839,18 @@ mod har_import_tests {
         );
     }
 
-    #[test]
-    fn test_import_har_invalid_missing_log() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_import_har_invalid_missing_log() {
+        let store = make_store().await;
         let har = json!({ "foo": "bar" });
 
-        let result = store.import_har(&har, None);
+        let result = store.import_har(&har, None).await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_import_har_entry_missing_request_skipped() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_import_har_entry_missing_request_skipped() {
+        let store = make_store().await;
         let har = json!({
             "log": {
                 "version": "1.2",
@@ -1951,21 +1865,28 @@ mod har_import_tests {
             }
         });
 
-        let result = store.import_har(&har, None).expect("import should succeed");
+        let result = store
+            .import_har(&har, None)
+            .await
+            .expect("import should succeed");
         assert_eq!(result.imported_count, 1);
         assert_eq!(result.skipped_count, 1);
         assert_eq!(result.errors.len(), 1);
     }
 
-    #[test]
-    fn test_import_har_round_trip() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_import_har_round_trip() {
+        let store = make_store().await;
 
         // Create a session with a couple of entries via the store.
         let session = store
             .create_session(Some("Round Trip"))
+            .await
             .expect("create session");
-        store.switch_session(&session.id).expect("switch session");
+        store
+            .switch_session(&session.id)
+            .await
+            .expect("switch session");
 
         let req1 = RequestData {
             method: crate::traffic::HttpMethod::Get,
@@ -1992,15 +1913,17 @@ mod har_import_tests {
             http_version: Some("HTTP/1.1".to_string()),
         });
         entry1.response_size = Some(entry1.response.as_ref().unwrap().size());
-        store.store_request(&entry1).expect("store req1");
+        store.store_request(&entry1).await.expect("store req1");
         store
             .store_response(&entry1.id, entry1.response.as_ref().unwrap())
+            .await
             .expect("store resp1");
 
         // Export to HAR, then import it back.
-        let har = store.export_har(&session.id).expect("export har");
+        let har = store.export_har(&session.id).await.expect("export har");
         let result = store
             .import_har(&har, Some("Imported Round Trip"))
+            .await
             .expect("import har");
 
         assert_eq!(result.imported_count, 1);
@@ -2008,6 +1931,7 @@ mod har_import_tests {
 
         let imported = store
             .get_traffic_by_session(&result.session_id)
+            .await
             .expect("fetch imported");
         assert_eq!(imported.len(), 1);
         assert_eq!(imported[0].request.method, crate::traffic::HttpMethod::Get);
@@ -2044,8 +1968,13 @@ mod recording_limits_tests {
     use crate::traffic::host_matches_pattern;
     use std::collections::HashMap;
 
-    fn make_store() -> Arc<TrafficStore> {
-        TrafficStore::in_memory().expect("failed to create in-memory store")
+    fn make_store() -> std::pin::Pin<Box<dyn std::future::Future<Output = Arc<TrafficStore>> + Send>>
+    {
+        Box::pin(async {
+            TrafficStore::in_memory()
+                .await
+                .expect("failed to create in-memory store")
+        })
     }
 
     fn make_entry(session_id: &str, host: &str, path: &str, body: Option<Vec<u8>>) -> TrafficEntry {
@@ -2077,25 +2006,25 @@ mod recording_limits_tests {
         }
     }
 
-    #[test]
-    fn test_max_entries_prunes_oldest() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_max_entries_prunes_oldest() {
+        let store = make_store().await;
         let session_id = store.current_session_id();
         store.set_max_entries(5);
 
         for i in 0..10 {
             let entry = make_entry(&session_id, "example.com", &format!("/p{i}"), None);
-            store.store_request(&entry).expect("store request");
+            store.store_request(&entry).await.expect("store request");
             // Small sleep to ensure distinct timestamps
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         }
 
-        let count = store.get_entry_count().expect("entry count");
+        let count = store.get_entry_count().await.expect("entry count");
         assert_eq!(count, 5, "should have pruned to 5 entries");
 
         // The 5 most recent should remain (paths /p5 through /p9)
         let filter = TrafficFilter::default();
-        let entries = store.get_traffic(&filter).expect("get traffic");
+        let entries = store.get_traffic(&filter).await.expect("get traffic");
         let paths: Vec<&str> = entries.iter().map(|e| e.request.path.as_str()).collect();
         for i in 5..10 {
             let p = format!("/p{i}");
@@ -2103,44 +2032,41 @@ mod recording_limits_tests {
         }
     }
 
-    #[test]
-    fn test_pruned_responses_are_deleted() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_pruned_responses_are_deleted() {
+        let store = make_store().await;
         let session_id = store.current_session_id();
         store.set_max_entries(3);
 
         // Insert 5 entries, each with a response.
         for i in 0..5 {
             let mut entry = make_entry(&session_id, "example.com", &format!("/r{i}"), None);
-            store.store_request(&entry).expect("store request");
+            store.store_request(&entry).await.expect("store request");
             entry.response = Some(make_response(Some(format!("resp{i}").into_bytes())));
             store
                 .store_response(&entry.id, entry.response.as_ref().unwrap())
+                .await
                 .expect("store response");
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         }
 
         // Only 3 entries should remain
-        assert_eq!(store.get_entry_count().unwrap(), 3);
+        assert_eq!(store.get_entry_count().await.unwrap(), 3);
 
         // Verify no orphaned responses: count responses that belong to
         // remaining requests
-        let conn = store.conn.lock();
-        let orphaned: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM responses WHERE request_id NOT IN \
-                 (SELECT id FROM requests)",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-        drop(conn);
+        let orphaned: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM responses WHERE request_id NOT IN (SELECT id FROM requests)",
+        )
+        .fetch_one(store.pool())
+        .await
+        .unwrap_or(0);
         assert_eq!(orphaned, 0, "no orphaned responses should remain");
     }
 
-    #[test]
-    fn test_capture_request_bodies_disabled() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_capture_request_bodies_disabled() {
+        let store = make_store().await;
         let session_id = store.current_session_id();
         store.set_capture_request_bodies(false);
 
@@ -2150,10 +2076,11 @@ mod recording_limits_tests {
             "/api",
             Some(b"request body".to_vec()),
         );
-        store.store_request(&entry).expect("store request");
+        store.store_request(&entry).await.expect("store request");
 
         let stored = store
             .get_by_id(&entry.id)
+            .await
             .expect("get entry")
             .expect("entry exists");
         assert!(
@@ -2162,9 +2089,9 @@ mod recording_limits_tests {
         );
     }
 
-    #[test]
-    fn test_capture_response_bodies_disabled() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_capture_response_bodies_disabled() {
+        let store = make_store().await;
         let session_id = store.current_session_id();
         store.set_capture_response_bodies(false);
 
@@ -2174,14 +2101,16 @@ mod recording_limits_tests {
             "/api",
             Some(b"request body".to_vec()),
         );
-        store.store_request(&entry).expect("store request");
+        store.store_request(&entry).await.expect("store request");
         let resp = make_response(Some(b"response body".to_vec()));
         store
             .store_response(&entry.id, &resp)
+            .await
             .expect("store response");
 
         let stored = store
             .get_by_id(&entry.id)
+            .await
             .expect("get entry")
             .expect("entry exists");
         let stored_resp = stored.response.expect("response exists");
@@ -2191,62 +2120,62 @@ mod recording_limits_tests {
         );
     }
 
-    #[test]
-    fn test_ignored_domains_skips_storage() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_ignored_domains_skips_storage() {
+        let store = make_store().await;
         let session_id = store.current_session_id();
         store.set_ignored_domains(vec!["*.example.com".to_string()]);
 
         // Request to example.com should be skipped
         let entry1 = make_entry(&session_id, "api.example.com", "/skip", None);
-        store.store_request(&entry1).expect("store request");
+        store.store_request(&entry1).await.expect("store request");
 
         // Request to other.com should be stored
         let entry2 = make_entry(&session_id, "other.com", "/keep", None);
-        store.store_request(&entry2).expect("store request");
+        store.store_request(&entry2).await.expect("store request");
 
         assert_eq!(
-            store.get_entry_count().unwrap(),
+            store.get_entry_count().await.unwrap(),
             1,
             "only non-ignored entry should be stored"
         );
     }
 
-    #[test]
-    fn test_ignored_domains_exact_match() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_ignored_domains_exact_match() {
+        let store = make_store().await;
         let session_id = store.current_session_id();
         store.set_ignored_domains(vec!["blocked.com".to_string()]);
 
         let entry = make_entry(&session_id, "blocked.com", "/path", None);
-        store.store_request(&entry).expect("store request");
+        store.store_request(&entry).await.expect("store request");
 
         assert_eq!(
-            store.get_entry_count().unwrap(),
+            store.get_entry_count().await.unwrap(),
             0,
             "exact match should be ignored"
         );
     }
 
-    #[test]
-    fn test_ignored_domains_suffix_match() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_ignored_domains_suffix_match() {
+        let store = make_store().await;
         let session_id = store.current_session_id();
         store.set_ignored_domains(vec!["analytics.com".to_string()]);
 
         let entry = make_entry(&session_id, "api.analytics.com", "/track", None);
-        store.store_request(&entry).expect("store request");
+        store.store_request(&entry).await.expect("store request");
 
         assert_eq!(
-            store.get_entry_count().unwrap(),
+            store.get_entry_count().await.unwrap(),
             0,
             "suffix match should be ignored"
         );
     }
 
-    #[test]
-    fn test_get_capture_stats() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_get_capture_stats() {
+        let store = make_store().await;
         let session_id = store.current_session_id();
         store.set_max_entries(100);
         store.set_max_total_size_bytes(1024 * 1024);
@@ -2259,10 +2188,10 @@ mod recording_limits_tests {
                 &format!("/s{i}"),
                 Some(format!("body{i}").into_bytes()),
             );
-            store.store_request(&entry).expect("store request");
+            store.store_request(&entry).await.expect("store request");
         }
 
-        let stats = store.get_capture_stats().expect("capture stats");
+        let stats = store.get_capture_stats().await.expect("capture stats");
         assert_eq!(stats.entry_count, 3);
         assert_eq!(stats.max_entries, 100);
         assert!(stats.total_size_bytes > 0);
@@ -2273,9 +2202,9 @@ mod recording_limits_tests {
         assert!(stats.ignored_domains.is_empty());
     }
 
-    #[test]
-    fn test_total_size_limit_pruning() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_total_size_limit_pruning() {
+        let store = make_store().await;
         let session_id = store.current_session_id();
         // Set a very small total size limit (enough for ~2 entries with bodies)
         store.set_max_total_size_bytes(30);
@@ -2290,31 +2219,31 @@ mod recording_limits_tests {
                 &format!("/sz{i}"),
                 Some(vec![b'x'; 20]),
             );
-            store.store_request(&entry).expect("store request");
+            store.store_request(&entry).await.expect("store request");
             // Force size check on every insert by resetting the counter
             store.insert_counter.store(0, Ordering::Relaxed);
         }
 
-        let total = store.get_total_size().expect("total size");
+        let total = store.get_total_size().await.expect("total size");
         assert!(
             total <= 30,
             "total size {total} should be under the 30-byte limit"
         );
     }
 
-    #[test]
-    fn test_max_entries_zero_means_unlimited() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_max_entries_zero_means_unlimited() {
+        let store = make_store().await;
         let session_id = store.current_session_id();
         store.set_max_entries(0);
 
         for i in 0..20 {
             let entry = make_entry(&session_id, "example.com", &format!("/u{i}"), None);
-            store.store_request(&entry).expect("store request");
+            store.store_request(&entry).await.expect("store request");
         }
 
         assert_eq!(
-            store.get_entry_count().unwrap(),
+            store.get_entry_count().await.unwrap(),
             20,
             "no pruning when max_entries is 0"
         );
@@ -2324,68 +2253,81 @@ mod recording_limits_tests {
     // Focus host tests
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn test_add_and_list_focus_host() {
-        let store = make_store();
+    #[tokio::test]
+    async fn test_add_and_list_focus_host() {
+        let store = make_store().await;
         let host = store
             .add_focus_host("api.example.com")
+            .await
             .expect("add focus host");
         assert_eq!(host.pattern, "api.example.com");
         assert!(!host.id.is_empty());
 
-        let hosts = store.list_focus_hosts().expect("list focus hosts");
+        let hosts = store.list_focus_hosts().await.expect("list focus hosts");
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].pattern, "api.example.com");
     }
 
-    #[test]
-    fn test_add_focus_host_dedup() {
-        let store = make_store();
-        store.add_focus_host("API.Example.com").expect("add 1");
-        let second = store.add_focus_host("api.example.com").expect("add 2");
-        let hosts = store.list_focus_hosts().expect("list");
+    #[tokio::test]
+    async fn test_add_focus_host_dedup() {
+        let store = make_store().await;
+        store
+            .add_focus_host("API.Example.com")
+            .await
+            .expect("add 1");
+        let second = store
+            .add_focus_host("api.example.com")
+            .await
+            .expect("add 2");
+        let hosts = store.list_focus_hosts().await.expect("list");
         assert_eq!(hosts.len(), 1, "duplicate pattern should be deduped");
         assert_eq!(second.pattern, hosts[0].pattern);
     }
 
-    #[test]
-    fn test_remove_focus_host() {
-        let store = make_store();
-        let host = store.add_focus_host("example.com").expect("add");
-        let removed = store.remove_focus_host(&host.id).expect("remove");
+    #[tokio::test]
+    async fn test_remove_focus_host() {
+        let store = make_store().await;
+        let host = store.add_focus_host("example.com").await.expect("add");
+        let removed = store.remove_focus_host(&host.id).await.expect("remove");
         assert!(removed);
-        let hosts = store.list_focus_hosts().expect("list");
+        let hosts = store.list_focus_hosts().await.expect("list");
         assert!(hosts.is_empty());
 
-        let removed_again = store.remove_focus_host(&host.id).expect("remove again");
+        let removed_again = store
+            .remove_focus_host(&host.id)
+            .await
+            .expect("remove again");
         assert!(!removed_again, "removing non-existent id returns false");
     }
 
-    #[test]
-    fn test_clear_focus_hosts() {
-        let store = make_store();
-        store.add_focus_host("a.com").expect("add");
-        store.add_focus_host("b.com").expect("add");
-        store.add_focus_host("c.com").expect("add");
-        assert_eq!(store.list_focus_hosts().expect("list").len(), 3);
-        store.clear_focus_hosts().expect("clear");
-        assert!(store.list_focus_hosts().expect("list").is_empty());
+    #[tokio::test]
+    async fn test_clear_focus_hosts() {
+        let store = make_store().await;
+        store.add_focus_host("a.com").await.expect("add");
+        store.add_focus_host("b.com").await.expect("add");
+        store.add_focus_host("c.com").await.expect("add");
+        assert_eq!(store.list_focus_hosts().await.expect("list").len(), 3);
+        store.clear_focus_hosts().await.expect("clear");
+        assert!(store.list_focus_hosts().await.expect("list").is_empty());
     }
 
-    #[test]
-    fn test_focus_host_persistence() {
+    #[tokio::test]
+    async fn test_focus_host_persistence() {
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("focus_test.db");
 
-        let store = TrafficStore::new(&db_path).expect("create store");
-        store.add_focus_host("persist.example.com").expect("add");
-        store.add_focus_host("*.wildcard.com").expect("add");
-        assert_eq!(store.list_focus_hosts().expect("list").len(), 2);
+        let store = TrafficStore::new(&db_path).await.expect("create store");
+        store
+            .add_focus_host("persist.example.com")
+            .await
+            .expect("add");
+        store.add_focus_host("*.wildcard.com").await.expect("add");
+        assert_eq!(store.list_focus_hosts().await.expect("list").len(), 2);
 
         drop(store);
 
-        let store2 = TrafficStore::new(&db_path).expect("reopen store");
-        let hosts = store2.list_focus_hosts().expect("list");
+        let store2 = TrafficStore::new(&db_path).await.expect("reopen store");
+        let hosts = store2.list_focus_hosts().await.expect("list");
         assert_eq!(hosts.len(), 2, "focus hosts should persist across restarts");
         let patterns: Vec<String> = hosts.iter().map(|h| h.pattern.clone()).collect();
         assert!(patterns.contains(&"persist.example.com".to_string()));

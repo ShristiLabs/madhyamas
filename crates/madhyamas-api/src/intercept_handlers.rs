@@ -329,7 +329,7 @@ pub async fn create_mock_from_traffic(
     let enabled = req.enabled.unwrap_or(true);
 
     for entry_id in &req.entry_ids {
-        match state.traffic_store.get_by_id(entry_id) {
+        match state.traffic_store.get_by_id(entry_id).await {
             Ok(Some(entry)) => {
                 let request = &entry.request;
                 let response = match &entry.response {
@@ -1284,7 +1284,7 @@ pub async fn batch_save_requests_from_traffic(
     let mut errors: Vec<serde_json::Value> = Vec::new();
 
     for entry_id in &req.entry_ids {
-        match state.traffic_store.get_by_id(entry_id) {
+        match state.traffic_store.get_by_id(entry_id).await {
             Ok(Some(entry)) => {
                 let name = match &req.name_prefix {
                     Some(prefix) => {

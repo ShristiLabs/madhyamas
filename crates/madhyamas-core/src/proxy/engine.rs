@@ -589,36 +589,39 @@ impl ProxyEngine {
                         http_version: Some("HTTP/1.1".to_string()),
                     },
                 );
-                let _ = self.traffic_store.store_request(&entry);
-                let _ = self.traffic_store.store_response(
-                    &entry.id,
-                    &crate::traffic::ResponseData {
-                        status_code: 502,
-                        status_message: Some("Bad Gateway (TLS Handshake Failed)".to_string()),
-                        headers: std::collections::HashMap::new(),
-                        body: Some(
-                            format!(
-                                "TLS handshake failed for {}:{}.\n\n\
+                let _ = self.traffic_store.store_request(&entry).await;
+                let _ = self
+                    .traffic_store
+                    .store_response(
+                        &entry.id,
+                        &crate::traffic::ResponseData {
+                            status_code: 502,
+                            status_message: Some("Bad Gateway (TLS Handshake Failed)".to_string()),
+                            headers: std::collections::HashMap::new(),
+                            body: Some(
+                                format!(
+                                    "TLS handshake failed for {}:{}.\n\n\
                                  The client does not trust the proxy CA certificate.\n\
                                  This is common with apps using certificate pinning.\n\n\
                                  Error: {}\n\n\
                                  CONNECT request headers:\n{}",
-                                host,
-                                port,
-                                e,
-                                connect_headers
-                                    .iter()
-                                    .map(|(k, v)| format!("  {}: {}", k, v))
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            )
-                            .into_bytes(),
-                        ),
-                        content_type: Some("text/plain".to_string()),
-                        duration_ms: 0,
-                        http_version: Some("HTTP/1.1".to_string()),
-                    },
-                );
+                                    host,
+                                    port,
+                                    e,
+                                    connect_headers
+                                        .iter()
+                                        .map(|(k, v)| format!("  {}: {}", k, v))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                )
+                                .into_bytes(),
+                            ),
+                            content_type: Some("text/plain".to_string()),
+                            duration_ms: 0,
+                            http_version: Some("HTTP/1.1".to_string()),
+                        },
+                    )
+                    .await;
                 let _ = self.traffic_tx.send(entry);
 
                 return Err(Error::Tls(format!("TLS handshake failed: {}", e)));
@@ -698,7 +701,7 @@ impl ProxyEngine {
             },
         );
         entry.is_passthrough = true;
-        let _ = self.traffic_store.store_request(&entry);
+        let _ = self.traffic_store.store_request(&entry).await;
         let _ = self.traffic_tx.send(entry.clone());
 
         // Connect to the upstream server.
@@ -733,16 +736,18 @@ impl ProxyEngine {
                         "Passthrough: upstream proxy connect to {} failed: {}",
                         upstream_addr, e
                     );
-                    let _ = self.traffic_store.store_response(
-                        &entry.id,
-                        &crate::traffic::ResponseData {
-                            status_code: 502,
-                            status_message: Some(
-                                "Bad Gateway (Upstream Proxy Connect Failed)".to_string(),
-                            ),
-                            headers: std::collections::HashMap::new(),
-                            body: Some(
-                                format!(
+                    let _ = self
+                        .traffic_store
+                        .store_response(
+                            &entry.id,
+                            &crate::traffic::ResponseData {
+                                status_code: 502,
+                                status_message: Some(
+                                    "Bad Gateway (Upstream Proxy Connect Failed)".to_string(),
+                                ),
+                                headers: std::collections::HashMap::new(),
+                                body: Some(
+                                    format!(
                                     "SSL passthrough connection through upstream proxy failed.\n\n\
                                      Target: {}\n\
                                      Upstream proxy: {}:{} ({})\n\
@@ -759,13 +764,14 @@ impl ProxyEngine {
                                         .collect::<Vec<_>>()
                                         .join("\n")
                                 )
-                                .into_bytes(),
-                            ),
-                            content_type: Some("text/plain".to_string()),
-                            duration_ms: 0,
-                            http_version: Some("HTTP/1.1".to_string()),
-                        },
-                    );
+                                    .into_bytes(),
+                                ),
+                                content_type: Some("text/plain".to_string()),
+                                duration_ms: 0,
+                                http_version: Some("HTTP/1.1".to_string()),
+                            },
+                        )
+                        .await;
                     let _ = self.traffic_tx.send(entry);
                     return Err(Error::Proxy(format!(
                         "Upstream proxy connect failed: {}",
@@ -780,66 +786,72 @@ impl ProxyEngine {
                 Ok(Ok(s)) => s,
                 Ok(Err(e)) => {
                     warn!("Passthrough: failed to connect to {}: {}", upstream_addr, e);
-                    let _ = self.traffic_store.store_response(
-                        &entry.id,
-                        &crate::traffic::ResponseData {
-                            status_code: 502,
-                            status_message: Some(
-                                "Bad Gateway (Passthrough Connect Failed)".to_string(),
-                            ),
-                            headers: std::collections::HashMap::new(),
-                            body: Some(
-                                format!(
-                                    "SSL passthrough connection failed.\n\n\
+                    let _ = self
+                        .traffic_store
+                        .store_response(
+                            &entry.id,
+                            &crate::traffic::ResponseData {
+                                status_code: 502,
+                                status_message: Some(
+                                    "Bad Gateway (Passthrough Connect Failed)".to_string(),
+                                ),
+                                headers: std::collections::HashMap::new(),
+                                body: Some(
+                                    format!(
+                                        "SSL passthrough connection failed.\n\n\
                                  Target: {}\n\
                                  Error: {}\n\n\
                                  CONNECT request headers:\n{}",
-                                    upstream_addr,
-                                    e,
-                                    connect_headers
-                                        .iter()
-                                        .map(|(k, v)| format!("  {}: {}", k, v))
-                                        .collect::<Vec<_>>()
-                                        .join("\n")
-                                )
-                                .into_bytes(),
-                            ),
-                            content_type: Some("text/plain".to_string()),
-                            duration_ms: 0,
-                            http_version: Some("HTTP/1.1".to_string()),
-                        },
-                    );
+                                        upstream_addr,
+                                        e,
+                                        connect_headers
+                                            .iter()
+                                            .map(|(k, v)| format!("  {}: {}", k, v))
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    )
+                                    .into_bytes(),
+                                ),
+                                content_type: Some("text/plain".to_string()),
+                                duration_ms: 0,
+                                http_version: Some("HTTP/1.1".to_string()),
+                            },
+                        )
+                        .await;
                     let _ = self.traffic_tx.send(entry);
                     return Err(Error::Proxy(format!("Passthrough connect failed: {}", e)));
                 }
                 Err(_) => {
                     warn!("Passthrough: timeout connecting to {}", upstream_addr);
-                    let _ = self.traffic_store.store_response(
-                        &entry.id,
-                        &crate::traffic::ResponseData {
-                            status_code: 504,
-                            status_message: Some("Gateway Timeout (Passthrough)".to_string()),
-                            headers: std::collections::HashMap::new(),
-                            body: Some(
-                                format!(
-                                    "SSL passthrough connection timed out.\n\n\
+                    let _ = self
+                        .traffic_store
+                        .store_response(
+                            &entry.id,
+                            &crate::traffic::ResponseData {
+                                status_code: 504,
+                                status_message: Some("Gateway Timeout (Passthrough)".to_string()),
+                                headers: std::collections::HashMap::new(),
+                                body: Some(
+                                    format!(
+                                        "SSL passthrough connection timed out.\n\n\
                                  Target: {}\n\
                                  Timeout: 30 seconds\n\n\
                                  CONNECT request headers:\n{}",
-                                    upstream_addr,
-                                    connect_headers
-                                        .iter()
-                                        .map(|(k, v)| format!("  {}: {}", k, v))
-                                        .collect::<Vec<_>>()
-                                        .join("\n")
-                                )
-                                .into_bytes(),
-                            ),
-                            content_type: Some("text/plain".to_string()),
-                            duration_ms: 30000,
-                            http_version: Some("HTTP/1.1".to_string()),
-                        },
-                    );
+                                        upstream_addr,
+                                        connect_headers
+                                            .iter()
+                                            .map(|(k, v)| format!("  {}: {}", k, v))
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    )
+                                    .into_bytes(),
+                                ),
+                                content_type: Some("text/plain".to_string()),
+                                duration_ms: 30000,
+                                http_version: Some("HTTP/1.1".to_string()),
+                            },
+                        )
+                        .await;
                     let _ = self.traffic_tx.send(entry);
                     return Err(Error::Proxy("Passthrough connect timeout".into()));
                 }
@@ -849,33 +861,36 @@ impl ProxyEngine {
         // Record successful connection with a 200 response.
         // Include a descriptive body explaining what happened (visible in
         // the traffic detail view).
-        let _ = self.traffic_store.store_response(
-            &entry.id,
-            &crate::traffic::ResponseData {
-                status_code: 200,
-                status_message: Some("Connection Established (SSL Passthrough)".to_string()),
-                headers: std::collections::HashMap::new(),
-                body: Some(
-                    format!(
-                        "SSL Passthrough — connection tunneled directly to {}.\n\n\
+        let _ = self
+            .traffic_store
+            .store_response(
+                &entry.id,
+                &crate::traffic::ResponseData {
+                    status_code: 200,
+                    status_message: Some("Connection Established (SSL Passthrough)".to_string()),
+                    headers: std::collections::HashMap::new(),
+                    body: Some(
+                        format!(
+                            "SSL Passthrough — connection tunneled directly to {}.\n\n\
                          The TLS session was not intercepted; request and response\n\
                          contents (URL path, query parameters, headers, body) are\n\
                          not visible because they are encrypted inside the tunnel.\n\n\
                          CONNECT request headers:\n{}",
-                        upstream_addr,
-                        connect_headers
-                            .iter()
-                            .map(|(k, v)| format!("  {}: {}", k, v))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    )
-                    .into_bytes(),
-                ),
-                content_type: Some("text/plain".to_string()),
-                duration_ms: 0,
-                http_version: Some("HTTP/1.1".to_string()),
-            },
-        );
+                            upstream_addr,
+                            connect_headers
+                                .iter()
+                                .map(|(k, v)| format!("  {}: {}", k, v))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        )
+                        .into_bytes(),
+                    ),
+                    content_type: Some("text/plain".to_string()),
+                    duration_ms: 0,
+                    http_version: Some("HTTP/1.1".to_string()),
+                },
+            )
+            .await;
         let _ = self.traffic_tx.send(entry);
 
         // Bidirectional byte forwarding: client ↔ upstream

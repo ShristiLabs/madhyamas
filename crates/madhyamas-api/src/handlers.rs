@@ -66,7 +66,7 @@ pub async fn get_traffic(
         host: query.host,
     };
 
-    match state.traffic_store.get_traffic(&filter) {
+    match state.traffic_store.get_traffic(&filter).await {
         Ok(entries) => Json(entries).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -100,7 +100,7 @@ pub async fn get_traffic_entry(
         .map(|s| s.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
-    match state.traffic_store.get_by_id(&id) {
+    match state.traffic_store.get_by_id(&id).await {
         Ok(Some(mut entry)) => {
             if decompress {
                 if let Some(response) = entry.response.as_mut() {
@@ -149,7 +149,7 @@ pub async fn get_traffic_entry(
 
 /// Clear all traffic for current session
 pub async fn clear_traffic(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.traffic_store.clear_traffic() {
+    match state.traffic_store.clear_traffic().await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -163,7 +163,7 @@ pub async fn clear_traffic(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
 /// Get traffic count
 pub async fn get_traffic_count(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.traffic_store.count() {
+    match state.traffic_store.count().await {
         Ok(count) => Json(serde_json::json!({ "count": count })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -210,7 +210,11 @@ pub async fn create_session(
     if let Err(e) = super::validation::validate(&req) {
         return e.into_response();
     }
-    match state.traffic_store.create_session(req.name.as_deref()) {
+    match state
+        .traffic_store
+        .create_session(req.name.as_deref())
+        .await
+    {
         Ok(session) => Json(session).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -227,7 +231,7 @@ pub async fn get_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.session_manager.get_session(&id) {
+    match state.session_manager.get_session(&id).await {
         Ok(Some(session)) => Json(session).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
@@ -251,7 +255,7 @@ pub async fn delete_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.session_manager.delete_session(&id) {
+    match state.session_manager.delete_session(&id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -267,7 +271,7 @@ pub async fn delete_session(
 pub async fn export_har(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let session_id = state.traffic_store.current_session_id();
 
-    match state.traffic_store.export_har(&session_id) {
+    match state.traffic_store.export_har(&session_id).await {
         Ok(har) => Json(har).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -312,10 +316,11 @@ pub async fn import_traffic_har(
     match state
         .traffic_store
         .import_har(&req.har, req.session_name.as_deref())
+        .await
     {
         Ok(result) => {
             if req.switch_session {
-                let _ = state.traffic_store.switch_session(&result.session_id);
+                let _ = state.traffic_store.switch_session(&result.session_id).await;
             }
             Json(result).into_response()
         }
@@ -334,7 +339,7 @@ pub async fn export_curl(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.traffic_store.get_by_id(&id) {
+    match state.traffic_store.get_by_id(&id).await {
         Ok(Some(entry)) => {
             let curl = generate_curl(&entry.request);
             Json(serde_json::json!({ "curl": curl })).into_response()
@@ -461,7 +466,7 @@ pub async fn toggle_capture(State(state): State<Arc<AppState>>) -> impl IntoResp
 
 /// Get recording quota statistics (entry count, total size, limits, usage).
 pub async fn get_capture_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.traffic_store.get_capture_stats() {
+    match state.traffic_store.get_capture_stats().await {
         Ok(stats) => Json(stats).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1168,7 +1173,7 @@ pub async fn export_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.session_manager.export_session(&id) {
+    match state.session_manager.export_session(&id).await {
         Ok(export) => Json(export).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1185,7 +1190,7 @@ pub async fn switch_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.traffic_store.switch_session(&id) {
+    match state.traffic_store.switch_session(&id).await {
         Ok(()) => Json(serde_json::json!({ "success": true })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1202,7 +1207,7 @@ pub async fn import_session(
     State(state): State<Arc<AppState>>,
     Json(export): Json<madhyamas_core::SessionExport>,
 ) -> impl IntoResponse {
-    match state.session_manager.import_session(export) {
+    match state.session_manager.import_session(export).await {
         Ok(session) => Json(session).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1563,7 +1568,7 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
 
 /// Get all focus host patterns
 pub async fn get_focus_hosts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.traffic_store.list_focus_hosts() {
+    match state.traffic_store.list_focus_hosts().await {
         Ok(hosts) => Json(hosts).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1590,7 +1595,7 @@ pub async fn add_focus_host(
     if let Err(e) = super::validation::validate(&req) {
         return e.into_response();
     }
-    match state.traffic_store.add_focus_host(&req.pattern) {
+    match state.traffic_store.add_focus_host(&req.pattern).await {
         Ok(host) => (StatusCode::CREATED, Json(host)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1607,7 +1612,7 @@ pub async fn remove_focus_host(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.traffic_store.remove_focus_host(&id) {
+    match state.traffic_store.remove_focus_host(&id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => (
             StatusCode::NOT_FOUND,
@@ -1628,7 +1633,7 @@ pub async fn remove_focus_host(
 
 /// Clear all focus hosts
 pub async fn clear_focus_hosts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.traffic_store.clear_focus_hosts() {
+    match state.traffic_store.clear_focus_hosts().await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
