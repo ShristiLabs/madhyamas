@@ -15,7 +15,7 @@ use axum::{
 use madhyamas_api::AppState;
 use std::sync::Arc;
 
-use crate::{handlers, middleware, AuthManager, EnterpriseStore};
+use crate::{handlers, middleware, AuthManager, EnterpriseStore, License};
 
 /// Create the enterprise router (all enterprise endpoints under `/api`).
 ///
@@ -23,17 +23,22 @@ use crate::{handlers, middleware, AuthManager, EnterpriseStore};
 /// persist/restore users, API keys, sessions, and audit events. When `auth`
 /// is `Some`, JWT authentication is enforced on the enterprise routes via
 /// [`middleware::auth_middleware`] (gated by `require_auth`). Public routes
-/// (login, detailed health) bypass the check inside the middleware (see
-/// `is_public_path`).
+/// (login, detailed health, license info) bypass the check inside the
+/// middleware (see `is_public_path`). The verified `license` (if any) is
+/// injected so the [`handlers::get_license_info`] and
+/// [`handlers::get_health_check`] handlers can report license status.
 pub fn create_enterprise_router(
     store: Arc<dyn EnterpriseStore>,
     auth: Arc<AuthManager>,
+    license: Option<License>,
 ) -> Router<Arc<AppState>> {
     let router = Router::new()
         // Performance & Monitoring
         .route("/metrics", get(handlers::get_metrics))
         .route("/health/detailed", get(handlers::get_health_check))
         .route("/performance", get(handlers::get_performance_stats))
+        // License (public — informational, no auth required)
+        .route("/license", get(handlers::get_license_info))
         // Authentication
         .route("/auth/login", post(handlers::login))
         .route("/auth/logout", post(handlers::logout))
@@ -67,16 +72,17 @@ pub fn create_enterprise_router(
         // Configuration
         .route("/config/export", get(handlers::export_config))
         .route("/config/import", post(handlers::import_config))
-        // Inject the persistent store and auth manager into request
-        // extensions so enterprise handlers can access them without
-        // madhyamas-api depending on this crate.
+        // Inject the persistent store, auth manager, and verified license
+        // into request extensions so enterprise handlers can access them
+        // without madhyamas-api depending on this crate.
         .layer(Extension(store))
-        .layer(Extension(auth.clone()));
+        .layer(Extension(auth.clone()))
+        .layer(Extension(license));
 
     // Enforce JWT authentication on enterprise routes. The middleware itself
     // honors `AuthManager::require_auth()`, so it only rejects requests when
-    // strict auth is enabled. Public routes (login, detailed health) and
-    // static assets bypass the check inside the middleware (see
+    // strict auth is enabled. Public routes (login, detailed health, license
+    // info) and static assets bypass the check inside the middleware (see
     // `is_public_path`).
     router.layer(from_fn_with_state(auth, middleware::auth_middleware))
 }

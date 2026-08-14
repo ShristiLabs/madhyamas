@@ -17,6 +17,7 @@ pub mod audit;
 pub mod auth;
 pub mod enterprise_error;
 pub mod handlers;
+pub mod license;
 pub mod middleware;
 pub mod rbac;
 pub mod router;
@@ -26,6 +27,7 @@ pub mod user;
 pub use audit::{AuditEvent, AuditEventType, AuditFilter, AuditLogger};
 pub use auth::{ApiKey, AuthConfig, AuthManager, JwtClaims};
 pub use enterprise_error::EnterpriseError;
+pub use license::{License, LicenseClaims, LicenseError, LicenseFile, LicenseVerifier};
 pub use rbac::{Permission, RbacManager, Resource, ResourceType};
 pub use router::create_enterprise_router;
 pub use store::{ApiKeyRecord, AuditStats, AuthSession, UserUpdate};
@@ -49,6 +51,11 @@ pub struct EnterpriseState {
     pub audit: Arc<AuditLogger>,
     /// Persistent enterprise store (users, API keys, sessions, audit events).
     pub store: Option<Arc<dyn EnterpriseStore>>,
+    /// Verified enterprise license, if one was provided and validated at
+    /// startup. `None` means the binary is running in unlicensed enterprise
+    /// mode (auth/RBAC/audit still functional; seat-count enforcement and
+    /// feature gating arrive in later phases).
+    pub license: Option<License>,
 }
 
 impl EnterpriseState {
@@ -59,12 +66,19 @@ impl EnterpriseState {
             rbac: Arc::new(RbacManager::new()),
             audit: Arc::new(AuditLogger::default()),
             store: None,
+            license: None,
         }
     }
 
     /// Attach a persistent enterprise store.
     pub fn with_store(mut self, store: Arc<dyn EnterpriseStore>) -> Self {
         self.store = Some(store);
+        self
+    }
+
+    /// Attach a verified license (or `None` for unlicensed enterprise mode).
+    pub fn with_license(mut self, license: Option<License>) -> Self {
+        self.license = license;
         self
     }
 }

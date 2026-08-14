@@ -108,6 +108,14 @@ boa_engine = "0.20"
 # SHA-256 for the script `crypto.hash` API
 sha2 = "0.10"
 
+# Ed25519 signature verification for enterprise license files (Phase 3).
+# Pinned to 2.x to match the version already used for plugin signing in
+# madhyamas-core; the licensing server must sign with the same crate line.
+ed25519-dalek = { version = "2", default-features = false, features = [
+    "std",
+    "rand_core",
+] }
+
 # Internal crates
 madhyamas-core = { path = "crates/madhyamas-core", version = "0.1.6" }
 madhyamas-api = { path = "crates/madhyamas-api", version = "0.1.6", default-features = false }

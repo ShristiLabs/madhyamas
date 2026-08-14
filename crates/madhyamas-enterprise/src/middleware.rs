@@ -58,6 +58,7 @@ const PUBLIC_PATHS: &[&str] = &[
     "/api/health",
     "/api/health/detailed",
     "/api/auth/login",
+    "/api/license",
 ];
 
 /// Returns true if the request path is exempt from authentication.

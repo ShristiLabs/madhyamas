@@ -229,8 +229,12 @@ struct Args {
     #[arg(long, env = "MADHYAMAS_JWT_SECRET", global = true)]
     jwt_secret: Option<String>,
 
-    /// Path to a license file (enterprise tier). Accepted but not yet
-    /// enforced — license verification is implemented in Phase 3.
+    /// Path to an Ed25519-signed license file (enterprise tier). When
+    /// provided, the license is verified at startup and the binary fails
+    /// fast if the signature is invalid or the license has expired. When
+    /// omitted, the binary runs in unlicensed enterprise mode (auth/RBAC/
+    /// audit still functional). The verifying public key is read from
+    /// `MADHYAMAS_LICENSE_PUBLIC_KEY` (base64-encoded 32 bytes).
     #[arg(long, env = "MADHYAMAS_LICENSE_FILE", global = true)]
     license_file: Option<String>,
 }
@@ -918,12 +922,37 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             jwt_secret,
             ..madhyamas_enterprise::AuthConfig::default()
         };
-        if let Some(ref license_path) = args.license_file {
-            tracing::info!(
-                "License file specified: {:?} (enforcement deferred to Phase 3)",
-                license_path
-            );
-        }
+        // Phase 3: Ed25519 license verification. If --license-file is
+        // provided, verify it at startup (fail-fast on invalid/expired/
+        // tampered licenses). If no license file is provided, the binary
+        // starts in unlicensed enterprise mode — auth/RBAC/audit still
+        // function; seat-count enforcement and feature gating arrive in
+        // later phases.
+        let license: Option<madhyamas_enterprise::License> =
+            if let Some(ref license_path) = args.license_file {
+                let verifier = madhyamas_enterprise::LicenseVerifier::from_env()
+                    .map_err(|e| anyhow::anyhow!("license verifier init failed: {e}"))?;
+                let license = verifier
+                    .verify(std::path::Path::new(license_path))
+                    .map_err(|e| {
+                        tracing::error!("License verification failed: {e}");
+                        anyhow::anyhow!("license verification failed: {e}")
+                    })?;
+                tracing::info!(
+                    "License verified: {} (plan={}, seats={}, expires={})",
+                    license.claims.license_id,
+                    license.claims.plan,
+                    license.claims.seats,
+                    license.claims.expires_at
+                );
+                Some(license)
+            } else {
+                tracing::info!(
+                    "No license file provided; running in unlicensed enterprise mode \
+                     (auth/RBAC/audit still functional)"
+                );
+                None
+            };
         // Construct the persistent enterprise store backed by a SQLite pool.
         // The database file lives alongside traffic.db under ~/.madhyamas/.
         let enterprise_db_path =
@@ -951,13 +980,18 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("failed to initialize enterprise store: {e}"))?;
         let store: std::sync::Arc<dyn madhyamas_enterprise::EnterpriseStore> =
             std::sync::Arc::new(store);
-        let enterprise =
-            madhyamas_enterprise::EnterpriseState::new(auth_config).with_store(store.clone());
+        let enterprise = madhyamas_enterprise::EnterpriseState::new(auth_config)
+            .with_store(store.clone())
+            .with_license(license);
         let api_state = api_state
             .with_auth_provider(enterprise.auth.clone())
             .with_authorizer(enterprise.rbac.clone())
             .with_audit_sink(enterprise.audit.clone());
-        let router = madhyamas_enterprise::create_enterprise_router(store, enterprise.auth.clone());
+        let router = madhyamas_enterprise::create_enterprise_router(
+            store,
+            enterprise.auth.clone(),
+            enterprise.license.clone(),
+        );
         (api_state, Some(router))
     };
     #[cfg(not(feature = "enterprise"))]

@@ -20,7 +20,9 @@ use std::sync::Arc;
 
 use crate::audit::{AuditEventType, AuditFilter};
 use crate::store::{ApiKeyRecord, EnterpriseStore, UserUpdate};
-use crate::{ApiKey, AuditEvent, AuthManager, JwtClaims, Permission, User, UserRole, UserStatus};
+use crate::{
+    ApiKey, AuditEvent, AuthManager, JwtClaims, License, Permission, User, UserRole, UserStatus,
+};
 
 /// Hash a plaintext password with SHA-256. Phase 4 replaces this with
 /// Argon2id; for now a deterministic hash keeps plaintext credentials out of
@@ -89,6 +91,9 @@ pub struct HealthCheck {
     pub memory_usage_mb: u64,
     pub active_connections: u64,
     pub details: HashMap<String, String>,
+    /// License status summary (Phase 3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<LicenseHealth>,
 }
 
 impl Default for HealthCheck {
@@ -100,8 +105,18 @@ impl Default for HealthCheck {
             memory_usage_mb: 0,
             active_connections: 0,
             details: HashMap::new(),
+            license: None,
         }
     }
+}
+
+/// License status embedded in the health-check response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LicenseHealth {
+    pub licensed: bool,
+    /// RFC 3339 expiry timestamp (omitted when unlicensed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
 }
 
 /// Role info (stub)
@@ -122,8 +137,12 @@ pub async fn get_metrics(State(_state): State<Arc<AppState>>) -> Json<Metrics> {
     Json(collector.snapshot())
 }
 
-/// Get health check
-pub async fn get_health_check(State(_state): State<Arc<AppState>>) -> Json<HealthCheck> {
+/// Get health check. Includes a license status summary when the enterprise
+/// tier is active (Phase 3).
+pub async fn get_health_check(
+    State(_state): State<Arc<AppState>>,
+    Extension(license): Extension<Option<License>>,
+) -> Json<HealthCheck> {
     Json(HealthCheck {
         healthy: true,
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -131,7 +150,87 @@ pub async fn get_health_check(State(_state): State<Arc<AppState>>) -> Json<Healt
         memory_usage_mb: 0,
         active_connections: 0,
         details: Default::default(),
+        license: Some(license_health(&license)),
     })
+}
+
+/// Build a [`LicenseHealth`] summary from the optional verified license.
+fn license_health(license: &Option<License>) -> LicenseHealth {
+    match license {
+        Some(l) => LicenseHealth {
+            licensed: true,
+            expires_at: Some(l.claims.expires_at.to_rfc3339()),
+        },
+        None => LicenseHealth {
+            licensed: false,
+            expires_at: None,
+        },
+    }
+}
+
+/// License info response returned by `GET /api/license`.
+///
+/// When a license is present, all claim fields are included. When no license
+/// was provided at startup, only `licensed: false` is returned (the endpoint
+/// is informational, not a gate).
+#[derive(Debug, Serialize)]
+pub struct LicenseInfoResponse {
+    pub licensed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seats: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issued_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub features: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified_at: Option<String>,
+}
+
+/// `GET /api/license` — return the active license info (public, no auth).
+///
+/// Returns `200` with `{ "licensed": true, ... }` when a verified license is
+/// active, or `200` with `{ "licensed": false }` when running in unlicensed
+/// enterprise mode.
+pub async fn get_license_info(
+    State(_state): State<Arc<AppState>>,
+    Extension(license): Extension<Option<License>>,
+) -> Json<LicenseInfoResponse> {
+    match license {
+        Some(l) => Json(LicenseInfoResponse {
+            licensed: true,
+            license_id: Some(l.claims.license_id.clone()),
+            customer: Some(l.claims.customer.clone()),
+            plan: Some(l.claims.plan.clone()),
+            seats: Some(l.claims.seats),
+            instance_id: Some(l.claims.instance_id.clone()),
+            issued_at: Some(l.claims.issued_at.to_rfc3339()),
+            expires_at: Some(l.claims.expires_at.to_rfc3339()),
+            features: Some(l.claims.features.clone()),
+            verified_at: Some(l.verified_at.to_rfc3339()),
+        }),
+        None => Json(LicenseInfoResponse {
+            licensed: false,
+            license_id: None,
+            customer: None,
+            plan: None,
+            seats: None,
+            instance_id: None,
+            issued_at: None,
+            expires_at: None,
+            features: None,
+            verified_at: None,
+        }),
+    }
 }
 
 /// Performance stats response
