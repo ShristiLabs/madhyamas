@@ -109,9 +109,17 @@ impl License {
 /// development and CI run without configuring a public key. **Production
 /// deployments MUST set `MADHYAMAS_LICENSE_PUBLIC_KEY`** to the real key
 /// published by the licensing server.
+///
+/// An optional `expected_instance_id` (Phase 9.14) can be set via
+/// [`LicenseVerifier::with_expected_instance_id`]. When set, the verifier
+/// rejects licenses whose `instance_id` does not match — preventing license
+/// replay across instances. When unset (the default), any `instance_id` in
+/// the license is accepted (for single-instance deployments).
 #[derive(Clone)]
 pub struct LicenseVerifier {
     public_key: VerifyingKey,
+    /// When `Some`, the license's `instance_id` must match this value.
+    expected_instance_id: Option<String>,
 }
 
 /// License verification error.
@@ -147,7 +155,10 @@ impl LicenseVerifier {
     pub fn new(public_key_bytes: &[u8; 32]) -> Result<Self, LicenseError> {
         let public_key = VerifyingKey::from_bytes(public_key_bytes)
             .map_err(|e| LicenseError::KeyError(e.to_string()))?;
-        Ok(Self { public_key })
+        Ok(Self {
+            public_key,
+            expected_instance_id: None,
+        })
     }
 
     /// Construct a verifier from the `MADHYAMAS_LICENSE_PUBLIC_KEY` env var
@@ -181,6 +192,15 @@ impl LicenseVerifier {
                 Self::new(&DEV_PUBLIC_KEY)
             }
         }
+    }
+
+    /// Set the expected instance ID for license replay prevention (Phase
+    /// 9.14). When set, [`Self::verify_claims`] rejects licenses whose
+    /// `instance_id` does not match. When unset (the default), any
+    /// `instance_id` is accepted.
+    pub fn with_expected_instance_id(mut self, instance_id: impl Into<String>) -> Self {
+        self.expected_instance_id = Some(instance_id.into());
+        self
     }
 
     /// Read, parse, and verify a license file from disk.
@@ -228,6 +248,16 @@ impl LicenseVerifier {
             return Err(LicenseError::Expired {
                 expires_at: file.claims.expires_at,
             });
+        }
+        // Phase 9.14: instance ID replay prevention. When an expected
+        // instance ID is configured, the license's instance_id must match.
+        if let Some(ref expected) = self.expected_instance_id {
+            if &file.claims.instance_id != expected {
+                return Err(LicenseError::InstanceMismatch {
+                    expected: expected.clone(),
+                    actual: file.claims.instance_id.clone(),
+                });
+            }
         }
         Ok(License {
             claims: file.claims.clone(),
@@ -427,5 +457,41 @@ mod tests {
             matches!(err, LicenseError::NotFound(_)),
             "expected NotFound, got {err:?}"
         );
+    }
+
+    #[test]
+    fn test_instance_id_match() {
+        let claims = sample_claims();
+        let (file, verifier) = make_signed_license(&claims);
+        let verifier = verifier.with_expected_instance_id(&claims.instance_id);
+        let license = verifier
+            .verify_claims(&file)
+            .expect("matching instance ID should verify");
+        assert_eq!(license.claims.instance_id, claims.instance_id);
+    }
+
+    #[test]
+    fn test_instance_id_mismatch() {
+        let claims = sample_claims();
+        let (file, verifier) = make_signed_license(&claims);
+        let verifier = verifier.with_expected_instance_id("inst_DIFFERENT");
+        let err = verifier
+            .verify_claims(&file)
+            .expect_err("mismatched instance ID should fail");
+        assert!(
+            matches!(err, LicenseError::InstanceMismatch { .. }),
+            "expected InstanceMismatch, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_instance_id_not_set_accepts_any() {
+        let claims = sample_claims();
+        let (file, verifier) = make_signed_license(&claims);
+        // No expected_instance_id set — any instance_id should be accepted.
+        let license = verifier
+            .verify_claims(&file)
+            .expect("any instance ID accepted when not configured");
+        assert_eq!(license.claims.instance_id, claims.instance_id);
     }
 }

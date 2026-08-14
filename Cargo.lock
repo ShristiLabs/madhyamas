@@ -2621,6 +2621,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 
@@ -2753,6 +2754,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 

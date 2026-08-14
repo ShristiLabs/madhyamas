@@ -38,6 +38,37 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
+/// Trait for validating proxy-level authentication (Phase 9.6).
+///
+/// When `--proxy-auth` is enabled, the proxy engine calls
+/// [`ProxyAuthValidator::validate`] with the credentials extracted from
+/// the `Proxy-Authorization` or `X-API-Key` header before forwarding a
+/// request. If validation fails, the proxy returns `407 Proxy
+/// Authentication Required`.
+///
+/// The enterprise crate implements this trait via its `AuthManager` (JWT
+/// + API key validation). In the OSS tier, no validator is set and proxy
+/// auth is not enforced.
+#[async_trait::async_trait]
+pub trait ProxyAuthValidator: Send + Sync {
+    /// Validate proxy credentials. Returns `Ok(())` if the credentials are
+    /// valid, or an error message describing why they were rejected.
+    async fn validate(&self, credentials: &ProxyCredentials) -> Result<(), String>;
+}
+
+/// Credentials extracted from a proxy request for auth validation
+/// (Phase 9.6).
+#[derive(Debug, Clone)]
+pub enum ProxyCredentials {
+    /// `Proxy-Authorization: Basic <base64(user:pass)>` — the decoded
+    /// `username:password` string.
+    ProxyBasicAuth(String),
+    /// `X-API-Key: <key>` — the raw API key value.
+    ApiKey(String),
+    /// `Proxy-Authorization: Bearer <jwt>` — the raw JWT token.
+    ProxyBearer(String),
+}
+
 /// Proxy engine state
 pub struct ProxyEngine {
     /// Shared, live-updatable configuration. The same `Arc<RwLock<ProxyConfig>>`
@@ -84,6 +115,11 @@ pub struct ProxyEngine {
     traffic_tx: broadcast::Sender<TrafficEntry>,
     /// Whether the proxy is running
     running: RwLock<bool>,
+    /// Optional proxy auth validator (Phase 9.6). When set, proxy
+    /// CONNECT/HTTP requests must supply valid credentials or receive
+    /// `407 Proxy Authentication Required`. `None` in OSS mode or when
+    /// `--proxy-auth` is not enabled.
+    proxy_auth_validator: OnceLock<Arc<dyn ProxyAuthValidator>>,
 }
 
 impl ProxyEngine {
@@ -178,6 +214,7 @@ impl ProxyEngine {
             auto_save_manager: OnceLock::new(),
             traffic_tx,
             running: RwLock::new(false),
+            proxy_auth_validator: OnceLock::new(),
         }))
     }
 
@@ -335,6 +372,17 @@ impl ProxyEngine {
         self
     }
 
+    /// Attach a proxy auth validator (Phase 9.6). When set, proxy
+    /// CONNECT/HTTP requests must supply valid credentials or receive
+    /// `407 Proxy Authentication Required`.
+    pub fn with_proxy_auth_validator(
+        self: Arc<Self>,
+        validator: Arc<dyn ProxyAuthValidator>,
+    ) -> Arc<Self> {
+        let _ = self.proxy_auth_validator.set(validator);
+        self
+    }
+
     /// Get the metrics collector, if attached.
     pub fn metrics_collector(&self) -> Option<&Arc<MetricsCollector>> {
         self.metrics_collector.get()
@@ -474,6 +522,28 @@ impl ProxyEngine {
 
         let request_str = String::from_utf8_lossy(&peek_buf[..n]);
 
+        // Phase 9.6: proxy auth check. When a proxy auth validator is
+        // configured, extract credentials from the request headers and
+        // validate them before processing. Unauthenticated requests
+        // receive a 407 response.
+        if let Some(validator) = self.proxy_auth_validator.get() {
+            if let Err(msg) = self.check_proxy_auth(&request_str, validator).await {
+                let response = format!(
+                    "HTTP/1.1 407 Proxy Authentication Required\r\n\
+                     Proxy-Authenticate: Basic realm=\"madhyamas\"\r\n\
+                     Content-Type: application/json\r\n\
+                     Content-Length: {}\r\n\
+                     Connection: close\r\n\
+                     \r\n\
+                     {{\"error\":\"proxy_auth_required\",\"message\":\"{}\"}}",
+                    msg.len(),
+                    msg
+                );
+                let _ = client_socket.write_all(response.as_bytes()).await;
+                return Ok(());
+            }
+        }
+
         if request_str.starts_with("CONNECT ") {
             // For CONNECT, we must consume the full CONNECT request from the buffer
             // before starting TLS handshake. Read until we find \r\n\r\n.
@@ -505,6 +575,39 @@ impl ProxyEngine {
             // Regular HTTP proxy
             self.handle_http_proxy(client_socket, &buf[..n]).await
         }
+    }
+
+    /// Extract and validate proxy auth credentials from the raw request
+    /// string (Phase 9.6). Checks `Proxy-Authorization` and `X-API-Key`
+    /// headers. Returns `Ok(())` when authenticated, or `Err(message)`
+    /// when credentials are missing or invalid.
+    async fn check_proxy_auth(
+        &self,
+        request_str: &str,
+        validator: &Arc<dyn ProxyAuthValidator>,
+    ) -> Result<(), String> {
+        let headers = parse_connect_headers(request_str);
+        // Try Proxy-Authorization header first.
+        if let Some(auth_val) = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("proxy-authorization"))
+            .map(|(_, v)| v)
+        {
+            if let Some(credentials) = parse_proxy_authorization(auth_val) {
+                return validator.validate(&credentials).await;
+            }
+        }
+        // Try X-API-Key header.
+        if let Some(key_val) = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("x-api-key"))
+            .map(|(_, v)| v)
+        {
+            return validator
+                .validate(&ProxyCredentials::ApiKey(key_val.clone()))
+                .await;
+        }
+        Err("No proxy credentials provided".to_string())
     }
 
     /// Handle HTTPS CONNECT request
@@ -1746,6 +1849,27 @@ fn parse_connect_headers(request_str: &str) -> std::collections::HashMap<String,
         }
     }
     headers
+}
+
+/// Parse a `Proxy-Authorization` header value into [`ProxyCredentials`]
+/// (Phase 9.6). Supports `Basic <base64>` and `Bearer <token>` schemes.
+/// Returns `None` when the scheme is unrecognized or the value is
+/// malformed.
+fn parse_proxy_authorization(value: &str) -> Option<ProxyCredentials> {
+    let (scheme, rest) = value.split_once(' ')?;
+    let rest = rest.trim();
+    match scheme.to_ascii_lowercase().as_str() {
+        "basic" => {
+            use base64::Engine;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(rest)
+                .ok()?;
+            let decoded_str = String::from_utf8(decoded).ok()?;
+            Some(ProxyCredentials::ProxyBasicAuth(decoded_str))
+        }
+        "bearer" => Some(ProxyCredentials::ProxyBearer(rest.to_string())),
+        _ => None,
+    }
 }
 
 /// WebSocket Ping opcode (RFC 6455).

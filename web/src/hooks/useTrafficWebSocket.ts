@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useWebSocket } from "./useWebSocket";
+import { getAuthToken } from "@/lib/api/client";
 import type {
   TrafficEntrySnapshot,
   WsServerMessage,
@@ -30,7 +31,10 @@ export function useTrafficWebSocket(
   const [traffic, setTraffic] = useState<TrafficEntrySnapshot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Build WebSocket URL (includes base path for context-path deployments)
+  // Build WebSocket URL (includes base path for context-path deployments).
+  // In enterprise mode with auth enabled, the JWT token is appended as a
+  // `?token=` query parameter because browsers cannot set custom headers on
+  // the WebSocket upgrade handshake (Phase 9.1).
   const wsUrl = useMemo(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host;
@@ -44,7 +48,16 @@ export function useTrafficWebSocket(
       if (!p.endsWith("/")) p = p + "/";
       basePath = p;
     }
-    return `${protocol}//${host}${basePath}api/ws`;
+    const baseUrl = `${protocol}//${host}${basePath}api/ws`;
+    // Append the auth token as a query parameter when present. The server
+    // validates it during the WS upgrade (Phase 9.1). In OSS mode (no
+    // token), the query param is omitted and the server allows the
+    // connection.
+    const token = getAuthToken();
+    if (token) {
+      return `${baseUrl}?token=${encodeURIComponent(token)}`;
+    }
+    return baseUrl;
   }, []);
 
   const handleMessage = useCallback(

@@ -1125,12 +1125,80 @@ pub async fn trigger_autosave_snapshot(State(state): State<Arc<AppState>>) -> im
     }
 }
 
-/// WebSocket handler
+/// Query parameters for the WebSocket upgrade endpoint. Browsers cannot
+/// set custom headers on a WebSocket handshake, so the JWT is passed via
+/// the `?token=` query parameter (or the `Sec-WebSocket-Protocol`
+/// subprotocol header). See Phase 9.1.
+#[derive(Debug, Deserialize)]
+pub struct WsAuthQuery {
+    pub token: Option<String>,
+}
+
+/// WebSocket handler (Phase 9.1: auth on upgrade).
+///
+/// In enterprise mode with auth enabled (`AppState::auth_provider` is
+/// `Some`), the WebSocket upgrade is rejected with `401 Unauthorized`
+/// unless a valid JWT is supplied. Browsers cannot set custom headers on
+/// the WS handshake, so the token is accepted from:
+/// 1. `?token=` query parameter, or
+/// 2. `Sec-WebSocket-Protocol` subprotocol header (the first protocol
+///    value is treated as the token).
+///
+/// In OSS mode (or when auth is disabled — `auth_provider` is `None`),
+/// all connections are allowed (unchanged behavior).
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+    Query(query): Query<WsAuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    // If an auth provider is configured, validate the token before
+    // allowing the upgrade. This runs inside the handler (not as
+    // middleware) because the WebSocketUpgrade extractor must consume
+    // the connection — the enterprise auth middleware cannot reject it
+    // before the extractor runs.
+    if let Some(ref auth_provider) = state.auth_provider {
+        if auth_provider.auth_required() {
+            // Extract the token: query param first, then subprotocol header.
+            let token = query.token.or_else(|| {
+                headers
+                    .get("sec-websocket-protocol")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.split(',').next())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+
+            let token = match token {
+                Some(t) => t,
+                None => {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(serde_json::json!({
+                            "error": "unauthorized",
+                            "message": "WebSocket authentication required: provide ?token= or Sec-WebSocket-Protocol header"
+                        })),
+                    )
+                        .into_response();
+                }
+            };
+
+            if let Err(err) = auth_provider.validate_token(&token).await {
+                tracing::debug!("WebSocket auth rejected: {err}");
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({
+                        "error": "unauthorized",
+                        "message": err.to_string(),
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
     ws.on_upgrade(move |socket| handle_ws(socket, state.traffic_store.clone()))
+        .into_response()
 }
 
 /// Get CA certificate for HTTPS interception

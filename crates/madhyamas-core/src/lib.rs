@@ -53,7 +53,7 @@ pub use traffic::{
 pub use tls::CertificateManager;
 
 // Re-exports from proxy
-pub use proxy::ProxyEngine;
+pub use proxy::{ProxyAuthValidator, ProxyCredentials, ProxyEngine};
 
 // Re-exports from websocket
 pub use websocket::{

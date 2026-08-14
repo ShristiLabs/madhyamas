@@ -23,12 +23,13 @@ pub mod middleware;
 pub mod rbac;
 pub mod redis_state;
 pub mod router;
+pub mod security;
 pub mod store;
 pub mod user;
 
 pub use audit::{AuditEvent, AuditEventType, AuditFilter, AuditLogger};
 pub use auth::{ApiKey, ApiKeyAuth, AuthConfig, AuthManager, JwtClaims, RefreshTokenClaims, Scope};
-pub use credentials::{hash_password, verify_password};
+pub use credentials::{hash_password, validate_password_complexity, verify_password};
 pub use enterprise_error::EnterpriseError;
 pub use license::{License, LicenseClaims, LicenseError, LicenseFile, LicenseVerifier};
 pub use rbac::{Permission, RbacManager, Resource, ResourceType};
@@ -37,6 +38,7 @@ pub use redis_state::{
     CHANNEL_INTERCEPT, CHANNEL_SEATS,
 };
 pub use router::create_enterprise_router;
+pub use security::{is_private_ip, validate_callback_url};
 pub use store::{ApiKeyRecord, AuditStats, AuthSession, UserUpdate};
 pub use store::{EnterpriseStore, PostgresEnterpriseStore, SqliteEnterpriseStore, StoreError};
 pub use user::{User, UserRole, UserStatus};

@@ -48,3 +48,4 @@ parking_lot.workspace = true
 rand.workspace = true
 uuid.workspace = true
 futures.workspace = true
+url.workspace = true

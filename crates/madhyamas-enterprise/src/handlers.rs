@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::audit::{AuditEventType, AuditFilter};
-use crate::credentials::{hash_password, verify_password};
+use crate::credentials::{hash_password, validate_password_complexity, verify_password};
 use crate::store::{ApiKeyRecord, AuthSession, EnterpriseStore, UserUpdate};
 use crate::{
     ApiKey, AuditEvent, AuthManager, JwtClaims, License, Permission, RbacManager, ResourceType,
@@ -793,23 +793,42 @@ pub struct CreateUserRequest {
 
 /// Create user. Hashes the password with Argon2id, persists the user with the
 /// hash in the dedicated `password_hash` column, and returns the created
-/// record (without credential material).
+/// record (without credential material). Passwords must pass the complexity
+/// check (Phase 9.9) before hashing.
 pub async fn create_user(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
     Extension(audit): Extension<Arc<crate::AuditLogger>>,
     Json(req): Json<CreateUserRequest>,
-) -> Result<Json<User>, StatusCode> {
+) -> Result<Json<User>, (StatusCode, Json<serde_json::Value>)> {
     if store
         .get_user_by_username(&req.username)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "internal server error"})),
+            )
+        })?
         .is_some()
     {
-        return Err(StatusCode::CONFLICT);
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "username already exists"})),
+        ));
     }
-    let password_hash =
-        hash_password(&req.password).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    validate_password_complexity(&req.password).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "invalid password", "message": e.to_string()})),
+        )
+    })?;
+    let password_hash = hash_password(&req.password).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "password hashing failed"})),
+        )
+    })?;
     let user = User::new(
         uuid::Uuid::new_v4().to_string(),
         req.username.clone(),
@@ -821,7 +840,12 @@ pub async fn create_user(
     store
         .create_user(&user, &password_hash)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "failed to create user"})),
+            )
+        })?;
     audit.log(
         AuditEvent::new(AuditEventType::Custom, "user created")
             .with_metadata("username", serde_json::json!(req.username))
@@ -839,18 +863,33 @@ pub struct UpdateUserRequest {
 }
 
 /// Update user. Applies partial updates (email, role, status, password) and
-/// returns the updated record. When a new password is supplied it is hashed
-/// with Argon2id before being persisted.
+/// returns the updated record. When a new password is supplied it must pass
+/// the complexity check (Phase 9.9) and is hashed with Argon2id before being
+/// persisted.
 pub async fn update_user(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
     Extension(audit): Extension<Arc<crate::AuditLogger>>,
     Path(user_id): Path<String>,
     Json(req): Json<UpdateUserRequest>,
-) -> Result<Json<User>, StatusCode> {
+) -> Result<Json<User>, (StatusCode, Json<serde_json::Value>)> {
     let password_hash = match req.password {
         Some(ref pw) if !pw.is_empty() => {
-            Some(hash_password(pw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
+            validate_password_complexity(pw).map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "invalid password",
+                        "message": e.to_string()
+                    })),
+                )
+            })?;
+            Some(hash_password(pw).map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "password hashing failed"})),
+                )
+            })?)
         }
         _ => None,
     };
@@ -871,15 +910,25 @@ pub async fn update_user(
         preferences: None,
         last_login: None,
     };
-    store
-        .update_user(&user_id, &updates)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store.update_user(&user_id, &updates).await.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "failed to update user"})),
+        )
+    })?;
     let user = store
         .get_user(&user_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "internal server error"})),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "user not found"})),
+        ))?;
     audit.log(
         AuditEvent::new(AuditEventType::Custom, "user updated")
             .with_metadata("user_id", serde_json::json!(user_id)),

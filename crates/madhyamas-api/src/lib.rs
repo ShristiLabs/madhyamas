@@ -411,7 +411,33 @@ pub fn create_router(
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
-        // Security headers
+        // Security headers (Phase 9.3). These apply to BOTH OSS and
+        // enterprise builds — defense-in-depth for every deployment.
+        //
+        // Content-Security-Policy: restricts resource loading to 'self'.
+        //   - `'unsafe-inline'` for styles is required because shadcn/ui
+        //     and Tailwind emit inline styles at runtime.
+        //   - `connect-src ws: wss:` allows the web UI's WebSocket
+        //     connection to the traffic stream.
+        //   - `img-src 'self' data: blob:` allows inline data-URI images
+        //     and object-URL previews used by the UI.
+        //   - `object-src 'none'` and `base-uri 'self'` block plugins and
+        //     <base> hijacking.
+        //   - `frame-ancestors 'none'` prevents clickjacking via embedding
+        //     (stronger than X-Frame-Options and understood by modern
+        //     browsers).
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static(
+                "default-src 'self'; script-src 'self'; \
+                 style-src 'self' 'unsafe-inline'; \
+                 img-src 'self' data: blob:; \
+                 connect-src 'self' ws: wss:; \
+                 font-src 'self' data:; \
+                 object-src 'none'; base-uri 'self'; \
+                 frame-ancestors 'none'",
+            ),
+        ))
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::X_FRAME_OPTIONS,
             axum::http::HeaderValue::from_static("DENY"),
@@ -419,6 +445,10 @@ pub fn create_router(
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::X_CONTENT_TYPE_OPTIONS,
             axum::http::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::HeaderName::from_static("x-xss-protection"),
+            axum::http::HeaderValue::from_static("1; mode=block"),
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::REFERRER_POLICY,

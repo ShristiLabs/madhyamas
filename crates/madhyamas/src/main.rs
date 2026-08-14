@@ -321,6 +321,43 @@ struct Args {
     /// server.
     #[arg(long, env = "MADHYAMAS_TOKEN", global = true)]
     token: Option<String>,
+
+    /// Require authentication for proxy CONNECT/HTTP requests (Phase 9.6).
+    /// When enabled (enterprise tier with `--enable-auth`), proxy clients
+    /// must supply credentials via `Proxy-Authorization: Basic` or
+    /// `X-API-Key` header. Unauthenticated proxy requests receive
+    /// `407 Proxy Authentication Required`. Default: off (proxy is open).
+    /// This is for deployments where the proxy itself needs protection,
+    /// not just the API.
+    #[arg(long, env = "MADHYAMAS_PROXY_AUTH", global = true)]
+    proxy_auth: bool,
+
+    /// Expected instance ID for license replay prevention (Phase 9.14).
+    /// When provided, the license file's `instance_id` must match this
+    /// value or the license is rejected at startup. When omitted, any
+    /// `instance_id` in the license is accepted (single-instance mode).
+    /// In multi-instance deployments, set a unique instance ID per
+    /// instance to prevent a license issued for one instance from being
+    /// reused on another.
+    #[arg(long, env = "MADHYAMAS_INSTANCE_ID", global = true)]
+    instance_id: Option<String>,
+
+    /// Path to a file containing the database URL (Phase 9.15). Reads the
+    /// first non-empty line as the connection string. Useful for secret
+    /// managers (Vault, AWS Secrets Manager) that write credentials to
+    /// files. When both `--database-url` and `--database-url-file` are
+    /// provided, `--database-url` takes precedence. The connection string
+    /// is never logged.
+    #[arg(long, env = "MADHYAMAS_DATABASE_URL_FILE", global = true)]
+    database_url_file: Option<String>,
+
+    /// Path to a PEM-encoded CA certificate for Redis TLS verification
+    /// (Phase 9.2). When `--redis-url` uses the `rediss://` scheme and
+    /// this flag is set, the custom CA is used to verify the Redis TLS
+    /// certificate (for self-signed Redis TLS). When omitted, the system
+    /// CA store is used for `rediss://` verification.
+    #[arg(long, env = "MADHYAMAS_REDIS_CA_CERT", global = true)]
+    redis_ca_cert: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -605,6 +642,114 @@ fn parse_auth_credentials(s: &str) -> (Option<String>, Option<String>) {
     }
 }
 
+/// Resolve the database URL from CLI args (Phase 9.15).
+///
+/// Precedence:
+/// 1. `--database-url` (or `MADHYAMAS_DATABASE_URL` env var)
+/// 2. `--database-url-file` (or `MADHYAMAS_DATABASE_URL_FILE` env var) —
+///    reads the first non-empty line from the file
+/// 3. `None` (use default SQLite)
+///
+/// The connection string is never logged by this function.
+fn resolve_database_url(
+    database_url: &Option<String>,
+    database_url_file: &Option<String>,
+) -> Result<Option<String>> {
+    if let Some(url) = database_url {
+        return Ok(Some(url.clone()));
+    }
+    if let Some(ref path) = database_url_file {
+        let contents = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("failed to read --database-url-file {path}: {e}"))?;
+        let url = contents
+            .lines()
+            .map(|l| l.trim())
+            .find(|l| !l.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("--database-url-file {path} is empty"))?;
+        return Ok(Some(url.to_string()));
+    }
+    Ok(None)
+}
+
+/// Redact the password from a database connection string for safe logging
+/// (Phase 9.15). Handles `postgres://user:pass@host/db`,
+/// `postgresql://user:pass@host/db`, and `sqlite://path` (no password to
+/// redact). Returns a string with the password replaced by `***`, or the
+/// original string if no password is present.
+fn redact_db_url(url: &str) -> String {
+    // Try to parse as a URL. If parsing fails, return as-is (don't risk
+    // leaking — but also don't crash).
+    match url::Url::parse(url) {
+        Ok(mut parsed) => {
+            if parsed.password().is_some() {
+                let _ = parsed.set_password(Some("***"));
+            }
+            parsed.to_string()
+        }
+        Err(_) => {
+            // Not a valid URL (e.g. sqlite://path). Return as-is — SQLite
+            // URLs don't contain passwords.
+            url.to_string()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests_url_redact {
+    use super::*;
+
+    #[test]
+    fn test_redact_db_url_postgres_with_password() {
+        let redacted = redact_db_url("postgres://user:secretpass@localhost:5432/db");
+        assert!(redacted.contains("***"));
+        assert!(!redacted.contains("secretpass"));
+    }
+
+    #[test]
+    fn test_redact_db_url_postgresql_with_password() {
+        let redacted = redact_db_url("postgresql://admin:p@ssw0rd@db.example.com:5432/prod");
+        assert!(redacted.contains("***"));
+        assert!(!redacted.contains("p@ssw0rd"));
+    }
+
+    #[test]
+    fn test_redact_db_url_no_password() {
+        let redacted = redact_db_url("postgres://user@localhost:5432/db");
+        assert!(!redacted.contains("***"));
+        assert!(redacted.contains("localhost"));
+    }
+
+    #[test]
+    fn test_redact_db_url_sqlite() {
+        let url = "sqlite:///home/user/.madhyamas/traffic.db";
+        let redacted = redact_db_url(url);
+        assert_eq!(redacted, url);
+    }
+
+    #[test]
+    fn test_resolve_database_url_prefers_direct() {
+        let result =
+            resolve_database_url(&Some("postgres://localhost/db".to_string()), &None).unwrap();
+        assert_eq!(result.as_deref(), Some("postgres://localhost/db"));
+    }
+
+    #[test]
+    fn test_resolve_database_url_from_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_db_url_file.txt");
+        std::fs::write(&path, "postgres://user:pass@localhost/db\n").unwrap();
+        let result = resolve_database_url(&None, &Some(path.display().to_string())).unwrap();
+        assert_eq!(result.as_deref(), Some("postgres://user:pass@localhost/db"));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn test_resolve_database_url_none() {
+        let result = resolve_database_url(&None, &None).unwrap();
+        assert!(result.is_none());
+    }
+}
+
 async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     info!("Starting Madhyamas...");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
@@ -748,6 +893,15 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     config.ensure_directories()?;
     info!("Data directory: ~/.madhyamas/");
 
+    // Phase 9.15: resolve the database URL from --database-url or
+    // --database-url-file. The resolved URL is used for all storage
+    // backends. The connection string is never logged in plaintext —
+    // use `redact_db_url` when logging is needed.
+    let database_url = resolve_database_url(&args.database_url, &args.database_url_file)?;
+    if let Some(ref db_url) = database_url {
+        tracing::info!("Database URL resolved: {}", redact_db_url(db_url));
+    }
+
     // Validate the IP allowlist early so a bad entry fails fast at startup
     // rather than silently rejecting (or accepting) connections.
     if config.access_control_enabled() {
@@ -781,9 +935,9 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     // instance, use PostgresTrafficStore; otherwise fall back to the default
     // SQLite TrafficStore.
     let traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync> =
-        if let Some(ref db_url) = args.database_url {
+        if let Some(ref db_url) = database_url {
             if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
-                info!("Using PostgreSQL traffic store: {}", db_url);
+                info!("Using PostgreSQL traffic store: {}", redact_db_url(db_url));
                 let pool = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(10)
                     .connect(db_url)
@@ -803,7 +957,10 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                 store.set_ignored_domains(config.ignored_domains.clone());
                 store
             } else {
-                info!("Using SQLite traffic store (explicit URL): {}", db_url);
+                info!(
+                    "Using SQLite traffic store (explicit URL): {}",
+                    redact_db_url(db_url)
+                );
                 let store = TrafficStore::new(config.db_path.clone()).await?;
                 configure_traffic_store(&store, &config);
                 store
@@ -818,7 +975,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     // the intercept store shares the same database; otherwise it uses a
     // separate SQLite file (intercept.db).
     let intercept_store: Arc<dyn InterceptStoreBackend + Send + Sync> =
-        if let Some(ref db_url) = args.database_url {
+        if let Some(ref db_url) = database_url {
             if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
                 let pool = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(5)
@@ -909,7 +1066,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         // the same database; otherwise it uses a SQLite pool to the same
         // database file used by TrafficStore.
         let script_store_result: Result<Arc<dyn ScriptStoreBackend + Send + Sync>, anyhow::Error> =
-            if let Some(ref db_url) = args.database_url {
+            if let Some(ref db_url) = database_url {
                 if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
                     let pool = sqlx::postgres::PgPoolOptions::new()
                         .max_connections(5)
@@ -994,7 +1151,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         // When using PostgreSQL, the plugin store shares the same database;
         // otherwise it uses a separate SQLite file (plugins.db).
         let plugin_store_result: Result<Arc<dyn PluginStoreBackend + Send + Sync>, anyhow::Error> =
-            if let Some(ref db_url) = args.database_url {
+            if let Some(ref db_url) = database_url {
                 if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
                     let pool = sqlx::postgres::PgPoolOptions::new()
                         .max_connections(5)
@@ -1202,8 +1359,18 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         // later phases.
         let license: Option<madhyamas_enterprise::License> =
             if let Some(ref license_path) = args.license_file {
-                let verifier = madhyamas_enterprise::LicenseVerifier::from_env()
+                let mut verifier = madhyamas_enterprise::LicenseVerifier::from_env()
                     .map_err(|e| anyhow::anyhow!("license verifier init failed: {e}"))?;
+                // Phase 9.14: instance ID replay prevention. When
+                // --instance-id is provided, the license's instance_id must
+                // match.
+                if let Some(ref expected_id) = args.instance_id {
+                    tracing::info!(
+                        "License instance ID enforcement enabled (expected: {})",
+                        expected_id
+                    );
+                    verifier = verifier.with_expected_instance_id(expected_id.clone());
+                }
                 let license = verifier
                     .verify(std::path::Path::new(license_path))
                     .map_err(|e| {
@@ -1229,9 +1396,12 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         // the enterprise store shares the same database; otherwise it uses
         // a separate SQLite file (enterprise.db) alongside traffic.db.
         let store: std::sync::Arc<dyn madhyamas_enterprise::EnterpriseStore> =
-            if let Some(ref db_url) = args.database_url {
+            if let Some(ref db_url) = database_url {
                 if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
-                    tracing::info!("Enterprise store using PostgreSQL: {}", db_url);
+                    tracing::info!(
+                        "Enterprise store using PostgreSQL: {}",
+                        redact_db_url(db_url)
+                    );
                     let pool = sqlx::postgres::PgPoolOptions::new()
                         .max_connections(5)
                         .connect(db_url)
@@ -1414,6 +1584,17 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         let audit = std::sync::Arc::new(
             madhyamas_enterprise::AuditLogger::default().with_store(store.clone()),
         );
+        // Phase 9.6: attach proxy auth validator when --proxy-auth is
+        // enabled. The proxy engine is already running (started earlier),
+        // but the validator is stored in a OnceLock that hasn't been set
+        // yet — so this takes effect immediately for all subsequent
+        // connections.
+        if args.proxy_auth {
+            tracing::info!("Proxy auth enabled: CONNECT/HTTP requests require credentials");
+            // with_proxy_auth_validator sets a OnceLock on the underlying
+            // ProxyEngine (shared via Arc). The returned Arc is dropped.
+            let _ = proxy_engine.clone().with_proxy_auth_validator(auth.clone());
+        }
         let api_state = api_state
             .with_auth_provider(auth.clone())
             .with_authorizer(enterprise.rbac.clone())

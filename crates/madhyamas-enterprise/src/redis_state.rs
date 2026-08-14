@@ -119,7 +119,19 @@ pub struct RedisState {
 impl RedisState {
     /// Connect to Redis at `url`, verify connectivity with PING, and return a
     /// [`RedisState`] tagged with `instance_id`.
+    ///
+    /// The URL scheme determines the connection mode (Phase 9.2):
+    /// - `redis://host:port` — plain TCP
+    /// - `redis://:password@host:port` — auth
+    /// - `rediss://host:port` — TLS (system CA store)
+    /// - `rediss://:password@host:port` — TLS + auth
+    ///
+    /// When TLS is detected (`rediss://`), an info-level log message is
+    /// emitted so operators can confirm encryption is active.
     pub async fn new(url: &str, instance_id: String) -> Result<Self, RedisError> {
+        if url.starts_with("rediss://") {
+            tracing::info!("Redis TLS enabled (rediss:// URL scheme)");
+        }
         let client = Client::open(url)?;
         let mut conn = client.get_multiplexed_async_connection().await?;
         redis::cmd("PING").query_async::<String>(&mut conn).await?;

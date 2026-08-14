@@ -16,6 +16,17 @@
 //! Auth is only enforced when enterprise features are enabled **and** an
 //! [`AuthManager`] is provided.
 //!
+//! # CSRF (Phase 9.12)
+//!
+//! Authentication currently uses JWT bearer tokens in the `Authorization`
+//! header (or API keys in `X-API-Key`), **not** cookies. Bearer-token auth
+//! is inherently immune to CSRF because browsers do not automatically
+//! attach the `Authorization` header to cross-origin requests the way they
+//! do with cookies. **If cookie-based authentication is added in the
+//! future, CSRF tokens MUST be implemented** — the auth middleware below
+//! would need to validate a double-submit cookie or a custom `X-CSRF-Token`
+//! header on all state-changing requests (POST/PUT/PATCH/DELETE).
+//!
 //! # Applying the middleware
 //!
 //! Because `auth_middleware` and `require_permission_middleware` are `async fn`

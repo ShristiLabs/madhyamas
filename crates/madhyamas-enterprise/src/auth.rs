@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use madhyamas_api::auth::{AuthError, AuthMethod, AuthProvider, Identity};
+use madhyamas_core::ProxyAuthValidator;
+use madhyamas_core::ProxyCredentials;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -596,6 +598,46 @@ impl AuthProvider for AuthManager {
             .map_err(|e| AuthError::AuthFailed {
                 message: format!("revoke failed: {e}"),
             })
+    }
+
+    /// Returns the value of `AuthConfig::require_auth` so the WS handler
+    /// (and other core-API-layer code) can skip auth when the enterprise
+    /// tier is present but auth is not strictly required (e.g. bootstrap
+    /// mode). (Phase 9.1)
+    fn auth_required(&self) -> bool {
+        self.config.require_auth
+    }
+}
+
+/// Implement [`ProxyAuthValidator`] so the proxy engine can enforce
+/// authentication on CONNECT/HTTP requests when `--proxy-auth` is enabled
+/// (Phase 9.6). Credentials are extracted from `Proxy-Authorization` or
+/// `X-API-Key` headers by the engine and validated here:
+/// - `Basic` → username:password via `authenticate_password`
+/// - `Bearer` → JWT via `validate_token`
+/// - `ApiKey` → API key via `validate_api_key`
+#[async_trait]
+impl ProxyAuthValidator for AuthManager {
+    async fn validate(&self, credentials: &ProxyCredentials) -> Result<(), String> {
+        match credentials {
+            ProxyCredentials::ProxyBasicAuth(creds) => {
+                let (username, password) = creds.split_once(':').unwrap_or((creds, ""));
+                self.authenticate_password(username, password)
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            }
+            ProxyCredentials::ProxyBearer(token) => self
+                .validate_token(token)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+            ProxyCredentials::ApiKey(key) => self
+                .validate_api_key(key)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+        }
     }
 }
 

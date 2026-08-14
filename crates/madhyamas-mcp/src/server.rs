@@ -1131,7 +1131,9 @@ async fn handle_http_request_async(
                     mime_type: Some("application/json".to_string()),
                 },
             ];
-            let result = ListResourceTemplatesResult { resource_templates: templates };
+            let result = ListResourceTemplatesResult {
+                resource_templates: templates,
+            };
             JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id: Some(request.id),

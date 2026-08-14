@@ -266,6 +266,16 @@ pub trait AuthProvider: Send + Sync {
 
     /// Revoke an API key by its ID.
     async fn revoke_api_key(&self, key_id: &str) -> Result<(), AuthError>;
+
+    /// Returns `true` when authentication is strictly required for all
+    /// requests (including WebSocket upgrades). When `false`, the auth
+    /// provider is available but unauthenticated requests are allowed
+    /// (e.g. bootstrap mode before any users exist). The default
+    /// implementation returns `true` so providers that don't override it
+    /// enforce auth whenever they are present. (Phase 9.1)
+    fn auth_required(&self) -> bool {
+        true
+    }
 }
 
 /// Authorization checker trait.
