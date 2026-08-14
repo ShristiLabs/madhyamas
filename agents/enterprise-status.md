@@ -38,6 +38,7 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 8c Ent MCP tools | #56 | done | skipped | approved | done (11 ent tools, tier detection, conditional registration) | committed (ade0279) | done |
 | 8d MCP protocol | #57 | done | skipped | approved | done (HTTP transport, annotations, resources, 6 prompts) | committed (ade0279) | done |
 | 8e Ent CLI commands | #58 | done | skipped | approved | done (users/audit/license/auth commands, skill docs updated) | committed (a0054fe) | done |
+| 9 Security hardening | #59 | done | skipped | approved | done (WS auth, CSP, proxy auth, password complexity, SSRF, license instance ID, DB URL redaction, 579 tests) | committed (443287c) | done |
 
 ## Agent Log
 
