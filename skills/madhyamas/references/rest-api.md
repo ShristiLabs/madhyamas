@@ -124,6 +124,7 @@ All 177 REST API endpoints. Base URL: `http://localhost:3001/api`. All endpoints
 | DELETE | `/mocks/{id}` | Delete mock rule |
 | POST | `/mocks/{id}/toggle` | Enable/disable mock |
 | POST | `/mocks/batch-toggle` | Toggle multiple mocks |
+| POST | `/mocks/from-traffic` | Create mock rule from captured traffic |
 | POST | `/mocks/advanced` | Create advanced mock (tags, collection, description) |
 | POST | `/mocks/{id}/duplicate` | Duplicate a mock |
 | POST | `/mocks/{id}/rollback` | Rollback mock to previous version |
@@ -194,6 +195,7 @@ All 177 REST API endpoints. Base URL: `http://localhost:3001/api`. All endpoints
 |--------|------|-------------|
 | GET | `/replay/saved` | List saved requests |
 | POST | `/replay/saved` | Save a request |
+| POST | `/replay/saved/from-traffic` | Batch save requests from captured traffic |
 | GET | `/replay/saved/{id}` | Get specific saved request |
 | DELETE | `/replay/saved/{id}` | Delete saved request |
 | POST | `/replay/execute/{id}` | Execute (replay) a saved request |
@@ -333,6 +335,9 @@ Example: `curl -H 'X-Madhyamas-Confirm: true' -X POST http://localhost:3001/api/
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/metrics` | Performance metrics (request counts, latency, RPS) |
+| GET | `/metrics/cluster` | Cluster-wide metrics across all instances |
+| GET | `/instances` | List active instances in the cluster |
+| GET | `/license` | Get license info (tier, seats, expiry) |
 | GET | `/health/detailed` | Detailed health (version, uptime, memory, connections) |
 | GET | `/performance` | Performance stats (metrics, memory, connection pool) |
 
@@ -341,6 +346,7 @@ Example: `curl -H 'X-Madhyamas-Confirm: true' -X POST http://localhost:3001/api/
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/auth/login` | User login (returns JWT) |
+| POST | `/auth/refresh` | Refresh JWT token |
 | POST | `/auth/logout` | User logout |
 | GET | `/auth/me` | Get current user |
 | POST | `/auth/validate` | Validate JWT token |
