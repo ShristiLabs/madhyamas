@@ -8,6 +8,7 @@ mod blocklist;
 mod breakpoints;
 mod capture;
 mod config;
+mod enterprise;
 mod export;
 mod focus;
 mod grpc;
@@ -28,6 +29,7 @@ use self::blocklist::BlockListCommands;
 use self::breakpoints::BreakpointCommands;
 use self::capture::CaptureCommands;
 use self::config::ConfigCommands;
+use self::enterprise::{AuditCommands, AuthCommands, LicenseCommands, UsersCommands};
 use self::export::ExportCommands;
 use self::focus::FocusCommands;
 use self::grpc::GrpcCommands;
@@ -43,6 +45,42 @@ use self::throttle::ThrottleCommands;
 use self::traffic::TrafficCommands;
 use self::wstraffic::WsTrafficCommands;
 
+/// Authentication method for CLI API calls.
+///
+/// In enterprise mode (with `--enable-auth`), the Madhyamas API rejects
+/// unauthenticated requests with HTTP 401. The CLI attaches the configured
+/// credentials to every outbound request so commands continue to work
+/// behind the auth middleware. In OSS mode (or when auth is disabled),
+/// [`CliAuth::None`] sends no credentials — the API server ignores them.
+#[derive(Debug, Clone, Default)]
+pub enum CliAuth {
+    /// No authentication (OSS mode or auth disabled).
+    #[default]
+    None,
+    /// API key authentication (`X-API-Key` header).
+    ApiKey(String),
+    /// JWT authentication (`Authorization: Bearer` header).
+    Jwt(String),
+}
+
+impl CliAuth {
+    /// Build the HTTP auth header pairs for this configuration.
+    ///
+    /// Returns an empty vector when no authentication is configured
+    /// ([`CliAuth::None`]). The returned pairs are applied as default
+    /// headers on the API client so every request carries the credentials
+    /// automatically.
+    pub fn auth_headers(&self) -> Vec<(String, String)> {
+        match self {
+            CliAuth::None => vec![],
+            CliAuth::ApiKey(key) => vec![("X-API-Key".to_string(), key.clone())],
+            CliAuth::Jwt(token) => {
+                vec![("Authorization".to_string(), format!("Bearer {}", token))]
+            }
+        }
+    }
+}
+
 /// Common API client for CLI commands
 pub struct ApiClient {
     client: reqwest::Client,
@@ -50,8 +88,26 @@ pub struct ApiClient {
 }
 
 impl ApiClient {
-    pub fn new(base_url: String) -> Self {
-        let client = reqwest::Client::new();
+    /// Create a new API client for `base_url` with the given auth.
+    ///
+    /// When `auth` is configured, the credentials are applied as default
+    /// headers on the underlying HTTP client so every request (GET, POST,
+    /// PUT, PATCH, DELETE) carries them automatically. In OSS mode / when
+    /// auth is disabled, pass [`CliAuth::None`].
+    pub fn new(base_url: String, auth: CliAuth) -> Self {
+        let mut default_headers = reqwest::header::HeaderMap::new();
+        for (name, value) in auth.auth_headers() {
+            if let (Ok(header_name), Ok(header_value)) = (
+                reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+                reqwest::header::HeaderValue::from_str(&value),
+            ) {
+                default_headers.insert(header_name, header_value);
+            }
+        }
+        let client = reqwest::Client::builder()
+            .default_headers(default_headers)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self { client, base_url }
     }
 
@@ -304,30 +360,154 @@ pub enum Commands {
     /// WebSocket traffic inspection commands
     #[command(subcommand)]
     WsTraffic(WsTrafficCommands),
+    /// User management commands (enterprise tier)
+    #[command(subcommand)]
+    Users(UsersCommands),
+    /// Audit log commands (enterprise tier)
+    #[command(subcommand)]
+    Audit(AuditCommands),
+    /// License commands (enterprise tier)
+    #[command(subcommand)]
+    License(LicenseCommands),
+    /// Authentication commands (enterprise tier)
+    #[command(subcommand)]
+    Auth(AuthCommands),
 }
 
 impl Commands {
-    pub async fn execute(&self, api_url: String) -> Result<()> {
+    pub async fn execute(&self, api_url: String, auth: CliAuth) -> Result<()> {
         match self {
-            Commands::Traffic(cmd) => cmd.execute(api_url).await,
-            Commands::Mocks(cmd) => cmd.execute(api_url).await,
-            Commands::Breakpoints(cmd) => cmd.execute(api_url).await,
-            Commands::Sessions(cmd) => cmd.execute(api_url).await,
-            Commands::Replay(cmd) => cmd.execute(api_url).await,
-            Commands::Config(cmd) => cmd.execute(api_url).await,
-            Commands::Capture(cmd) => cmd.execute(api_url).await,
-            Commands::Throttle(cmd) => cmd.execute(api_url).await,
-            Commands::Rewrites(cmd) => cmd.execute(api_url).await,
-            Commands::Grpc(cmd) => cmd.execute(api_url).await,
-            Commands::Scripts(cmd) => cmd.execute(api_url).await,
-            Commands::Plugins(cmd) => cmd.execute(api_url).await,
-            Commands::Export(cmd) => cmd.execute(api_url).await,
-            Commands::Focus(cmd) => cmd.execute(api_url).await,
-            Commands::Autosave(cmd) => cmd.execute(api_url).await,
-            Commands::Mirror(cmd) => cmd.execute(api_url).await,
-            Commands::Logs(cmd) => cmd.execute(api_url).await,
-            Commands::Blocklist(cmd) => cmd.execute(api_url).await,
-            Commands::WsTraffic(cmd) => cmd.execute(api_url).await,
+            Commands::Traffic(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Mocks(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Breakpoints(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Sessions(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Replay(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Config(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Capture(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Throttle(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Rewrites(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Grpc(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Scripts(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Plugins(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Export(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Focus(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Autosave(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Mirror(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Logs(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Blocklist(cmd) => cmd.execute(api_url, auth).await,
+            Commands::WsTraffic(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Users(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Audit(cmd) => cmd.execute(api_url, auth).await,
+            Commands::License(cmd) => cmd.execute(api_url, auth).await,
+            Commands::Auth(cmd) => cmd.execute(api_url, auth).await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cli_auth_none_headers() {
+        assert!(CliAuth::None.auth_headers().is_empty());
+        assert!(matches!(CliAuth::None, CliAuth::None));
+    }
+
+    #[test]
+    fn test_cli_auth_api_key_headers() {
+        let auth = CliAuth::ApiKey("cli-key-xyz".to_string());
+        let headers = auth.auth_headers();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0, "X-API-Key");
+        assert_eq!(headers[0].1, "cli-key-xyz");
+        assert!(!matches!(auth, CliAuth::None));
+    }
+
+    #[test]
+    fn test_cli_auth_jwt_headers() {
+        let auth = CliAuth::Jwt("cli-jwt-abc".to_string());
+        let headers = auth.auth_headers();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0, "Authorization");
+        assert_eq!(headers[0].1, "Bearer cli-jwt-abc");
+        assert!(!matches!(auth, CliAuth::None));
+    }
+
+    #[test]
+    fn test_cli_auth_default_none() {
+        let auth = CliAuth::default();
+        assert!(matches!(auth, CliAuth::None));
+        assert!(auth.auth_headers().is_empty());
+    }
+
+    /// Spawn a minimal mock HTTP server that captures the raw request
+    /// headers from a single connection and returns a JSON `null` body.
+    async fn spawn_mock_server() -> (String, tokio::sync::oneshot::Receiver<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let url = format!("http://{}", addr);
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = vec![0u8; 8192];
+            let n = socket.read(&mut buf).await.unwrap();
+            let request_text = String::from_utf8_lossy(&buf[..n]).to_string();
+            let _ = tx.send(request_text);
+            let body = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4\r\n\r\nnull";
+            socket.write_all(body).await.unwrap();
+            socket.flush().await.unwrap();
+        });
+
+        (url, rx)
+    }
+
+    #[tokio::test]
+    async fn test_cli_client_sends_api_key_header() {
+        let (url, rx) = spawn_mock_server().await;
+        let client = ApiClient::new(url, CliAuth::ApiKey("cli-key-xyz".to_string()));
+        let _ = client.get("traffic").await;
+        let request = rx.await.unwrap();
+        let lower = request.to_ascii_lowercase();
+        assert!(
+            lower.contains("x-api-key: cli-key-xyz"),
+            "request missing X-API-Key header: {}",
+            request
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cli_client_sends_jwt_header() {
+        let (url, rx) = spawn_mock_server().await;
+        let client = ApiClient::new(url, CliAuth::Jwt("cli-jwt-abc".to_string()));
+        let _ = client.get("traffic").await;
+        let request = rx.await.unwrap();
+        let lower = request.to_ascii_lowercase();
+        assert!(
+            lower.contains("authorization: bearer cli-jwt-abc"),
+            "request missing Authorization header: {}",
+            request
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cli_client_without_auth_sends_no_auth_headers() {
+        let (url, rx) = spawn_mock_server().await;
+        let client = ApiClient::new(url, CliAuth::None);
+        let _ = client.get("traffic").await;
+        let request = rx.await.unwrap();
+        let lower = request.to_ascii_lowercase();
+        assert!(
+            !lower.contains("x-api-key"),
+            "unexpected X-API-Key header: {}",
+            request
+        );
+        assert!(
+            !lower.contains("authorization:"),
+            "unexpected Authorization header: {}",
+            request
+        );
     }
 }

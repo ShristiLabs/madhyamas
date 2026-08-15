@@ -20,7 +20,6 @@ mod runtime;
 pub use api::ScriptApi;
 pub use engine::JsEngine;
 pub use hooks::{RequestContext, ResponseContext, ScriptContext, ScriptHook, ScriptResult};
-pub use persistence::ScriptPersistence;
 pub use runtime::{
     Script, ScriptConfig, ScriptErrorPolicy, ScriptExecution, ScriptMatch, ScriptRuntime,
     ScriptTemplates, UpdateScriptFields,

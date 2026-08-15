@@ -149,10 +149,10 @@ pub enum ReplayCommands {
 }
 
 impl ReplayCommands {
-    pub async fn execute(&self, api_url: String) -> Result<()> {
+    pub async fn execute(&self, api_url: String, auth: super::CliAuth) -> Result<()> {
         match self {
             ReplayCommands::Run(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
 
                 let mut modifications = json!({});
                 let mut has_modifications = false;
@@ -225,7 +225,7 @@ impl ReplayCommands {
                 }
             }
             ReplayCommands::RunAdvanced(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
 
                 let mut modifications = json!({});
                 let mut has_modifications = false;
@@ -291,7 +291,7 @@ impl ReplayCommands {
                 }
             }
             ReplayCommands::Save(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let mut body = json!({
                     "traffic_id": args.traffic_id,
                 });
@@ -310,7 +310,7 @@ impl ReplayCommands {
                 }
             }
             ReplayCommands::List(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("replay/saved").await?;
                 if args.json {
                     println!("{}", serde_json::to_string_pretty(&result)?);
@@ -319,12 +319,12 @@ impl ReplayCommands {
                 }
             }
             ReplayCommands::Delete(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.delete(&format!("replay/saved/{}", args.id)).await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
             ReplayCommands::Export(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client
                     .get(&format!(
                         "traffic/{}/export?format={}",
@@ -338,7 +338,7 @@ impl ReplayCommands {
                 }
             }
             ReplayCommands::History(args) => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 let result = client.get("replay/history").await?;
                 if args.json {
                     println!("{}", serde_json::to_string_pretty(&result)?);
@@ -347,7 +347,7 @@ impl ReplayCommands {
                 }
             }
             ReplayCommands::HistoryClear => {
-                let client = ApiClient::new(api_url);
+                let client = ApiClient::new(api_url, auth.clone());
                 client.delete_void("replay/history").await?;
                 println!("Cleared all replay history.");
             }

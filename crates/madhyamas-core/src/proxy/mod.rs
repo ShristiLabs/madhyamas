@@ -5,4 +5,4 @@ pub mod pipeline;
 pub mod socks;
 pub mod upstream_proxy;
 
-pub use engine::ProxyEngine;
+pub use engine::{ProxyAuthValidator, ProxyCredentials, ProxyEngine};

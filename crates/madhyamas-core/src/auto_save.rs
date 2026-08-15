@@ -12,7 +12,7 @@
 
 use crate::config::AutoSaveConfig;
 use crate::session::SessionManager;
-use crate::traffic::TrafficStore;
+use crate::storage::TrafficStoreBackend;
 use crate::Error;
 use chrono::Utc;
 use parking_lot::RwLock;
@@ -36,7 +36,7 @@ use tracing::{debug, error, info};
 /// `start` again after `stop` is supported.
 pub struct AutoSaveManager {
     config: Arc<RwLock<AutoSaveConfig>>,
-    traffic_store: Arc<TrafficStore>,
+    traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
     session_manager: Arc<SessionManager>,
     stop_token: RwLock<Option<oneshot::Sender<()>>>,
 }
@@ -45,7 +45,7 @@ impl AutoSaveManager {
     /// Create a new AutoSaveManager.
     pub fn new(
         config: AutoSaveConfig,
-        traffic_store: Arc<TrafficStore>,
+        traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
         session_manager: Arc<SessionManager>,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -63,7 +63,7 @@ impl AutoSaveManager {
     /// without a restart.
     pub fn with_shared_config(
         config: Arc<RwLock<AutoSaveConfig>>,
-        traffic_store: Arc<TrafficStore>,
+        traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
         session_manager: Arc<SessionManager>,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -154,7 +154,7 @@ impl AutoSaveManager {
 
         // Session rotation (request-count based).
         if let Some(threshold) = config.rotate_after_requests {
-            let count = self.traffic_store.count().unwrap_or(0);
+            let count = self.traffic_store.count().await.unwrap_or(0);
             if count >= threshold {
                 info!(
                     "Auto Save: rotating session ({} requests >= threshold {})",
@@ -167,7 +167,7 @@ impl AutoSaveManager {
         // Session rotation (time based).
         if let Some(minutes) = config.rotate_after_minutes {
             let session_id = self.traffic_store.current_session_id();
-            if let Ok(Some(session)) = self.session_manager.get_session(&session_id) {
+            if let Ok(Some(session)) = self.session_manager.get_session(&session_id).await {
                 let elapsed = Utc::now().signed_duration_since(session.created_at);
                 if elapsed.num_minutes() >= minutes as i64 {
                     info!(
@@ -188,9 +188,45 @@ impl AutoSaveManager {
     ///
     /// The new session becomes the active session; subsequent traffic is
     /// recorded against it.
+    ///
+    /// Uses the shared instance state as a distributed lock to prevent both
+    /// instances from rotating simultaneously: if another instance rotated
+    /// within the last 30 seconds, this instance skips rotation and syncs
+    /// the current session from shared state instead.
     async fn rotate_session(&self) -> crate::Result<()> {
-        let new_session = self.session_manager.create_session(None)?;
-        self.traffic_store.switch_session(&new_session.id)?;
+        // Use shared state as a distributed lock to prevent both instances
+        // from rotating simultaneously.
+        let lock_key = "autosave_rotation_lock";
+        let lock_value = format!("{}", Utc::now().timestamp());
+
+        // If another instance just rotated (within the last 30 seconds),
+        // skip and sync the current session from shared state instead.
+        if let Ok(Some(existing)) = self.traffic_store.get_shared_state(lock_key).await {
+            let existing_ts: i64 = existing.parse().unwrap_or(0);
+            let now = Utc::now().timestamp();
+            if now - existing_ts < 30 {
+                info!("Auto Save: skipping rotation, another instance rotated recently");
+                // Sync our local session id from shared state so we record
+                // new traffic against the session the other instance just
+                // created.
+                if let Err(e) = self.traffic_store.sync_current_session().await {
+                    debug!("Auto Save: session sync after skipped rotation failed: {e}");
+                }
+                return Ok(());
+            }
+        }
+
+        // Perform the rotation.
+        let new_session = self.session_manager.create_session(None).await?;
+        self.traffic_store.switch_session(&new_session.id).await?;
+
+        // Record the rotation timestamp so the other instance skips if its
+        // timer fires within the lock window.
+        let _ = self
+            .traffic_store
+            .set_shared_state(lock_key, &lock_value)
+            .await;
+
         info!("Auto Save: rotated to new session {}", new_session.id);
         Ok(())
     }
@@ -228,12 +264,12 @@ impl AutoSaveManager {
 
         match config.export_format.as_str() {
             "har" => {
-                let har = self.traffic_store.export_har(&session_id)?;
+                let har = self.traffic_store.export_har(&session_id).await?;
                 let bytes = serde_json::to_vec_pretty(&har)?;
                 fs::write(&path, bytes)?;
             }
             "session" => {
-                let export = self.session_manager.export_session(&session_id)?;
+                let export = self.session_manager.export_session(&session_id).await?;
                 let bytes = serde_json::to_vec_pretty(&export)?;
                 fs::write(&path, bytes)?;
             }
@@ -319,8 +355,10 @@ mod tests {
     use crate::traffic::TrafficStore;
 
     /// Build an in-memory TrafficStore + SessionManager pair for tests.
-    fn test_store() -> (Arc<TrafficStore>, Arc<SessionManager>) {
-        let store = TrafficStore::in_memory().expect("failed to create in-memory store");
+    async fn test_store() -> (Arc<TrafficStore>, Arc<SessionManager>) {
+        let store = TrafficStore::in_memory()
+            .await
+            .expect("failed to create in-memory store");
         let session_manager = Arc::new(SessionManager::new(store.clone()));
         (store, session_manager)
     }
@@ -368,7 +406,7 @@ mod tests {
     #[tokio::test]
     async fn save_snapshot_creates_har_file() {
         let tmp = tempfile::tempdir().expect("failed to create temp dir");
-        let (store, session_manager) = test_store();
+        let (store, session_manager) = test_store().await;
 
         let cfg = AutoSaveConfig {
             enabled: true,
@@ -410,7 +448,7 @@ mod tests {
     #[tokio::test]
     async fn save_snapshot_creates_session_file() {
         let tmp = tempfile::tempdir().expect("failed to create temp dir");
-        let (store, session_manager) = test_store();
+        let (store, session_manager) = test_store().await;
 
         let cfg = AutoSaveConfig {
             enabled: true,
@@ -460,7 +498,7 @@ mod tests {
     #[tokio::test]
     async fn prune_backups_deletes_oldest() {
         let tmp = tempfile::tempdir().expect("failed to create temp dir");
-        let (store, session_manager) = test_store();
+        let (store, session_manager) = test_store().await;
 
         // Pre-create 5 backup files with distinct modification times.
         let dir = tmp.path();
@@ -508,7 +546,7 @@ mod tests {
 
     #[tokio::test]
     async fn rotate_session_creates_new_session() {
-        let (store, session_manager) = test_store();
+        let (store, session_manager) = test_store().await;
         let old_session_id = store.current_session_id();
 
         let cfg = AutoSaveConfig {
@@ -534,7 +572,7 @@ mod tests {
     #[tokio::test]
     async fn run_cycle_disabled_is_noop() {
         let tmp = tempfile::tempdir().expect("failed to create temp dir");
-        let (store, session_manager) = test_store();
+        let (store, session_manager) = test_store().await;
 
         let cfg = AutoSaveConfig {
             enabled: false,
@@ -560,7 +598,7 @@ mod tests {
     #[tokio::test]
     async fn save_snapshot_rejects_unknown_format() {
         let tmp = tempfile::tempdir().expect("failed to create temp dir");
-        let (store, session_manager) = test_store();
+        let (store, session_manager) = test_store().await;
 
         let cfg = AutoSaveConfig {
             enabled: true,

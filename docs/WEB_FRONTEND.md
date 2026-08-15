@@ -1,6 +1,6 @@
 # Web Frontend
 
-> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+> **Last verified:** 2025-01 against Madhyamas `0.1.6` (enterprise UI implemented).
 
 ## Overview
 
@@ -186,10 +186,93 @@ npm run lint       # ESLint
 > frontend development without rebuilding Rust, set `MADHYAMAS_WEB_DIR=web/dist`
 > and run the Rust binary separately.
 
+## Enterprise UI (`web/src/features/auth/` and `web/src/features/admin/`)
+
+When the backend reports `tier: "enterprise"` and `auth_required: true`, the
+frontend renders an authentication layer and six admin panels.
+
+### Authentication Flow
+
+```mermaid
+flowchart TD
+    LOAD["App loads<br/>AuthContext mounts"] --> CHECK{"Token in<br/>localStorage?"}
+    CHECK -->|No| LOGIN["LoginPage"]
+    CHECK -->|Yes| VALIDATE["GET /api/auth/me"]
+    VALIDATE -->|401| CLEAR["Clear token<br/>LoginPage"]
+    VALIDATE -->|200| APP["Render ProtectedApp"]
+    LOGIN -->|Submit| AUTH["POST /api/auth/login"]
+    AUTH -->|200| STORE["Store JWT<br/>Render ProtectedApp"]
+    AUTH -->|401| ERR["Show error"]
+```
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `AuthContext` | `features/auth/AuthContext.tsx` | Provides `login`, `logout`, `refreshUser`; stores JWT in `localStorage`; validates on mount via `GET /api/auth/me`; registers 401 handler |
+| `ProtectedApp` | `features/auth/ProtectedApp.tsx` | Gate: renders `LoginPage` if unauthenticated, children if authenticated; bypasses for OSS tier |
+| `LoginPage` | `features/auth/LoginPage.tsx` | Card with username/password fields, "Sign in" button; calls `login()` |
+| `SessionTimeoutWarning` | `features/auth/SessionTimeoutWarning.tsx` | Warns before token expiry; offers "Stay signed in" (token refresh) |
+| `UserMenu` | `features/shell/UserMenu.tsx` | Header dropdown showing username, role badge, email, and "Sign out" button |
+
+### Tier Detection
+
+The frontend detects enterprise tier from `GET /api/health/detailed`:
+- `tier: "enterprise"` → render auth layer + admin panels
+- `tier: "community"` → skip auth, hide admin panels
+
+### Admin Panels
+
+Six admin panels are rendered in the NavRail when `isEnterprise` is true:
+
+| Panel | File | NavRail aria-label | Key features |
+|-------|------|---------------------|--------------|
+| Users | `features/admin/UsersPanel.tsx` | `"Users"` | User CRUD, role assignment, status toggle, "Add User" dialog |
+| Audit Log | `features/admin/AuditPanel.tsx` | `"Audit Log"` | Event list, filtering (type/user), stats bar, "Export" button, pagination |
+| Metrics | `features/admin/MetricsPanel.tsx` | `"Metrics"` | Metric cards (total/success/fail/latency/req-per-sec), request distribution chart, cluster overview |
+| License | `features/admin/LicensePanel.tsx` | `"License"` | License details, seat usage progress bar, expiry warnings, enabled features badges |
+| API Keys | `features/admin/ApiKeysPanel.tsx` | `"API Keys"` | Key CRUD, scope toggles, expiry dropdown, key reveal dialog, revoke |
+| Instances | `features/admin/InstancesPanel.tsx` | `"Instances"` | Instance registry table (ID, address, heartbeat, status) |
+
+### Admin API Client (`web/src/lib/api/admin.ts`)
+
+Typed helpers for all admin endpoints:
+
+| Function | Endpoint | Purpose |
+|----------|----------|---------|
+| `listUsersApi()` | `GET /api/users` | List all users |
+| `createUserApi(data)` | `POST /api/users` | Create a user |
+| `updateUserApi(id, data)` | `PUT /api/users/{id}` | Update user (email, role, status) |
+| `deleteUserApi(id)` | `DELETE /api/users/{id}` | Delete a user |
+| `listAuditApi(filter)` | `GET /api/audit` | Query audit events |
+| `getAuditStatsApi()` | `GET /api/audit/stats` | Audit statistics |
+| `exportAuditApi()` | `GET /api/audit/export` | Export audit log (blob) |
+| `getMetricsApi()` | `GET /api/metrics` | Performance metrics |
+| `getClusterMetricsApi()` | `GET /api/metrics/cluster` | Cluster-wide metrics |
+| `getLicenseApi()` | `GET /api/license/info` | License details |
+| `listApiKeysApi()` | `GET /api/auth/api-keys` | List API keys |
+| `createApiKeyApi(data)` | `POST /api/auth/api-keys` | Create API key |
+| `revokeApiKeyApi(id)` | `DELETE /api/auth/api-keys/{id}` | Revoke API key |
+| `listInstancesApi()` | `GET /api/instances` | List active instances |
+
+### Adding a New Admin Panel
+
+1. Create a new component in the admin features directory — use shadcn/ui components
+2. Add the view ID to `ADMIN_VIEWS` in `App.tsx`:
+   ```typescript
+   { id: "yourpanel", label: "Your Panel", icon: "SomeIcon" }
+   ```
+3. Add the render branch in `AppShell`:
+   ```typescript
+   {activeView === "yourpanel" && isEnterprise && <YourPanel />}
+   ```
+4. Add API helpers in the admin API client
+5. Build the frontend (`cd web && npm run build`) before rebuilding Rust
+
 ## See Also
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture
 - [API.md](API.md) — API reference
+- [API_ENTERPRISE.md](API_ENTERPRISE.md) — Enterprise API endpoints
 - [API_WEBSOCKET_GRPC.md](API_WEBSOCKET_GRPC.md) — WebSocket message schema
 - [DEVELOPMENT.md](DEVELOPMENT.md) — Development workflow
+- [ENTERPRISE_CRATE_GUIDE.md](ENTERPRISE_CRATE_GUIDE.md) — Enterprise crate structure
 - [TIMELINE_VIEW.md](TIMELINE_VIEW.md) — Waterfall timeline view

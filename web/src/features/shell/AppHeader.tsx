@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, lazy, Suspense } from "react"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import {
   Tooltip,
   TooltipContent,
@@ -31,6 +32,8 @@ import {
 import { cn } from "@/lib/utils"
 import { apiGet, apiPost } from "@/lib/api/client"
 import { useCaptureStats } from "@/hooks/useCaptureStats"
+import { UserMenu } from "@/features/shell/UserMenu"
+import type { TierInfo } from "@/contexts/TierContext"
 
 // Lazy-load heavy dialogs that are only opened on demand.
 const CertificateHelper = lazy(() =>
@@ -43,11 +46,13 @@ const ConfigDialog = lazy(() =>
 interface AppHeaderProps {
   isDark: boolean
   onToggleTheme: () => void
+  tierInfo?: TierInfo | null
 }
 
 const DOCS_URL = "https://shristilabs.github.io/madhyamas/"
 
-export function AppHeader({ isDark, onToggleTheme }: AppHeaderProps) {
+export function AppHeader({ isDark, onToggleTheme, tierInfo }: AppHeaderProps) {
+  const isEnterprise = tierInfo?.tier === "enterprise"
   const [proxyAddress, setProxyAddress] = useState("localhost:8888")
   const [captureEnabled, setCaptureEnabled] = useState(true)
   const [captureLoading, setCaptureLoading] = useState(false)
@@ -89,9 +94,15 @@ export function AppHeader({ isDark, onToggleTheme }: AppHeaderProps) {
           M
         </div>
         <span className="text-sm font-semibold tracking-tight">Madhyamas</span>
-        <span className="hidden font-mono text-2xs text-muted-foreground sm:inline">
-          HTTP Debugging Proxy
-        </span>
+        {isEnterprise ? (
+          <Badge variant="success" className="text-2xs">
+            Enterprise
+          </Badge>
+        ) : (
+          <span className="hidden font-mono text-2xs text-muted-foreground sm:inline">
+            HTTP Debugging Proxy
+          </span>
+        )}
       </div>
 
       {/* Right controls */}
@@ -212,6 +223,9 @@ export function AppHeader({ isDark, onToggleTheme }: AppHeaderProps) {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* User menu (enterprise only) */}
+        {isEnterprise && <UserMenu />}
 
         {/* Theme toggle */}
         <Button variant="ghost" size="icon-sm" onClick={onToggleTheme} title="Toggle theme">

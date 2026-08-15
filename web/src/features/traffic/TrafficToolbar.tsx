@@ -113,7 +113,7 @@ export function TrafficToolbar({
   const hasActiveFilters = filters.length > 0 || search.length > 0;
 
   return (
-    <div className="border-b">
+    <div className="border-b" style={{ contain: "layout paint" }}>
       {/* Main toolbar row */}
       <div className="px-4 py-2.5 flex items-center gap-2.5 flex-wrap">
         {/* Search */}

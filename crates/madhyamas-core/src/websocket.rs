@@ -377,6 +377,20 @@ impl WsManager {
         }
     }
 
+    /// Close all tracked WebSocket connections (graceful shutdown). Marks
+    /// every connection as closed so in-flight proxy WS tunnels are torn down
+    /// promptly rather than waiting for TCP timeouts.
+    pub fn close_all_connections(&self) {
+        let mut conns = self.connections.write();
+        let count = conns.len();
+        for conn in conns.values_mut() {
+            conn.set_closed();
+        }
+        if count > 0 {
+            tracing::info!("Closed {count} WebSocket connection(s)");
+        }
+    }
+
     /// Record a message
     pub fn record_message(
         &self,
@@ -513,16 +527,17 @@ impl Default for WsManager {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::persistence::Persistable for WsManager {
-    fn save(&self) -> crate::Result<()> {
+    async fn save(&self) -> crate::Result<()> {
         Ok(())
     }
 
-    fn load(&self) -> crate::Result<()> {
+    async fn load(&self) -> crate::Result<()> {
         Ok(())
     }
 
-    fn clear(&self) -> crate::Result<()> {
+    async fn clear(&self) -> crate::Result<()> {
         self.clear_messages();
         Ok(())
     }

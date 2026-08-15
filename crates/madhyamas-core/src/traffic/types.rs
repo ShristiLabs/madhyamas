@@ -1,5 +1,6 @@
 //! Traffic data types
 
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashMap;
@@ -379,6 +380,79 @@ pub struct TrafficFilter {
     pub is_passthrough: Option<bool>,
     /// Filter by host pattern (exact, suffix, or wildcard `*.example.com`)
     pub host: Option<String>,
+    /// Cursor for keyset pagination (Phase 10b.3). When set, the query
+    /// uses `WHERE (timestamp, id) < (cursor_ts, cursor_id)` instead of
+    /// `OFFSET`, which is O(1) regardless of page depth. The cursor is a
+    /// base64-encoded JSON object `{"t": <unix_ts>, "i": "<id>"}`. When
+    /// `None`, the first page is returned (with optional `offset`).
+    pub cursor: Option<String>,
+    /// When `Some(false)`, the list query omits request/response bodies
+    /// (lazy body loading, Phase 10b.4). When `Some(true)` or `None`,
+    /// bodies are included (backward compatible). The API maps
+    /// `?include_bodies=false` to `Some(false)`.
+    pub include_bodies: Option<bool>,
+}
+
+/// Keyset pagination cursor (Phase 10b.3). Encodes the `(timestamp, id)`
+/// of the last entry on the previous page so the next page can use
+/// `WHERE (timestamp, id) < (cursor.ts, cursor.id)` — O(1) regardless
+/// of page depth, vs `OFFSET` which is O(n).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrafficCursor {
+    /// Unix timestamp (seconds) of the last entry on the previous page.
+    pub t: i64,
+    /// ID of the last entry on the previous page.
+    pub i: String,
+}
+
+impl TrafficCursor {
+    /// Create a cursor from a timestamp + id.
+    pub fn new(timestamp: DateTime<Utc>, id: impl Into<String>) -> Self {
+        Self {
+            t: timestamp.timestamp(),
+            i: id.into(),
+        }
+    }
+
+    /// Encode the cursor as a URL-safe base64 JSON string (opaque to
+    /// clients).
+    pub fn encode(&self) -> String {
+        let json = serde_json::json!({ "t": self.t, "i": self.i });
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_string(&json).unwrap_or_default())
+    }
+
+    /// Decode a cursor from a base64 JSON string. Returns `None` if the
+    /// string is malformed (callers fall back to the first page).
+    pub fn decode(s: &str) -> Option<Self> {
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(s.trim())
+            .ok()?;
+        let json: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+        Some(Self {
+            t: json.get("t")?.as_i64()?,
+            i: json.get("i")?.as_str()?.to_string(),
+        })
+    }
+
+    /// Create a cursor from a [`TrafficEntry`] (the last entry on the
+    /// current page). Returns the encoded cursor string suitable for
+    /// use as the `next_cursor` field in [`PaginatedTraffic`].
+    pub fn from_entry(entry: &TrafficEntry) -> String {
+        Self::new(entry.timestamp, &entry.id).encode()
+    }
+}
+
+/// Paginated traffic response (Phase 10b.3). Returned by the API when
+/// cursor pagination is requested (`?cursor=...`). When no cursor param
+/// is provided, the API returns the legacy array format for backward
+/// compatibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginatedTraffic {
+    /// Traffic entries on the current page.
+    pub entries: Vec<TrafficEntry>,
+    /// Cursor to fetch the next page, or `None` if this is the last page.
+    pub next_cursor: Option<String>,
 }
 
 /// A persisted "focused" host pattern used to highlight matching traffic
@@ -1021,6 +1095,8 @@ mod tests {
                 cookie: Some("session".to_string()),
                 is_passthrough: None,
                 host: Some("example.com".to_string()),
+                cursor: None,
+                include_bodies: None,
             };
 
             assert_eq!(filter.url_pattern, Some("api".to_string()));

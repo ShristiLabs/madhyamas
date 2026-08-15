@@ -13,7 +13,7 @@
 
 use super::regex_cache;
 use super::MatchCondition;
-use crate::persistence::InterceptStore;
+use crate::storage::InterceptStoreBackend;
 use crate::traffic::RequestData;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -650,7 +650,7 @@ pub struct MockManager {
     /// Recorded mocks from live traffic
     recorded_mocks: RwLock<Vec<MockRule>>,
     /// Optional SQLite persistence backend
-    store: Option<Arc<InterceptStore>>,
+    store: Option<Arc<dyn InterceptStoreBackend + Send + Sync>>,
 }
 
 impl MockManager {
@@ -683,7 +683,7 @@ impl MockManager {
 
     /// Attach a SQLite persistence backend. When set, [`Persistable::save`]
     /// and [`Persistable::load`] will read/write rules through this store.
-    pub fn with_store(mut self, store: Arc<InterceptStore>) -> Self {
+    pub fn with_store(mut self, store: Arc<dyn InterceptStoreBackend + Send + Sync>) -> Self {
         self.store = Some(store);
         self
     }
@@ -691,10 +691,10 @@ impl MockManager {
     // ==================== Rule Management ====================
 
     /// Add a mock rule
-    pub fn add_rule(&self, rule: MockRule) -> String {
+    pub async fn add_rule(&self, rule: MockRule) -> String {
         let id = rule.id.clone();
         if let Some(store) = &self.store {
-            if let Err(e) = store.save_mock_rule(&rule) {
+            if let Err(e) = store.save_mock_rule(&rule).await {
                 tracing::warn!("Failed to persist mock rule: {}", e);
             }
         }
@@ -703,20 +703,25 @@ impl MockManager {
     }
 
     /// Remove a mock rule
-    pub fn remove_rule(&self, id: &str) -> bool {
-        let mut rules = self.rules.write();
-        if let Some(pos) = rules.iter().position(|r| r.id == id) {
-            rules.remove(pos);
-            self.sequence_indices.write().remove(id);
+    pub async fn remove_rule(&self, id: &str) -> bool {
+        let removed = {
+            let mut rules = self.rules.write();
+            if let Some(pos) = rules.iter().position(|r| r.id == id) {
+                rules.remove(pos);
+                self.sequence_indices.write().remove(id);
+                true
+            } else {
+                false
+            }
+        };
+        if removed {
             if let Some(store) = &self.store {
-                if let Err(e) = store.delete_mock_rule(id) {
+                if let Err(e) = store.delete_mock_rule(id).await {
                     tracing::warn!("Failed to delete mock rule from store: {}", e);
                 }
             }
-            true
-        } else {
-            false
         }
+        removed
     }
 
     /// Get all rules
@@ -1540,28 +1545,29 @@ impl Default for MockManager {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::persistence::Persistable for MockManager {
-    fn save(&self) -> crate::Result<()> {
+    async fn save(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            let rules = self.rules.read();
-            for rule in rules.iter() {
-                store.save_mock_rule(rule)?;
+            let rules = self.rules.read().clone();
+            for rule in &rules {
+                store.save_mock_rule(rule).await?;
             }
         }
         Ok(())
     }
 
-    fn load(&self) -> crate::Result<()> {
+    async fn load(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            let loaded = store.load_mock_rules()?;
+            let loaded = store.load_mock_rules().await?;
             *self.rules.write() = loaded;
         }
         Ok(())
     }
 
-    fn clear(&self) -> crate::Result<()> {
+    async fn clear(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            store.clear_mock_rules()?;
+            store.clear_mock_rules().await?;
         }
         self.rules.write().clear();
         self.collections.write().clear();

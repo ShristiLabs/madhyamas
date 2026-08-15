@@ -752,6 +752,112 @@ rm ~/.madhyamas/madhyamas.pid
 | Isolation | No | Yes |
 | Best for | Development | Production / testing |
 
+## Enterprise Development
+
+Enterprise features require PostgreSQL and (optionally) Redis. The fastest
+way to get a development environment is the multi-instance Docker Compose stack.
+
+### Prerequisites
+
+- **PostgreSQL 16+** — for enterprise storage (users, audit, API keys, sessions)
+- **Redis 7+** — for multi-instance pub/sub and license seat coordination
+- Docker and Docker Compose (for the stack)
+
+### Build Configurations
+
+```bash
+# Enterprise build (default — includes all enterprise features)
+cargo build --release -p madhyamas
+
+# OSS build (no enterprise code compiled)
+cargo build --release --no-default-features -p madhyamas
+
+# Run enterprise tests
+cargo test -p madhyamas-enterprise
+
+# Run OSS tests (no PostgreSQL needed)
+cargo test --no-default-features -p madhyamas-core --lib
+```
+
+### Starting the Enterprise Stack
+
+```bash
+# Multi-instance stack (2 instances + PostgreSQL + Redis + nginx)
+./startup-local.sh --tier enterprise
+
+# Services:
+#   nginx LB:    http://localhost:14000 (API), http://localhost:8888 (proxy)
+#   Instance 1:  http://localhost:14001
+#   Instance 2:  http://localhost:14002
+#   PostgreSQL:  localhost:15432
+#   Redis:       localhost:16379
+
+# Default admin: admin / testpass123
+
+# Stop the stack
+./stop-local.sh --tier enterprise
+```
+
+### Manual PostgreSQL + Redis Setup
+
+```bash
+# Start PostgreSQL
+docker run -d --name madhyamas-pg \
+  -e POSTGRES_USER=madhyamas \
+  -e POSTGRES_PASSWORD=madhyamas \
+  -e POSTGRES_DB=madhyamas \
+  -p 5432:5432 postgres:16
+
+# Start Redis
+docker run -d --name madhyamas-redis -p 6379:6379 redis:7
+
+# Run with enterprise features
+cargo run --bin madhyamas -- \
+  --database-url postgres://madhyamas:madhyamas@localhost:5432/madhyamas \
+  --redis-url redis://localhost:6379 \
+  --enable-auth \
+  --jwt-secret dev-secret \
+  --admin-username admin \
+  --admin-password testpass123
+```
+
+### Enterprise Development Workflow
+
+```mermaid
+flowchart LR
+    FE["cd web && npm run build"] --> BE["cargo build -p madhyamas"]
+    BE --> STACK["./startup-local.sh --tier enterprise"]
+    STACK --> TEST["cargo test -p madhyamas-enterprise"]
+    TEST --> SHOT["node scripts/capture-enterprise-screenshots.mjs"]
+```
+
+1. Build the frontend (`cd web && npm run build`) — assets are embedded at compile time
+2. Build the Rust binary (`cargo build -p madhyamas`)
+3. Start the enterprise stack (`./startup-local.sh --tier enterprise`)
+4. Run enterprise tests (`cargo test -p madhyamas-enterprise`)
+5. Capture screenshots for docs (`node scripts/capture-enterprise-screenshots.mjs`)
+
+### Testing Enterprise Features
+
+See [ENTERPRISE_TESTING.md](ENTERPRISE_TESTING.md) for the full testing guide,
+including unit tests, integration tests with PostgreSQL, multi-instance
+verification, and Playwright E2E tests.
+
+### Key Enterprise Source Files
+
+| Area | File | Purpose |
+|------|------|---------|
+| Enterprise crate | `crates/madhyamas-enterprise/src/` | All enterprise modules |
+| API traits | `crates/madhyamas-api/src/auth.rs` | AuthProvider, Authorizer, AuditSink traits |
+| Startup flow | `crates/madhyamas/src/main.rs` (lines 1290-1830) | Enterprise initialization |
+| PostgreSQL traffic | `crates/madhyamas-core/src/storage/postgres/traffic.rs` | PostgreSQL TrafficStoreBackend |
+| Enterprise store | `crates/madhyamas-enterprise/src/store/postgres.rs` | PostgreSQL EnterpriseStore |
+| MCP enterprise tools | `crates/madhyamas-mcp/src/tools/enterprise.rs` | 11 enterprise MCP tools |
+| CLI enterprise commands | `crates/madhyamas-cli/src/commands/enterprise.rs` | Enterprise CLI subcommands |
+| Web admin panels | `web/src/features/admin/` | 6 admin panel components |
+| Web auth | `web/src/features/auth/` | Auth context, login, protected app |
+| Docker stack | `docker/docker-compose.multi.yml` | Multi-instance Compose file |
+
 ## See Also
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture
@@ -759,3 +865,7 @@ rm ~/.madhyamas/madhyamas.pid
 - [DEPLOYMENT.md](DEPLOYMENT.md) — Docker and production deployment
 - [NETWORK_CONFIGURATION.md](NETWORK_CONFIGURATION.md) — Network setup
 - [GETTING_STARTED.md](GETTING_STARTED.md) — User-facing getting started guide
+- [ENTERPRISE_CRATE_GUIDE.md](ENTERPRISE_CRATE_GUIDE.md) — Enterprise crate developer guide
+- [ENTERPRISE_STARTUP_FLOW.md](ENTERPRISE_STARTUP_FLOW.md) — Enterprise startup sequence
+- [ENTERPRISE_TESTING.md](ENTERPRISE_TESTING.md) — Enterprise testing guide
+- [STORAGE_BACKEND_GUIDE.md](STORAGE_BACKEND_GUIDE.md) — Storage backend implementation

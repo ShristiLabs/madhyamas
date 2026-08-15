@@ -519,6 +519,15 @@ cargo flamegraph
 
 By contributing to Madhyamas, you agree that your contributions will be licensed under the same license as the project (MIT OR Apache-2.0).
 
+### Enterprise crate (BSL-1.1)
+
+The `crates/madhyamas-enterprise/` crate is licensed under the Business Source
+License 1.1 (BSL-1.1), **not** the MIT OR Apache-2.0 license used by the rest
+of the project. See `crates/madhyamas-enterprise/LICENSE-BSL` for the full
+text. Contributions to the enterprise crate are accepted under BSL-1.1 and
+will eventually convert to the MIT OR Apache-2.0 dual license on the Change
+Date (four years from first public distribution of each version).
+
 ## Questions?
 
 If you have questions about contributing, feel free to:

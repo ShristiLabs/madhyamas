@@ -1,0 +1,159 @@
+# Docker Compose for local multi-instance enterprise testing (Phase 6d).
+#
+# Runs two Madhyamas enterprise instances sharing the same PostgreSQL +
+# Redis, plus an nginx load balancer for round-robin distribution. This
+# is the full multi-instance stack used by `./startup-local.sh --tier
+# enterprise`.
+#
+# Usage:
+#   docker compose -f docker/docker-compose.multi.yml up --build -d
+#   docker compose -f docker/docker-compose.multi.yml down
+#
+# All configurable values are exposed as environment variables with
+# sensible defaults — override them on the command line or via a .env
+# file in the repo root:
+#
+#   POSTGRES_USER=madhyamas
+#   POSTGRES_PASSWORD=testpass
+#   POSTGRES_DB=madhyamas
+#   MADHYAMAS_JWT_SECRET=multi-instance-test-secret
+#   MADHYAMAS_ADMIN_PASSWORD=testpass123
+#   MADHYAMAS_ADMIN_USERNAME=admin
+#   MADHYAMAS_PUBLIC_IP=
+#   MADHYAMAS_LICENSE_FILE=
+#   LB_PORT=14000
+#   INSTANCE1_API_PORT=14001
+#   INSTANCE2_API_PORT=14002
+#   PG_PORT=15432
+#   REDIS_PORT=16379
+#   PROXY_PORT=8888
+#
+# Ports:
+#   - ${LB_PORT} (14000): nginx load balancer (round-robin → instance 1/2)
+#   - ${INSTANCE1_API_PORT} (14001): madhyamas-1 API + Web UI
+#   - ${INSTANCE2_API_PORT} (14002): madhyamas-2 API + Web UI
+#   - ${PG_PORT} (15432):  PostgreSQL
+#   - ${REDIS_PORT} (16379):  Redis
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-madhyamas}
+      POSTGRES_USER: ${POSTGRES_USER:-madhyamas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-testpass}
+    ports:
+      - "${PG_PORT:-15432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-madhyamas}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  madhyamas-1:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TIER: enterprise
+    image: madhyamas-enterprise:latest
+    environment:
+      MADHYAMAS_HOST: "0.0.0.0"
+      MADHYAMAS_API_PORT: "3001"
+      MADHYAMAS_PROXY_PORT: ${PROXY_PORT:-8888}
+      MADHYAMAS_DATABASE_URL: "postgres://${POSTGRES_USER:-madhyamas}:${POSTGRES_PASSWORD:-testpass}@postgres:5432/${POSTGRES_DB:-madhyamas}"
+      MADHYAMAS_REDIS_URL: "redis://redis:6379"
+      MADHYAMAS_ENABLE_AUTH: "true"
+      MADHYAMAS_JWT_SECRET: ${MADHYAMAS_JWT_SECRET:-multi-instance-test-secret}
+      MADHYAMAS_ADMIN_PASSWORD: ${MADHYAMAS_ADMIN_PASSWORD:-testpass123}
+      MADHYAMAS_ADMIN_USERNAME: ${MADHYAMAS_ADMIN_USERNAME:-admin}
+      MADHYAMAS_PUBLIC_IP: ${MADHYAMAS_PUBLIC_IP:-}
+      MADHYAMAS_CA_CERT_FILE: /data/certs/ca-cert.pem
+      MADHYAMAS_CA_KEY_FILE: /data/certs/ca-key.pem
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${INSTANCE1_API_PORT:-14001}:3001"
+    volumes:
+      - ca_certs:/data/certs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  madhyamas-2:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TIER: enterprise
+    image: madhyamas-enterprise:latest
+    environment:
+      MADHYAMAS_HOST: "0.0.0.0"
+      MADHYAMAS_API_PORT: "3001"
+      MADHYAMAS_PROXY_PORT: ${PROXY_PORT:-8888}
+      MADHYAMAS_DATABASE_URL: "postgres://${POSTGRES_USER:-madhyamas}:${POSTGRES_PASSWORD:-testpass}@postgres:5432/${POSTGRES_DB:-madhyamas}"
+      MADHYAMAS_REDIS_URL: "redis://redis:6379"
+      MADHYAMAS_ENABLE_AUTH: "true"
+      MADHYAMAS_JWT_SECRET: ${MADHYAMAS_JWT_SECRET:-multi-instance-test-secret}
+      MADHYAMAS_ADMIN_PASSWORD: ${MADHYAMAS_ADMIN_PASSWORD:-testpass123}
+      MADHYAMAS_ADMIN_USERNAME: ${MADHYAMAS_ADMIN_USERNAME:-admin}
+      MADHYAMAS_PUBLIC_IP: ${MADHYAMAS_PUBLIC_IP:-}
+      MADHYAMAS_CA_CERT_FILE: /data/certs/ca-cert.pem
+      MADHYAMAS_CA_KEY_FILE: /data/certs/ca-key.pem
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${INSTANCE2_API_PORT:-14002}:3001"
+    volumes:
+      - ca_certs:/data/certs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "${LB_PORT:-14000}:80"
+      - "${PROXY_LB_PORT:-8888}:8888"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx-multi.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx-stream.conf:/etc/nginx/stream.d/proxy.conf:ro
+    depends_on:
+      - madhyamas-1
+      - madhyamas-2
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  ca_certs:

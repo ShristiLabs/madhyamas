@@ -5,7 +5,7 @@ use clap::Parser;
 
 mod commands;
 
-use commands::Commands;
+use commands::{CliAuth, Commands};
 
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
@@ -28,8 +28,33 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
+    /// API key for authenticating against an enterprise API server with
+    /// `--enable-auth`. Sent as the `X-API-Key` header. Overrides the
+    /// `MADHYAMAS_API_KEY` environment variable. When both `--api-key` and
+    /// `--token` are provided, the API key takes precedence.
+    #[arg(long, env = "MADHYAMAS_API_KEY")]
+    api_key: Option<String>,
+
+    /// JWT token for authenticating against an enterprise API server with
+    /// `--enable-auth`. Sent as the `Authorization: Bearer <token>` header.
+    /// Overrides the `MADHYAMAS_TOKEN` environment variable. When both
+    /// `--api-key` and `--token` are provided, the API key takes precedence.
+    #[arg(long, env = "MADHYAMAS_TOKEN")]
+    token: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Resolve CLI auth from flags / env vars. API key takes precedence over JWT.
+fn resolve_auth(api_key: &Option<String>, token: &Option<String>) -> CliAuth {
+    if let Some(key) = api_key {
+        return CliAuth::ApiKey(key.clone());
+    }
+    if let Some(t) = token {
+        return CliAuth::Jwt(t.clone());
+    }
+    CliAuth::None
 }
 
 #[tokio::main]
@@ -46,5 +71,6 @@ async fn main() -> Result<()> {
     let _ = tracing::subscriber::set_global_default(subscriber);
 
     // Execute the command
-    args.command.execute(args.api_url).await
+    let auth = resolve_auth(&args.api_key, &args.token);
+    args.command.execute(args.api_url, auth).await
 }

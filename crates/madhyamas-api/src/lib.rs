@@ -1,22 +1,27 @@
 //! Madhyamas API - REST and WebSocket API for the web UI
 
+pub mod auth;
 pub mod embedded_assets;
-#[cfg(feature = "enterprise")]
-pub mod enterprise_handlers;
 pub mod error;
 pub mod handlers;
 pub mod intercept_handlers;
-#[cfg(feature = "enterprise")]
-pub mod middleware;
+pub mod pubsub;
 pub mod routes;
 #[cfg(any(feature = "grpc", feature = "scripting", feature = "plugins"))]
 pub mod tools_handlers;
 pub mod validation;
 pub mod ws;
 
+pub use auth::{
+    AuditError, AuditEvent, AuditEventType, AuditFilter, AuditSink, AuthError, AuthMethod,
+    AuthProvider, Authorizer, Identity, Permission, ResourceType,
+};
+pub use pubsub::{notify, EventPublisher};
+
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::Router;
-#[cfg(feature = "enterprise")]
-use madhyamas_core::enterprise::AuthManager;
 #[cfg(feature = "plugins")]
 use madhyamas_core::plugin::PluginRegistry;
 #[cfg(feature = "grpc")]
@@ -26,12 +31,13 @@ use madhyamas_core::PluginManager;
 #[cfg(feature = "scripting")]
 use madhyamas_core::ScriptRuntime;
 use madhyamas_core::{
-    AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, InterceptStore,
-    LogHandle, MirrorWriter, MockManager, ProxyConfig, ReplayManager, RewriteManager,
-    SessionManager, ThrottleManager, TrafficStore, WsManager,
+    AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager,
+    InterceptStoreBackend, LogHandle, MirrorWriter, MockManager, ProxyConfig, ReplayManager,
+    RewriteManager, SessionManager, ThrottleManager, TrafficEvent, TrafficStoreBackend, WsManager,
 };
 use parking_lot::RwLock;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -66,7 +72,7 @@ fn is_safe_origin(value: &axum::http::HeaderValue) -> bool {
 /// API state shared across handlers
 #[derive(Clone)]
 pub struct AppState {
-    pub traffic_store: Arc<TrafficStore>,
+    pub traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>,
     pub cert_manager: Option<Arc<CertificateManager>>,
     pub breakpoint_manager: Arc<BreakpointManager>,
     pub mock_manager: Arc<MockManager>,
@@ -84,7 +90,7 @@ pub struct AppState {
     pub plugin_registry: Arc<tokio::sync::Mutex<PluginRegistry>>,
     pub ws_manager: Arc<WsManager>,
     pub session_manager: Arc<SessionManager>,
-    pub intercept_store: Option<Arc<InterceptStore>>,
+    pub intercept_store: Option<Arc<dyn InterceptStoreBackend + Send + Sync>>,
     pub proxy_config: Option<Arc<RwLock<ProxyConfig>>>,
     /// Auto Save manager (periodic session backup). Optional — only set
     /// when the proxy engine is running with Auto Save enabled.
@@ -96,15 +102,35 @@ pub struct AppState {
     /// running (not in CLI/MCP modes). Enables `GET /api/logs`,
     /// `POST /api/logs/rotate`, and `PATCH /api/logs`.
     pub log_handle: Option<Arc<LogHandle>>,
-    /// Optional enterprise auth manager. When present and enterprise
-    /// features are enabled, JWT authentication is enforced on protected
-    /// routes.
-    #[cfg(feature = "enterprise")]
-    pub auth_service: Option<Arc<AuthManager>>,
+    /// Pluggable authentication provider (trait object). `None` in the
+    /// simple/OSS tier; `Some` in the enterprise tier once the enterprise
+    /// crate injects its `AuthManager`-backed implementation (Phase 1b).
+    pub auth_provider: Option<Arc<dyn AuthProvider + Send + Sync>>,
+    /// Pluggable authorization checker (trait object). `None` in the
+    /// simple/OSS tier (allow-all); `Some` in the enterprise tier once the
+    /// enterprise crate injects its `RbacManager`-backed implementation
+    /// (Phase 1b).
+    pub authorizer: Option<Arc<dyn Authorizer + Send + Sync>>,
+    /// Pluggable audit sink (trait object). `None` in the simple/OSS tier
+    /// (audit events dropped); `Some` in the enterprise tier once the
+    /// enterprise crate injects its `AuditLogger`-backed implementation
+    /// (Phase 1b).
+    pub audit_sink: Option<Arc<dyn AuditSink + Send + Sync>>,
+    /// Pluggable event publisher for cross-instance pub/sub notifications
+    /// (config changes, intercept rule changes). `None` in single-instance
+    /// mode (no Redis); `Some` in multi-instance mode backed by Redis.
+    pub event_publisher: Option<Arc<dyn EventPublisher + Send + Sync>>,
+    /// Cross-instance traffic event sender. When Redis pub/sub is enabled,
+    /// traffic events relayed from other instances are sent on this separate
+    /// channel (NOT the traffic store's local broadcast) to prevent an
+    /// infinite event loop (local → Redis → local → Redis …). The WebSocket
+    /// handler subscribes to both the local traffic store events and this
+    /// cross-instance channel. `None` in single-instance mode.
+    pub cross_instance_sender: Option<broadcast::Sender<TrafficEvent>>,
 }
 
 impl AppState {
-    pub fn new(traffic_store: Arc<TrafficStore>) -> Self {
+    pub fn new(traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync>) -> Self {
         let session_manager = Arc::new(SessionManager::new(traffic_store.clone()));
         Self {
             traffic_store,
@@ -130,8 +156,11 @@ impl AppState {
             autosave_manager: None,
             mirror_writer: None,
             log_handle: None,
-            #[cfg(feature = "enterprise")]
-            auth_service: None,
+            auth_provider: None,
+            authorizer: None,
+            audit_sink: None,
+            event_publisher: None,
+            cross_instance_sender: None,
         }
     }
 
@@ -198,7 +227,10 @@ impl AppState {
         self
     }
 
-    pub fn with_intercept_store(mut self, store: Arc<InterceptStore>) -> Self {
+    pub fn with_intercept_store(
+        mut self,
+        store: Arc<dyn InterceptStoreBackend + Send + Sync>,
+    ) -> Self {
         self.intercept_store = Some(store);
         self
     }
@@ -229,11 +261,48 @@ impl AppState {
         self
     }
 
-    /// Attach an enterprise auth manager. When set, enterprise routes
-    /// enforce JWT authentication (see [`middleware::auth_middleware`]).
-    #[cfg(feature = "enterprise")]
-    pub fn with_auth_service(mut self, auth_service: Arc<AuthManager>) -> Self {
-        self.auth_service = Some(auth_service);
+    /// Attach a pluggable authentication provider. When set, the API layer
+    /// can validate JWT/API-key credentials via the [`AuthProvider`] trait
+    /// without depending on enterprise concrete types.
+    pub fn with_auth_provider(mut self, provider: Arc<dyn AuthProvider + Send + Sync>) -> Self {
+        self.auth_provider = Some(provider);
+        self
+    }
+
+    /// Attach a pluggable authorization checker. When set, the API layer
+    /// can enforce RBAC via the [`Authorizer`] trait without depending on
+    /// enterprise concrete types. When unset, authorization is allow-all.
+    pub fn with_authorizer(mut self, authorizer: Arc<dyn Authorizer + Send + Sync>) -> Self {
+        self.authorizer = Some(authorizer);
+        self
+    }
+
+    /// Attach a pluggable audit sink. When set, the API layer can record
+    /// and query audit events via the [`AuditSink`] trait without depending
+    /// on enterprise concrete types. When unset, audit events are dropped.
+    pub fn with_audit_sink(mut self, sink: Arc<dyn AuditSink + Send + Sync>) -> Self {
+        self.audit_sink = Some(sink);
+        self
+    }
+
+    /// Attach a pluggable event publisher for cross-instance pub/sub
+    /// notifications. When set, config and intercept rule changes are
+    /// published to Redis so other instances reload from the shared store.
+    /// When unset, changes are local-only (single-instance mode).
+    pub fn with_event_publisher(
+        mut self,
+        publisher: Arc<dyn EventPublisher + Send + Sync>,
+    ) -> Self {
+        self.event_publisher = Some(publisher);
+        self
+    }
+
+    /// Attach a cross-instance traffic event sender. Events relayed from
+    /// other instances via Redis are sent on this channel so the WebSocket
+    /// handler can forward them to connected clients without creating an
+    /// infinite loop (local broadcast → Redis → local broadcast → …).
+    pub fn with_cross_instance_sender(mut self, sender: broadcast::Sender<TrafficEvent>) -> Self {
+        self.cross_instance_sender = Some(sender);
         self
     }
 }
@@ -283,18 +352,92 @@ impl RateLimitConfig {
     }
 }
 
+/// Normalize a base path: ensure it starts with `/`, does not end with `/`,
+/// and treat empty / `/` as root (no prefix). Returns `None` when the base
+/// path is root (no nesting needed).
+fn normalize_base_path(base: &str) -> Option<String> {
+    let trimmed = base.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        return None;
+    }
+    let with_slash = if trimmed.starts_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("/{trimmed}")
+    };
+    let without_trailing = with_slash.trim_end_matches('/').to_string();
+    Some(without_trailing)
+}
+
 /// Create the API router.
 ///
 /// `rate_limit` controls whether the [`tower_governor`] rate-limiting layer
 /// is applied. When [`RateLimitConfig::enabled`] is `false` (the default),
 /// no rate limiting is applied.
-pub fn create_router(state: AppState, rate_limit: RateLimitConfig) -> Router<()> {
+///
+/// `enterprise_router` is an optional set of additional API routes (keyed on
+/// `Arc<AppState>`) to merge under the `/api` prefix. The main binary passes
+/// the enterprise router when the `enterprise` feature is enabled and `None`
+/// for the OSS build, keeping all `#[cfg]` gates in the binary rather than
+/// the API crate.
+///
+/// `base_path` configures context-path routing for load-balancer / reverse-
+/// proxy deployments. When set to e.g. `/madhyamas`, all routes are served
+/// under `/madhyamas/api/...`, `/madhyamas/health`, `/madhyamas/ws`, and the
+/// web UI at `/madhyamas/`. When `/` or empty, routes are served at root
+/// (default behaviour).
+pub fn create_router(
+    state: AppState,
+    rate_limit: RateLimitConfig,
+    enterprise_router: Option<Router<Arc<AppState>>>,
+    base_path: &str,
+) -> Router<()> {
     let state = Arc::new(state);
 
-    let mut router = Router::new()
-        // Top-level health check for quick status
-        .route("/health", axum::routing::get(|| async { "OK" }))
-        .nest("/api", routes::create_routes())
+    let mut api_routes = routes::create_routes();
+    if let Some(ent) = enterprise_router {
+        api_routes = api_routes.merge(ent);
+    } else {
+        // OSS build: provide a community-tier detailed health endpoint.
+        // The enterprise build gets its richer handler from the enterprise
+        // router (which includes tier/auth/license info).
+        api_routes = api_routes.route(
+            "/health/detailed",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "healthy": true,
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "uptime_secs": 0u64,
+                    "memory_usage_mb": 0u64,
+                    "active_connections": 0u64,
+                    "details": {},
+                    "tier": "community",
+                    "auth_mode": "none",
+                    "auth_required": false,
+                }))
+            }),
+        );
+    }
+
+    let inner = Router::new()
+        // Top-level health check for quick status. Verifies database
+        // connectivity so the load balancer (nginx) does not route traffic
+        // to an instance whose schema initialization has not completed.
+        // This endpoint is unauthenticated — it must be reachable by
+        // Docker/nginx health probes without credentials.
+        .route(
+            "/health",
+            axum::routing::get(|State(state): State<Arc<AppState>>| async move {
+                match state.traffic_store.ping().await {
+                    Ok(()) => (StatusCode::OK, "OK").into_response(),
+                    Err(e) => {
+                        tracing::error!("Health check failed: database not ready: {e}");
+                        (StatusCode::SERVICE_UNAVAILABLE, "Database not ready").into_response()
+                    }
+                }
+            }),
+        )
+        .nest("/api", api_routes)
         // Serve embedded web assets (compiled into the binary via rust-embed).
         // Falls back to disk-based serving via MADHYAMAS_WEB_DIR for dev.
         .fallback(embedded_assets::embedded_fallback)
@@ -304,7 +447,33 @@ pub fn create_router(state: AppState, rate_limit: RateLimitConfig) -> Router<()>
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
-        // Security headers
+        // Security headers (Phase 9.3). These apply to BOTH OSS and
+        // enterprise builds — defense-in-depth for every deployment.
+        //
+        // Content-Security-Policy: restricts resource loading to 'self'.
+        //   - `'unsafe-inline'` for styles is required because shadcn/ui
+        //     and Tailwind emit inline styles at runtime.
+        //   - `connect-src ws: wss:` allows the web UI's WebSocket
+        //     connection to the traffic stream.
+        //   - `img-src 'self' data: blob:` allows inline data-URI images
+        //     and object-URL previews used by the UI.
+        //   - `object-src 'none'` and `base-uri 'self'` block plugins and
+        //     <base> hijacking.
+        //   - `frame-ancestors 'none'` prevents clickjacking via embedding
+        //     (stronger than X-Frame-Options and understood by modern
+        //     browsers).
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static(
+                "default-src 'self'; script-src 'self'; \
+                 style-src 'self' 'unsafe-inline'; \
+                 img-src 'self' data: blob:; \
+                 connect-src 'self' ws: wss:; \
+                 font-src 'self' data:; \
+                 object-src 'none'; base-uri 'self'; \
+                 frame-ancestors 'none'",
+            ),
+        ))
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::X_FRAME_OPTIONS,
             axum::http::HeaderValue::from_static("DENY"),
@@ -314,11 +483,27 @@ pub fn create_router(state: AppState, rate_limit: RateLimitConfig) -> Router<()>
             axum::http::HeaderValue::from_static("nosniff"),
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::HeaderName::from_static("x-xss-protection"),
+            axum::http::HeaderValue::from_static("1; mode=block"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::REFERRER_POLICY,
             axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
         ))
         // Limit request bodies to 10MB to prevent OOM from large payloads
         .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024));
+
+    // Apply base-path nesting. When base_path is root, no nesting is needed.
+    let mut router = match normalize_base_path(base_path) {
+        Some(prefix) => {
+            tracing::info!("Serving API and web UI under base path: {}", prefix);
+            // Set the global base path so embedded_assets can inject the
+            // <meta> tag into index.html at runtime.
+            embedded_assets::set_base_path(&prefix);
+            Router::new().nest(prefix.as_str(), inner)
+        }
+        None => inner,
+    };
 
     // Rate limiting is opt-in. When enabled, apply the governor layer with
     // the configured requests-per-second and burst size.

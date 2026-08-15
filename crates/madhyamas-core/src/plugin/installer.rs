@@ -16,7 +16,8 @@
 //!
 //! Uninstall removes the plugin directory and its persisted state.
 
-use super::{PluginManifest, PluginPersistence};
+use super::PluginManifest;
+use crate::storage::PluginStoreBackend;
 use crate::Error;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
@@ -55,7 +56,7 @@ pub struct PluginInstaller {
     /// Base directory where plugin packages are extracted
     /// (`<base>/<plugin_id>/`).
     base_dir: PathBuf,
-    persistence: Option<Arc<PluginPersistence>>,
+    persistence: Option<Arc<dyn PluginStoreBackend + Send + Sync>>,
     /// Optional trusted-publisher public keys (hex Ed25519) that bypass the
     /// unverified-plugin confirmation gate.
     trusted_publishers: Vec<String>,
@@ -70,7 +71,7 @@ impl PluginInstaller {
         }
     }
 
-    pub fn with_persistence(mut self, p: Arc<PluginPersistence>) -> Self {
+    pub fn with_persistence(mut self, p: Arc<dyn PluginStoreBackend + Send + Sync>) -> Self {
         self.persistence = Some(p);
         self
     }
@@ -155,7 +156,7 @@ impl PluginInstaller {
 
         // 6. Persist installed state.
         if let Some(p) = &self.persistence {
-            p.mark_installed(&plugin_id)?;
+            p.mark_installed(&plugin_id).await?;
         }
 
         info!(
@@ -173,13 +174,13 @@ impl PluginInstaller {
     }
 
     /// Uninstall a plugin: remove its directory and persisted state.
-    pub fn uninstall(&self, plugin_id: &str) -> crate::Result<()> {
+    pub async fn uninstall(&self, plugin_id: &str) -> crate::Result<()> {
         let dest = self.base_dir.join(plugin_id);
         if dest.exists() {
             std::fs::remove_dir_all(&dest)?;
         }
         if let Some(p) = &self.persistence {
-            p.remove_state(plugin_id)?;
+            p.remove_state(plugin_id).await?;
         }
         info!("Uninstalled plugin: {}", plugin_id);
         Ok(())

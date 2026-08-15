@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: madhyamas
+  namespace: madhyamas
+  labels:
+    app.kubernetes.io/name: madhyamas
+    app.kubernetes.io/part-of: madhyamas
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: madhyamas
+  ports:
+    - name: api
+      port: 3001
+      targetPort: api
+      protocol: TCP
+    - name: proxy
+      port: 8888
+      targetPort: proxy
+      protocol: TCP

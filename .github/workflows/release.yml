@@ -98,16 +98,19 @@ jobs:
         run: cargo nextest run --verbose
 
   # =============================================================================
-  # Build the unified binary for all platforms
+  # Build the unified binary for all platforms — both tiers
   # Single binary includes: proxy server + web UI (embedded) + MCP server + CLI
+  # Tier dimension: enterprise (default features) + oss (no-default-features)
+  # OSS artifacts: madhyamas-oss-v{ver}-{target}; enterprise: madhyamas-enterprise-v{ver}-{target}
   # =============================================================================
   build-binaries:
     needs: test-gate
-    name: Build madhyamas for ${{ matrix.target }}
+    name: Build madhyamas (${{ matrix.tier }}) for ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        tier: [enterprise, oss]
         include:
           # Linux
           - target: x86_64-unknown-linux-gnu
@@ -174,7 +177,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.target }}-${{ matrix.tier }}
 
       - name: Download frontend artifact
         uses: actions/download-artifact@v4
@@ -187,14 +190,19 @@ jobs:
         shell: bash
         run: echo "VERSION=${RELEASE_VERSION:-${GITHUB_REF#refs/tags/v}}" >> $GITHUB_OUTPUT
 
-      - name: Build binary
+      - name: Build binary (enterprise tier)
+        if: matrix.tier == 'enterprise'
         run: cargo build --release --target ${{ matrix.target }} -p madhyamas --features embedded-assets
+
+      - name: Build binary (oss tier — no default features + embedded-assets)
+        if: matrix.tier == 'oss'
+        run: cargo build --release --no-default-features --features embedded-assets --target ${{ matrix.target }} -p madhyamas
 
       - name: Package (Unix)
         if: matrix.os != 'windows-latest'
         shell: bash
         run: |
-          ARTIFACT_NAME="madhyamas-v${{ steps.version.outputs.VERSION }}-${{ matrix.target }}"
+          ARTIFACT_NAME="madhyamas-${{ matrix.tier }}-v${{ steps.version.outputs.VERSION }}-${{ matrix.target }}"
           mkdir -p dist/$ARTIFACT_NAME
           cp target/${{ matrix.target }}/release/madhyamas dist/$ARTIFACT_NAME/
           cd dist
@@ -209,7 +217,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $ARTIFACT_NAME = "madhyamas-v${{ steps.version.outputs.VERSION }}-${{ matrix.target }}"
+          $ARTIFACT_NAME = "madhyamas-${{ matrix.tier }}-v${{ steps.version.outputs.VERSION }}-${{ matrix.target }}"
           New-Item -ItemType Directory -Path "dist\$ARTIFACT_NAME" -Force
           Copy-Item "target\${{ matrix.target }}\release\madhyamas.exe" "dist\$ARTIFACT_NAME\"
           cd dist
@@ -220,8 +228,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: madhyamas-${{ matrix.target }}
-          path: dist/madhyamas-v*.*
+          name: madhyamas-${{ matrix.tier }}-${{ matrix.target }}
+          path: dist/madhyamas-*.*
 
   # =============================================================================
   # Build Windows MSI Installer
@@ -234,10 +242,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Windows artifact
+      - name: Download Windows artifact (OSS)
         uses: actions/download-artifact@v4
         with:
-          name: madhyamas-x86_64-pc-windows-msvc
+          name: madhyamas-oss-x86_64-pc-windows-msvc
           path: artifacts
 
       - name: Extract version
@@ -515,17 +523,37 @@ jobs:
 
             ### Downloads
 
+            This release ships **two tiers** from the same commit:
+
+            - **OSS (Simple)** — `madhyamas-oss-*` — MIT/Apache-2.0, no enterprise code.
+              Install via Homebrew/Chocolatey/Snap/DNF or download below.
+            - **Enterprise** — `madhyamas-enterprise-*` — includes auth, RBAC, audit
+              logging (BSL-1.1 `madhyamas-enterprise` crate). Requires a license file.
+              Not published to crates.io or package managers.
+
+            #### OSS (Simple) binaries
+
             | Platform | Download |
             |----------|----------|
-            | Linux x64 | `madhyamas-v${{ steps.version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz` |
-            | Linux ARM64 | `madhyamas-v${{ steps.version.outputs.VERSION }}-aarch64-unknown-linux-gnu.tar.gz` |
-            | Linux ARMv7 (Pi 2/3/4 32-bit) | `madhyamas-v${{ steps.version.outputs.VERSION }}-armv7-unknown-linux-gnueabihf.tar.gz` |
-            | Linux ARMv6 (Pi 1/Zero 32-bit) | `madhyamas-v${{ steps.version.outputs.VERSION }}-arm-unknown-linux-gnueabihf.tar.gz` |
-            | Linux RISC-V 64 | `madhyamas-v${{ steps.version.outputs.VERSION }}-riscv64gc-unknown-linux-gnu.tar.gz` |
-            | macOS Intel | `madhyamas-v${{ steps.version.outputs.VERSION }}-x86_64-apple-darwin.tar.gz` |
-            | macOS Apple Silicon | `madhyamas-v${{ steps.version.outputs.VERSION }}-aarch64-apple-darwin.tar.gz` |
-            | Windows x64 | `madhyamas-v${{ steps.version.outputs.VERSION }}-x86_64-pc-windows-msvc.zip` |
+            | Linux x64 | `madhyamas-oss-v${{ steps.version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz` |
+            | Linux ARM64 | `madhyamas-oss-v${{ steps.version.outputs.VERSION }}-aarch64-unknown-linux-gnu.tar.gz` |
+            | Linux ARMv7 (Pi 2/3/4 32-bit) | `madhyamas-oss-v${{ steps.version.outputs.VERSION }}-armv7-unknown-linux-gnueabihf.tar.gz` |
+            | Linux ARMv6 (Pi 1/Zero 32-bit) | `madhyamas-oss-v${{ steps.version.outputs.VERSION }}-arm-unknown-linux-gnueabihf.tar.gz` |
+            | Linux RISC-V 64 | `madhyamas-oss-v${{ steps.version.outputs.VERSION }}-riscv64gc-unknown-linux-gnu.tar.gz` |
+            | macOS Intel | `madhyamas-oss-v${{ steps.version.outputs.VERSION }}-x86_64-apple-darwin.tar.gz` |
+            | macOS Apple Silicon | `madhyamas-oss-v${{ steps.version.outputs.VERSION }}-aarch64-apple-darwin.tar.gz` |
+            | Windows x64 | `madhyamas-oss-v${{ steps.version.outputs.VERSION }}-x86_64-pc-windows-msvc.zip` |
             | Windows MSI | `madhyamas-v${{ steps.version.outputs.VERSION }}-x64.msi` |
+
+            #### Enterprise binaries
+
+            | Platform | Download |
+            |----------|----------|
+            | Linux x64 | `madhyamas-enterprise-v${{ steps.version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz` |
+            | Linux ARM64 | `madhyamas-enterprise-v${{ steps.version.outputs.VERSION }}-aarch64-unknown-linux-gnu.tar.gz` |
+            | macOS Intel | `madhyamas-enterprise-v${{ steps.version.outputs.VERSION }}-x86_64-apple-darwin.tar.gz` |
+            | macOS Apple Silicon | `madhyamas-enterprise-v${{ steps.version.outputs.VERSION }}-aarch64-apple-darwin.tar.gz` |
+            | Windows x64 | `madhyamas-enterprise-v${{ steps.version.outputs.VERSION }}-x86_64-pc-windows-msvc.zip` |
 
             ### Changes
 
@@ -568,7 +596,7 @@ jobs:
         run: |
           mkdir -p checksums
           for target in x86_64-apple-darwin aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
-            curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/madhyamas-v${{ steps.version.outputs.VERSION }}-${target}.tar.gz.sha256" -o "checksums/madhyamas-${target}.sha256" || true
+            curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/madhyamas-oss-v${{ steps.version.outputs.VERSION }}-${target}.tar.gz.sha256" -o "checksums/madhyamas-${target}.sha256" || true
           done
 
       - name: Update Homebrew formula (version + SHA256)
@@ -648,7 +676,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/madhyamas-v${VERSION}-x86_64-pc-windows-msvc.zip.sha256" -o /tmp/win_checksum.txt
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/madhyamas-oss-v${VERSION}-x86_64-pc-windows-msvc.zip.sha256" -o /tmp/win_checksum.txt
           # Extract just the hash (first field of sha256sum output)
           WIN_SHA256=$(awk '{print $1}' /tmp/win_checksum.txt)
           echo "WIN_SHA256=${WIN_SHA256}" >> $GITHUB_ENV
@@ -753,14 +781,20 @@ jobs:
           done
 
   # =============================================================================
-  # Publish Docker Image
+  # Publish Docker Images — two tiers via BUILD_TIER build-arg
   # GHCR push works automatically via GITHUB_TOKEN.
-  # Docker Hub push skips with visible message if DOCKERHUB_USERNAME is not set.
+  #   OSS:        ghcr.io/{org}/madhyamas:latest (and version tags)
+  #   Enterprise: ghcr.io/{org}/madhyamas-enterprise:latest (and version tags)
+  # Docker Hub push (OSS only) skips with visible message if DOCKERHUB_USERNAME is not set.
   # =============================================================================
   publish-docker:
-    name: Publish Docker Image
+    name: Publish Docker Image (${{ matrix.tier }})
     needs: build-binaries
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [oss, enterprise]
     permissions:
       contents: read
       packages: write
@@ -775,6 +809,7 @@ jobs:
 
       - name: Check for Docker Hub credentials
         id: check_dockerhub
+        if: matrix.tier == 'oss'
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -793,8 +828,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to Docker Hub
-        if: steps.check_dockerhub.outputs.has_dockerhub == 'true'
+      - name: Login to Docker Hub (OSS only)
+        if: matrix.tier == 'oss' && steps.check_dockerhub.outputs.has_dockerhub == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -810,6 +845,14 @@ jobs:
           # GHCR requires lowercase repository name
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           echo "REPO_LOWER=${REPO_LOWER}" >> $GITHUB_OUTPUT
+          # Enterprise image uses a -enterprise suffix; OSS uses the base name
+          if [ "${{ matrix.tier }}" = "enterprise" ]; then
+            echo "IMAGE_NAME=${REPO_LOWER}-enterprise" >> $GITHUB_OUTPUT
+            echo "DH_IMAGE_NAME=madhyamas-enterprise" >> $GITHUB_OUTPUT
+          else
+            echo "IMAGE_NAME=${REPO_LOWER}" >> $GITHUB_OUTPUT
+            echo "DH_IMAGE_NAME=madhyamas" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
@@ -817,10 +860,27 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            BUILD_TIER=${{ matrix.tier }}
           tags: |
-            ghcr.io/${{ steps.version.outputs.REPO_LOWER }}:latest
-            ghcr.io/${{ steps.version.outputs.REPO_LOWER }}:${{ steps.version.outputs.VERSION }}
-            ghcr.io/${{ steps.version.outputs.REPO_LOWER }}:${{ steps.version.outputs.MAJOR_MINOR }}
+            ghcr.io/${{ steps.version.outputs.IMAGE_NAME }}:latest
+            ghcr.io/${{ steps.version.outputs.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
+            ghcr.io/${{ steps.version.outputs.IMAGE_NAME }}:${{ steps.version.outputs.MAJOR_MINOR }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push to Docker Hub (OSS only)
+        if: matrix.tier == 'oss' && steps.check_dockerhub.outputs.has_dockerhub == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            BUILD_TIER=oss
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.version.outputs.DH_IMAGE_NAME }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.version.outputs.DH_IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -855,12 +915,15 @@ jobs:
         env:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
         run: |
-          # Publish in dependency order
+          # Publish OSS crates in dependency order.
+          # madhyamas-enterprise is NOT published (BSL-1.1, publish = false in Cargo.toml).
           # madhyamas-api: disable embedded-assets (requires web/dist/ which
           # doesn't exist in the published tarball)
           cargo publish -p madhyamas-core --token "$CRATES_TOKEN"
           sleep 30
-          cargo publish -p madhyamas-api --no-default-features --features grpc,scripting,plugins,enterprise --token "$CRATES_TOKEN"
+          cargo publish -p madhyamas-plugin-sdk --token "$CRATES_TOKEN"
+          sleep 30
+          cargo publish -p madhyamas-api --no-default-features --features grpc,scripting,plugins --token "$CRATES_TOKEN"
           sleep 30
           cargo publish -p madhyamas-cli --token "$CRATES_TOKEN"
           sleep 30
@@ -868,3 +931,86 @@ jobs:
           sleep 30
           # madhyamas: embedded-assets is not in default features, so default publish is fine
           cargo publish -p madhyamas --token "$CRATES_TOKEN"
+
+  # =============================================================================
+  # SBOM generation — CycloneDX for both tiers
+  # Generates a Software Bill of Materials for OSS and enterprise dependency
+  # trees and attaches them to the GitHub Release.
+  # =============================================================================
+  generate-sbom:
+    name: Generate SBOM (${{ matrix.tier }})
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [oss, enterprise]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-cyclonedx
+
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${RELEASE_VERSION:-${GITHUB_REF#refs/tags/v}}" >> $GITHUB_OUTPUT
+
+      - name: Generate SBOM (oss tier)
+        if: matrix.tier == 'oss'
+        run: cargo cyclonedx --no-default-features -p madhyamas --format json --output-pattern package
+
+      - name: Generate SBOM (enterprise tier)
+        if: matrix.tier == 'enterprise'
+        run: cargo cyclonedx --all-features -p madhyamas --format json --output-pattern package
+
+      - name: Rename SBOM artifact
+        shell: bash
+        run: |
+          mkdir -p sbom
+          # cargo-cyclonedx writes to target/ as madhyamas-{version}.cdx.json
+          SRC=$(find target -name "madhyamas-*.cdx.json" -type f | head -1)
+          if [ -n "$SRC" ]; then
+            cp "$SRC" "sbom/madhyamas-${{ matrix.tier }}-v${{ steps.version.outputs.VERSION }}.cdx.json"
+          else
+            echo "::warning::No SBOM file generated by cargo-cyclonedx"
+            exit 1
+          fi
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.tier }}
+          path: sbom/*.cdx.json
+          retention-days: 30
+
+  # =============================================================================
+  # Attach SBOM files to the GitHub Release
+  # =============================================================================
+  attach-sbom:
+    name: Attach SBOM to Release
+    needs: [create-release, generate-sbom]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: sbom
+          merge-multiple: true
+          pattern: sbom-*
+
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${RELEASE_VERSION:-${GITHUB_REF#refs/tags/v}}" >> $GITHUB_OUTPUT
+
+      - name: Attach SBOM to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          files: sbom/*.cdx.json

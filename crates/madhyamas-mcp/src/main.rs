@@ -5,10 +5,21 @@
 use std::env;
 use std::process;
 
-use madhyamas_mcp::{McpConfig, McpServer};
+use madhyamas_mcp::{McpAuth, McpConfig, McpServer, McpTransport};
 
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+
+/// Resolve MCP auth from env vars. API key takes precedence over JWT.
+fn resolve_auth(api_key: &Option<String>, token: &Option<String>) -> McpAuth {
+    if let Some(key) = api_key {
+        return McpAuth::ApiKey(key.clone());
+    }
+    if let Some(t) = token {
+        return McpAuth::Jwt(t.clone());
+    }
+    McpAuth::None
+}
 
 fn main() {
     // Initialize logging
@@ -34,12 +45,19 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(30);
 
+    // Resolve auth from env vars (API key takes precedence over JWT).
+    let api_key = env::var("MADHYAMAS_API_KEY").ok();
+    let token = env::var("MADHYAMAS_TOKEN").ok();
+    let auth = resolve_auth(&api_key, &token);
+
     info!("Starting Madhyamas MCP Server");
     info!("API URL: {}", api_url);
 
     let config = McpConfig {
         api_url,
         timeout_secs,
+        auth,
+        transport: McpTransport::Stdio,
     };
 
     let server = McpServer::new(config).expect("Failed to create MCP server");

@@ -9,6 +9,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use madhyamas_api::{create_router, RateLimitConfig};
@@ -18,23 +19,29 @@ use madhyamas_core::GrpcManager;
 use madhyamas_core::WasmRuntime;
 use madhyamas_core::{
     AutoSaveManager, BlockListManager, BreakpointManager, CertificateManager, ExtensionManager,
-    InterceptStore, LogHandle, MemoryManager, MetricsCollector, MirrorWriter, MockManager,
-    PerformanceMonitor, Persistable, ProxyConfig, ProxyEngine, RewriteManager, RotatingFileWriter,
-    SessionManager, ThrottleManager, TrafficStore, UpstreamProxyConfig,
+    InterceptStoreBackend, LogHandle, MemoryManager, MetricsCollector, MirrorWriter, MockManager,
+    PerformanceMonitor, Persistable, PostgresInterceptStore, PostgresTrafficStore, ProxyConfig,
+    ProxyEngine, RewriteManager, RotatingFileWriter, SessionManager, SqliteInterceptStore,
+    ThrottleManager, TrafficStore, TrafficStoreBackend, UpstreamProxyConfig,
 };
 #[cfg(feature = "plugins")]
-use madhyamas_core::{PluginExtension, PluginInstaller, PluginManager, PluginPersistence};
+use madhyamas_core::{
+    PluginExtension, PluginInstaller, PluginManager, PluginStoreBackend, PostgresPluginStore,
+    SqlitePluginStore,
+};
 #[cfg(feature = "scripting")]
-use madhyamas_core::{ScriptExtension, ScriptRuntime};
+use madhyamas_core::{
+    PostgresScriptStore, ScriptExtension, ScriptRuntime, ScriptStoreBackend, SqliteScriptStore,
+};
 
 use tracing::{debug, info, Level};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 // Re-export CLI commands from the madhyamas-cli library
-use madhyamas_cli::Commands as CliCommands;
+use madhyamas_cli::{CliAuth, Commands as CliCommands};
 
 // Re-export MCP server from the madhyamas-mcp library
-use madhyamas_mcp::{McpConfig, McpServer};
+use madhyamas_mcp::{McpAuth, McpConfig, McpServer, McpTransport};
 
 #[derive(Parser, Debug)]
 #[command(name = "madhyamas")]
@@ -213,6 +220,155 @@ struct Args {
         global = true
     )]
     rate_limit_burst: u32,
+
+    /// Enable enterprise authentication (JWT + API keys). Only effective
+    /// when the binary is built with the `enterprise` feature (the default).
+    /// In the OSS build this flag is accepted but has no effect.
+    #[arg(long, env = "MADHYAMAS_ENABLE_AUTH", global = true)]
+    enable_auth: bool,
+
+    /// JWT secret used for signing/validating tokens. If not provided, a
+    /// default development secret is used. **Change this in production.**
+    /// The secret is never logged.
+    #[arg(long, env = "MADHYAMAS_JWT_SECRET", global = true)]
+    jwt_secret: Option<String>,
+
+    /// Path to an Ed25519-signed license file (enterprise tier). When
+    /// provided, the license is verified at startup and the binary fails
+    /// fast if the signature is invalid or the license has expired. When
+    /// omitted, the binary runs in unlicensed enterprise mode (auth/RBAC/
+    /// audit still functional). The verifying public key is read from
+    /// `MADHYAMAS_LICENSE_PUBLIC_KEY` (base64-encoded 32 bytes).
+    #[arg(long, env = "MADHYAMAS_LICENSE_FILE", global = true)]
+    license_file: Option<String>,
+
+    /// Bootstrap admin username (enterprise tier). On first run — when the
+    /// users table is empty — an admin user is created with this username.
+    /// Defaults to `admin` if neither the flag nor the env var is set.
+    #[arg(long, env = "MADHYAMAS_ADMIN_USERNAME", global = true)]
+    admin_username: Option<String>,
+
+    /// Bootstrap admin password (enterprise tier). On first run, the admin
+    /// user is created with this password. If neither this flag nor the env
+    /// var is set, a random password is generated and logged once with a
+    /// warning to change it immediately. The password is never logged when
+    /// provided via this flag.
+    #[arg(long, env = "MADHYAMAS_ADMIN_PASSWORD", global = true)]
+    admin_password: Option<String>,
+
+    /// Database URL for storage backends. When set to a PostgreSQL URL
+    /// (e.g. `postgres://user:pass@host:5432/db`), all storage backends
+    /// (traffic, intercept, config, plugins, scripts, enterprise) use
+    /// PostgreSQL instead of SQLite. When omitted or set to a `sqlite://`
+    /// URL, the default SQLite backends are used (existing behavior).
+    #[arg(long, env = "MADHYAMAS_DATABASE_URL", global = true)]
+    database_url: Option<String>,
+
+    /// Read replica database URL (Phase 10d.2). When set to a PostgreSQL
+    /// URL, read queries (`get_traffic`, `get_by_id`, `count`, etc.) are
+    /// routed to the replica while write queries (`store_request`,
+    /// `store_response`, `clear_traffic`, etc.) go to the primary
+    /// (`--database-url`). This improves read throughput under load and
+    /// offloads analytics queries from the primary. When omitted, all
+    /// queries go to the primary. Only effective when `--database-url`
+    /// is also a PostgreSQL URL.
+    #[arg(long, env = "MADHYAMAS_DATABASE_READ_URL", global = true)]
+    database_read_url: Option<String>,
+
+    /// Redis URL for cross-instance state synchronization (enterprise tier,
+    /// multi-instance mode). When provided, the binary connects to Redis and
+    /// enables pub/sub event broadcasting (WebSocket traffic events, config
+    /// changes, intercept rule changes) and license seat coordination across
+    /// instances. When omitted, the binary runs in single-instance mode (all
+    /// multi-instance features disabled — current behavior).
+    ///
+    /// Accepted URL schemes:
+    /// - `redis://host:port` — plain TCP
+    /// - `redis://:password@host:port` — auth
+    /// - `rediss://host:port` — TLS
+    /// - `rediss://:password@host:port` — TLS + auth
+    #[arg(long, env = "MADHYAMAS_REDIS_URL", global = true)]
+    redis_url: Option<String>,
+
+    /// Path to a PEM-encoded CA certificate file for HTTPS interception.
+    /// When set together with `--ca-key-file`, the CA is loaded from these
+    /// files instead of being generated fresh. If the files do not exist
+    /// yet, a new CA is generated and written to them so other instances
+    /// can load the same CA. For multi-instance deployments, share the same
+    /// CA across instances via a Kubernetes Secret or shared volume.
+    #[arg(long, env = "MADHYAMAS_CA_CERT_FILE", global = true)]
+    ca_cert_file: Option<String>,
+
+    /// Path to a PEM-encoded CA private key file for HTTPS interception.
+    /// Used together with `--ca-cert-file` to load or store the shared CA.
+    /// For multi-instance deployments, share the same CA key across
+    /// instances via a Kubernetes Secret or shared volume.
+    #[arg(long, env = "MADHYAMAS_CA_KEY_FILE", global = true)]
+    ca_key_file: Option<String>,
+
+    /// Base path for serving the API and web UI (load-balancer context-path
+    /// routing). When set to e.g. `/madhyamas`, all routes are served under
+    /// `/madhyamas/api/...`, `/madhyamas/health`, `/madhyamas/ws`, and the
+    /// web UI at `/madhyamas/`. Defaults to `/` (root path, unchanged
+    /// behavior). The path is normalized to not have a trailing slash.
+    #[arg(long, env = "MADHYAMAS_BASE_PATH", global = true)]
+    base_path: Option<String>,
+
+    /// API key for authenticating MCP/CLI requests against an enterprise
+    /// API server with `--enable-auth`. Sent as the `X-API-Key` header.
+    /// Overrides the `MADHYAMAS_API_KEY` environment variable. When both
+    /// `--api-key` and `--token` are provided, the API key takes
+    /// precedence. In OSS mode (or when auth is disabled) this is accepted
+    /// but ignored by the API server.
+    #[arg(long, env = "MADHYAMAS_API_KEY", global = true)]
+    api_key: Option<String>,
+
+    /// JWT token for authenticating MCP/CLI requests against an enterprise
+    /// API server with `--enable-auth`. Sent as the
+    /// `Authorization: Bearer <token>` header. Overrides the
+    /// `MADHYAMAS_TOKEN` environment variable. When both `--api-key` and
+    /// `--token` are provided, the API key takes precedence. In OSS mode
+    /// (or when auth is disabled) this is accepted but ignored by the API
+    /// server.
+    #[arg(long, env = "MADHYAMAS_TOKEN", global = true)]
+    token: Option<String>,
+
+    /// Require authentication for proxy CONNECT/HTTP requests (Phase 9.6).
+    /// When enabled (enterprise tier with `--enable-auth`), proxy clients
+    /// must supply credentials via `Proxy-Authorization: Basic` or
+    /// `X-API-Key` header. Unauthenticated proxy requests receive
+    /// `407 Proxy Authentication Required`. Default: off (proxy is open).
+    /// This is for deployments where the proxy itself needs protection,
+    /// not just the API.
+    #[arg(long, env = "MADHYAMAS_PROXY_AUTH", global = true)]
+    proxy_auth: bool,
+
+    /// Expected instance ID for license replay prevention (Phase 9.14).
+    /// When provided, the license file's `instance_id` must match this
+    /// value or the license is rejected at startup. When omitted, any
+    /// `instance_id` in the license is accepted (single-instance mode).
+    /// In multi-instance deployments, set a unique instance ID per
+    /// instance to prevent a license issued for one instance from being
+    /// reused on another.
+    #[arg(long, env = "MADHYAMAS_INSTANCE_ID", global = true)]
+    instance_id: Option<String>,
+
+    /// Path to a file containing the database URL (Phase 9.15). Reads the
+    /// first non-empty line as the connection string. Useful for secret
+    /// managers (Vault, AWS Secrets Manager) that write credentials to
+    /// files. When both `--database-url` and `--database-url-file` are
+    /// provided, `--database-url` takes precedence. The connection string
+    /// is never logged.
+    #[arg(long, env = "MADHYAMAS_DATABASE_URL_FILE", global = true)]
+    database_url_file: Option<String>,
+
+    /// Path to a PEM-encoded CA certificate for Redis TLS verification
+    /// (Phase 9.2). When `--redis-url` uses the `rediss://` scheme and
+    /// this flag is set, the custom CA is used to verify the Redis TLS
+    /// certificate (for self-signed Redis TLS). When omitted, the system
+    /// CA store is used for `rediss://` verification.
+    #[arg(long, env = "MADHYAMAS_REDIS_CA_CERT", global = true)]
+    redis_ca_cert: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -220,7 +376,7 @@ enum Command {
     /// Start the proxy server with web UI (default action)
     Serve,
 
-    /// Run as an MCP (Model Context Protocol) server via stdio
+    /// Run as an MCP (Model Context Protocol) server via stdio or HTTP
     #[command(name = "mcp")]
     Mcp {
         /// API server URL to connect to
@@ -234,6 +390,14 @@ enum Command {
         /// Request timeout in seconds
         #[arg(long, env = "MADHYAMAS_TIMEOUT", default_value_t = 30)]
         timeout_secs: u64,
+
+        /// Transport mode: stdio (default) or http
+        #[arg(long, env = "MADHYAMAS_MCP_TRANSPORT", default_value = "stdio")]
+        transport: String,
+
+        /// Port for HTTP transport (only used with --transport http)
+        #[arg(long, env = "MADHYAMAS_MCP_PORT", default_value_t = 3002)]
+        mcp_port: u16,
     },
 
     /// CLI commands for interacting with a running Madhyamas server
@@ -261,6 +425,8 @@ async fn main() -> Result<()> {
         Some(Command::Mcp {
             api_url,
             timeout_secs,
+            transport,
+            mcp_port,
         }) => {
             // MCP mode: log to stderr to avoid corrupting stdio JSON-RPC
             let subscriber = fmt::Subscriber::builder()
@@ -274,14 +440,32 @@ async fn main() -> Result<()> {
             info!("Starting Madhyamas MCP Server");
             info!("API URL: {}", api_url);
 
+            let auth = resolve_mcp_auth(&args.api_key, &args.token);
+            let mcp_transport = match transport.as_str() {
+                "http" => McpTransport::Http { port: mcp_port },
+                _ => McpTransport::Stdio,
+            };
             let config = McpConfig {
                 api_url,
                 timeout_secs,
+                auth,
+                transport: mcp_transport,
             };
             let server = McpServer::new(config).expect("Failed to create MCP server");
-            if let Err(e) = server.run() {
-                eprintln!("MCP server error: {}", e);
-                std::process::exit(1);
+            match server.transport() {
+                McpTransport::Stdio => {
+                    if let Err(e) = server.run() {
+                        eprintln!("MCP server error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                McpTransport::Http { port } => {
+                    info!("MCP HTTP transport on port {}", port);
+                    if let Err(e) = server.run_http(port) {
+                        eprintln!("MCP server error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             }
             Ok(())
         }
@@ -293,7 +477,8 @@ async fn main() -> Result<()> {
 
             let api_url = std::env::var("MADHYAMAS_API_URL")
                 .unwrap_or_else(|_| format!("http://{}:{}", args.host, args.api_port));
-            cli_cmd.execute(api_url).await
+            let auth = resolve_cli_auth(&args.api_key, &args.token);
+            cli_cmd.execute(api_url, auth).await
         }
 
         Some(Command::Serve) | None => {
@@ -321,6 +506,39 @@ async fn main() -> Result<()> {
             run_proxy_server(args, log_handle).await
         }
     }
+}
+
+/// Resolve MCP authentication credentials from CLI flags / env vars.
+///
+/// Precedence (matches the enterprise auth middleware's acceptance order):
+/// 1. `--api-key` (or `MADHYAMAS_API_KEY` env var) → [`McpAuth::ApiKey`]
+/// 2. `--token` (or `MADHYAMAS_TOKEN` env var) → [`McpAuth::Jwt`]
+/// 3. Neither set → [`McpAuth::None`] (OSS mode or auth disabled)
+///
+/// When both are provided, the API key takes precedence. clap already
+/// populates the `Option`s from their env vars, so the caller passes the
+/// resolved values directly.
+fn resolve_mcp_auth(api_key: &Option<String>, token: &Option<String>) -> McpAuth {
+    if let Some(key) = api_key {
+        return McpAuth::ApiKey(key.clone());
+    }
+    if let Some(t) = token {
+        return McpAuth::Jwt(t.clone());
+    }
+    McpAuth::None
+}
+
+/// Resolve CLI authentication credentials from CLI flags / env vars.
+///
+/// Same precedence as [`resolve_mcp_auth`]: API key > JWT > none.
+fn resolve_cli_auth(api_key: &Option<String>, token: &Option<String>) -> CliAuth {
+    if let Some(key) = api_key {
+        return CliAuth::ApiKey(key.clone());
+    }
+    if let Some(t) = token {
+        return CliAuth::Jwt(t.clone());
+    }
+    CliAuth::None
 }
 
 /// Build the [`UpstreamProxyConfig`] from CLI args, falling back to the
@@ -432,6 +650,114 @@ fn parse_auth_credentials(s: &str) -> (Option<String>, Option<String>) {
         (Some(user.to_string()), Some(pass.to_string()))
     } else {
         (Some(s.to_string()), None)
+    }
+}
+
+/// Resolve the database URL from CLI args (Phase 9.15).
+///
+/// Precedence:
+/// 1. `--database-url` (or `MADHYAMAS_DATABASE_URL` env var)
+/// 2. `--database-url-file` (or `MADHYAMAS_DATABASE_URL_FILE` env var) —
+///    reads the first non-empty line from the file
+/// 3. `None` (use default SQLite)
+///
+/// The connection string is never logged by this function.
+fn resolve_database_url(
+    database_url: &Option<String>,
+    database_url_file: &Option<String>,
+) -> Result<Option<String>> {
+    if let Some(url) = database_url {
+        return Ok(Some(url.clone()));
+    }
+    if let Some(ref path) = database_url_file {
+        let contents = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("failed to read --database-url-file {path}: {e}"))?;
+        let url = contents
+            .lines()
+            .map(|l| l.trim())
+            .find(|l| !l.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("--database-url-file {path} is empty"))?;
+        return Ok(Some(url.to_string()));
+    }
+    Ok(None)
+}
+
+/// Redact the password from a database connection string for safe logging
+/// (Phase 9.15). Handles `postgres://user:pass@host/db`,
+/// `postgresql://user:pass@host/db`, and `sqlite://path` (no password to
+/// redact). Returns a string with the password replaced by `***`, or the
+/// original string if no password is present.
+fn redact_db_url(url: &str) -> String {
+    // Try to parse as a URL. If parsing fails, return as-is (don't risk
+    // leaking — but also don't crash).
+    match url::Url::parse(url) {
+        Ok(mut parsed) => {
+            if parsed.password().is_some() {
+                let _ = parsed.set_password(Some("***"));
+            }
+            parsed.to_string()
+        }
+        Err(_) => {
+            // Not a valid URL (e.g. sqlite://path). Return as-is — SQLite
+            // URLs don't contain passwords.
+            url.to_string()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests_url_redact {
+    use super::*;
+
+    #[test]
+    fn test_redact_db_url_postgres_with_password() {
+        let redacted = redact_db_url("postgres://user:secretpass@localhost:5432/db");
+        assert!(redacted.contains("***"));
+        assert!(!redacted.contains("secretpass"));
+    }
+
+    #[test]
+    fn test_redact_db_url_postgresql_with_password() {
+        let redacted = redact_db_url("postgresql://admin:p@ssw0rd@db.example.com:5432/prod");
+        assert!(redacted.contains("***"));
+        assert!(!redacted.contains("p@ssw0rd"));
+    }
+
+    #[test]
+    fn test_redact_db_url_no_password() {
+        let redacted = redact_db_url("postgres://user@localhost:5432/db");
+        assert!(!redacted.contains("***"));
+        assert!(redacted.contains("localhost"));
+    }
+
+    #[test]
+    fn test_redact_db_url_sqlite() {
+        let url = "sqlite:///home/user/.madhyamas/traffic.db";
+        let redacted = redact_db_url(url);
+        assert_eq!(redacted, url);
+    }
+
+    #[test]
+    fn test_resolve_database_url_prefers_direct() {
+        let result =
+            resolve_database_url(&Some("postgres://localhost/db".to_string()), &None).unwrap();
+        assert_eq!(result.as_deref(), Some("postgres://localhost/db"));
+    }
+
+    #[test]
+    fn test_resolve_database_url_from_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_db_url_file.txt");
+        std::fs::write(&path, "postgres://user:pass@localhost/db\n").unwrap();
+        let result = resolve_database_url(&None, &Some(path.display().to_string())).unwrap();
+        assert_eq!(result.as_deref(), Some("postgres://user:pass@localhost/db"));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn test_resolve_database_url_none() {
+        let result = resolve_database_url(&None, &None).unwrap();
+        assert!(result.is_none());
     }
 }
 
@@ -578,6 +904,15 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     config.ensure_directories()?;
     info!("Data directory: ~/.madhyamas/");
 
+    // Phase 9.15: resolve the database URL from --database-url or
+    // --database-url-file. The resolved URL is used for all storage
+    // backends. The connection string is never logged in plaintext —
+    // use `redact_db_url` when logging is needed.
+    let database_url = resolve_database_url(&args.database_url, &args.database_url_file)?;
+    if let Some(ref db_url) = database_url {
+        tracing::info!("Database URL resolved: {}", redact_db_url(db_url));
+    }
+
     // Validate the IP allowlist early so a bad entry fails fast at startup
     // rather than silently rejecting (or accepting) connections.
     if config.access_control_enabled() {
@@ -597,24 +932,123 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         debug!("IP access control disabled (allow all connections)");
     }
 
-    // Initialize certificate manager
-    let cert_manager = CertificateManager::new(&config.cert_path).await?;
+    // Initialize certificate manager. When --ca-cert-file and --ca-key-file
+    // are both provided, the CA is loaded from (or generated and written to)
+    // those files so multiple instances can share the same CA (Phase 6b).
+    let cert_manager = CertificateManager::new_with_ca_files(
+        &config.cert_path,
+        args.ca_cert_file.as_deref(),
+        args.ca_key_file.as_deref(),
+    )
+    .await?;
 
-    // Initialize traffic store
-    let traffic_store = TrafficStore::new(config.db_path.clone())?;
-    traffic_store.set_max_body_size(config.max_body_size);
-    traffic_store.set_max_entries(config.max_requests);
-    if let Some(mb) = config.max_total_size_mb {
-        traffic_store.set_max_total_size_bytes(mb * 1024 * 1024);
-    }
-    traffic_store.set_capture_request_bodies(config.capture_request_bodies);
-    traffic_store.set_capture_response_bodies(config.capture_response_bodies);
-    traffic_store.set_ignored_domains(config.ignored_domains.clone());
+    // Initialize traffic store. When --database-url points to a PostgreSQL
+    // instance, use PostgresTrafficStore; otherwise fall back to the default
+    // SQLite TrafficStore. When --database-read-url is also set, a separate
+    // read replica pool is used for read queries (Phase 10d.2).
+    let traffic_store: Arc<dyn TrafficStoreBackend + Send + Sync> = if let Some(ref db_url) =
+        database_url
+    {
+        if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+            info!("Using PostgreSQL traffic store: {}", redact_db_url(db_url));
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(10)
+                .connect(db_url)
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to connect to PostgreSQL: {e}"))?;
+            // Run schema migrations under a PostgreSQL advisory lock to
+            // prevent concurrent migration races in multi-instance setups.
+            run_pg_migrations(&pool).await?;
 
-    // Initialize intercept rule persistence store (SQLite). Rules are
-    // loaded on startup and saved whenever they change via the API.
-    let intercept_db_path = std::path::Path::new(&config.db_path).with_file_name("intercept.db");
-    let intercept_store = InterceptStore::new(&intercept_db_path)?;
+            // Phase 10d.2: connect to the read replica if configured.
+            let read_pool = if let Some(ref read_url) = args.database_read_url {
+                if read_url.starts_with("postgres://") || read_url.starts_with("postgresql://") {
+                    info!("Using PostgreSQL read replica: {}", redact_db_url(read_url));
+                    Some(
+                        sqlx::postgres::PgPoolOptions::new()
+                            .max_connections(10)
+                            .connect(read_url)
+                            .await
+                            .map_err(|e| {
+                                anyhow::anyhow!("failed to connect to read replica: {e}")
+                            })?,
+                    )
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let store = PostgresTrafficStore::with_read_pool(pool, read_pool).await?;
+            store.set_max_body_size(config.max_body_size);
+            store.set_max_entries(config.max_requests);
+            if let Some(mb) = config.max_total_size_mb {
+                store.set_max_total_size_bytes(mb * 1024 * 1024);
+            }
+            store.set_capture_request_bodies(config.capture_request_bodies);
+            store.set_capture_response_bodies(config.capture_response_bodies);
+            store.set_ignored_domains(config.ignored_domains.clone());
+            store
+        } else {
+            info!(
+                "Using SQLite traffic store (explicit URL): {}",
+                redact_db_url(db_url)
+            );
+            let store = TrafficStore::new(config.db_path.clone()).await?;
+            configure_traffic_store(&store, &config);
+            store
+        }
+    } else {
+        let store = TrafficStore::new(config.db_path.clone()).await?;
+        configure_traffic_store(&store, &config);
+        store
+    };
+
+    // Initialize intercept rule persistence store. When using PostgreSQL,
+    // the intercept store shares the same database; otherwise it uses a
+    // separate SQLite file (intercept.db).
+    let intercept_store: Arc<dyn InterceptStoreBackend + Send + Sync> =
+        if let Some(ref db_url) = database_url {
+            if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+                let pool = sqlx::postgres::PgPoolOptions::new()
+                    .max_connections(5)
+                    .connect(db_url)
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!("failed to connect to PostgreSQL for intercept: {e}")
+                    })?;
+                Arc::new(PostgresInterceptStore::new(pool).await?)
+            } else {
+                let intercept_db_path =
+                    std::path::Path::new(&config.db_path).with_file_name("intercept.db");
+                let intercept_db_url = format!("sqlite://{}", intercept_db_path.display());
+                let intercept_connect_options =
+                    sqlx::sqlite::SqliteConnectOptions::from_str(&intercept_db_url)
+                        .map_err(|e| anyhow::anyhow!("failed to parse intercept db url: {e}"))?
+                        .create_if_missing(true);
+                let intercept_pool = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(5)
+                    .connect_with(intercept_connect_options)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to open intercept db: {e}"))?;
+                Arc::new(SqliteInterceptStore::new(intercept_pool).await?)
+            }
+        } else {
+            let intercept_db_path =
+                std::path::Path::new(&config.db_path).with_file_name("intercept.db");
+            let intercept_db_url = format!("sqlite://{}", intercept_db_path.display());
+            let intercept_connect_options =
+                sqlx::sqlite::SqliteConnectOptions::from_str(&intercept_db_url)
+                    .map_err(|e| anyhow::anyhow!("failed to parse intercept db url: {e}"))?
+                    .create_if_missing(true);
+            let intercept_pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(5)
+                .connect_with(intercept_connect_options)
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to open intercept db: {e}"))?;
+            Arc::new(SqliteInterceptStore::new(intercept_pool).await?)
+        };
 
     info!("Starting proxy engine...");
     let cert_manager_for_api = cert_manager.clone();
@@ -623,35 +1057,35 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     // Each manager loads its persisted rules on construction.
     let mock_manager = Arc::new({
         let m = MockManager::new().with_store(intercept_store.clone());
-        if let Err(e) = m.load() {
+        if let Err(e) = m.load().await {
             tracing::warn!("Failed to load mock rules from store: {}", e);
         }
         m
     });
     let rewrite_manager = Arc::new({
         let m = RewriteManager::new().with_store(intercept_store.clone());
-        if let Err(e) = m.load() {
+        if let Err(e) = m.load().await {
             tracing::warn!("Failed to load rewrite rules from store: {}", e);
         }
         m
     });
     let breakpoint_manager = Arc::new({
         let m = BreakpointManager::new(100).with_store(intercept_store.clone());
-        if let Err(e) = m.load() {
+        if let Err(e) = m.load().await {
             tracing::warn!("Failed to load breakpoint rules from store: {}", e);
         }
         m
     });
     let throttle_manager = Arc::new({
         let m = ThrottleManager::new().with_store(intercept_store.clone());
-        if let Err(e) = m.load() {
+        if let Err(e) = m.load().await {
             tracing::warn!("Failed to load throttle profile from store: {}", e);
         }
         m
     });
     let block_list_manager = Arc::new({
         let m = BlockListManager::new().with_store(intercept_store.clone());
-        if let Err(e) = m.load() {
+        if let Err(e) = m.load().await {
             tracing::warn!("Failed to load block list entries from store: {}", e);
         }
         m
@@ -661,20 +1095,66 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     #[cfg(feature = "scripting")]
     let script_runtime = {
         let runtime = ScriptRuntime::default();
-        // Attach SQLite persistence so scripts and execution history
-        // survive restarts. We open a second connection to the same
-        // database file used by TrafficStore (WAL mode is already
-        // enabled there, so concurrent access is safe). Loaded scripts
-        // are registered with the runtime before it is shared with the
-        // proxy pipeline and API layer.
-        match rusqlite::Connection::open(&config.db_path) {
-            Ok(conn) => {
-                // Match TrafficStore pragmas for safe concurrent access.
-                let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
-                let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
-                let _ = conn.execute_batch("PRAGMA synchronous=NORMAL;");
-                let conn = Arc::new(parking_lot::Mutex::new(conn));
-                if let Err(e) = runtime.with_persistence(conn) {
+        // Attach async script store so scripts and execution history
+        // survive restarts. When using PostgreSQL, the script store shares
+        // the same database; otherwise it uses a SQLite pool to the same
+        // database file used by TrafficStore.
+        let script_store_result: Result<Arc<dyn ScriptStoreBackend + Send + Sync>, anyhow::Error> =
+            if let Some(ref db_url) = database_url {
+                if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+                    let pool = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(5)
+                        .connect(db_url)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("failed to connect to PostgreSQL for scripts: {e}")
+                        })?;
+                    PostgresScriptStore::new(pool)
+                        .await
+                        .map(|s| {
+                            let store: Arc<dyn ScriptStoreBackend + Send + Sync> = Arc::new(s);
+                            store
+                        })
+                        .map_err(|e| anyhow::anyhow!("failed to init script store: {e}"))
+                } else {
+                    let script_db_url = format!("sqlite://{}", config.db_path);
+                    let script_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&script_db_url)
+                        .map(|opts| opts.create_if_missing(true))
+                        .map_err(|e| anyhow::anyhow!("failed to parse script db url: {e}"))?;
+                    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                        .max_connections(5)
+                        .connect_with(script_opts)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("failed to open script db: {e}"))?;
+                    SqliteScriptStore::new(pool)
+                        .await
+                        .map(|s| {
+                            let store: Arc<dyn ScriptStoreBackend + Send + Sync> = Arc::new(s);
+                            store
+                        })
+                        .map_err(|e| anyhow::anyhow!("failed to init script store: {e}"))
+                }
+            } else {
+                let script_db_url = format!("sqlite://{}", config.db_path);
+                let script_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&script_db_url)
+                    .map(|opts| opts.create_if_missing(true))
+                    .map_err(|e| anyhow::anyhow!("failed to parse script db url: {e}"))?;
+                let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(5)
+                    .connect_with(script_opts)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to open script db: {e}"))?;
+                SqliteScriptStore::new(pool)
+                    .await
+                    .map(|s| {
+                        let store: Arc<dyn ScriptStoreBackend + Send + Sync> = Arc::new(s);
+                        store
+                    })
+                    .map_err(|e| anyhow::anyhow!("failed to init script store: {e}"))
+            };
+        match script_store_result {
+            Ok(store) => {
+                if let Err(e) = runtime.with_persistence(store).await {
                     tracing::warn!("Failed to attach script persistence: {}", e);
                 } else {
                     let count = runtime.get_scripts().len();
@@ -682,11 +1162,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                 }
             }
             Err(e) => {
-                tracing::warn!(
-                    "Failed to open script persistence database at {}: {}",
-                    config.db_path,
-                    e
-                );
+                tracing::warn!("Failed to initialize script store: {}", e);
             }
         }
         Arc::new(runtime)
@@ -705,18 +1181,69 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
 
         let mut mgr = PluginManager::new();
 
-        // Attach SQLite persistence (state, settings, invocation logs).
-        match PluginPersistence::open(&plugins_db) {
-            Ok(p) => {
-                info!("Plugin persistence opened at {:?}", plugins_db);
-                mgr = mgr.with_persistence(p);
+        // Attach async plugin store (state, settings, invocation logs).
+        // When using PostgreSQL, the plugin store shares the same database;
+        // otherwise it uses a separate SQLite file (plugins.db).
+        let plugin_store_result: Result<Arc<dyn PluginStoreBackend + Send + Sync>, anyhow::Error> =
+            if let Some(ref db_url) = database_url {
+                if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+                    let pool = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(5)
+                        .connect(db_url)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("failed to connect to PostgreSQL for plugins: {e}")
+                        })?;
+                    PostgresPluginStore::new(pool)
+                        .await
+                        .map(|s| {
+                            let store: Arc<dyn PluginStoreBackend + Send + Sync> = Arc::new(s);
+                            store
+                        })
+                        .map_err(|e| anyhow::anyhow!("failed to init plugin store: {e}"))
+                } else {
+                    let plugins_db_url = format!("sqlite://{}", plugins_db.display());
+                    let plugin_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&plugins_db_url)
+                        .map(|opts| opts.create_if_missing(true))
+                        .map_err(|e| anyhow::anyhow!("failed to parse plugins db url: {e}"))?;
+                    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                        .max_connections(5)
+                        .connect_with(plugin_opts)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("failed to open plugins db: {e}"))?;
+                    SqlitePluginStore::new(pool)
+                        .await
+                        .map(|s| {
+                            let store: Arc<dyn PluginStoreBackend + Send + Sync> = Arc::new(s);
+                            store
+                        })
+                        .map_err(|e| anyhow::anyhow!("failed to init plugin store: {e}"))
+                }
+            } else {
+                let plugins_db_url = format!("sqlite://{}", plugins_db.display());
+                let plugin_opts = sqlx::sqlite::SqliteConnectOptions::from_str(&plugins_db_url)
+                    .map(|opts| opts.create_if_missing(true))
+                    .map_err(|e| anyhow::anyhow!("failed to parse plugins db url: {e}"))?;
+                let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(5)
+                    .connect_with(plugin_opts)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to open plugins db: {e}"))?;
+                SqlitePluginStore::new(pool)
+                    .await
+                    .map(|s| {
+                        let store: Arc<dyn PluginStoreBackend + Send + Sync> = Arc::new(s);
+                        store
+                    })
+                    .map_err(|e| anyhow::anyhow!("failed to init plugin store: {e}"))
+            };
+        match plugin_store_result {
+            Ok(store) => {
+                info!("Plugin persistence opened");
+                mgr = mgr.with_persistence(store);
             }
             Err(e) => {
-                tracing::warn!(
-                    "Failed to open plugin persistence database at {:?}: {}",
-                    plugins_db,
-                    e
-                );
+                tracing::warn!("Failed to initialize plugin store: {}", e);
             }
         }
 
@@ -739,7 +1266,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         }
 
         // Discover and load any plugins already on disk.
-        if let Err(e) = mgr.refresh() {
+        if let Err(e) = mgr.refresh().await {
             tracing::warn!("Initial plugin discovery failed: {}", e);
         }
 
@@ -764,6 +1291,12 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     let metrics_collector = Arc::new(MetricsCollector::new());
     let memory_manager = Arc::new(MemoryManager::new());
     let performance_monitor = Arc::new(PerformanceMonitor::new());
+
+    // Clone the metrics collector for the Phase 6e background cluster metrics
+    // task (runs inside the enterprise block below). The original is moved
+    // into the proxy engine; this clone is captured for periodic Redis updates.
+    #[cfg(feature = "enterprise")]
+    let metrics_collector_for_redis = metrics_collector.clone();
 
     // Create a single shared config that both the proxy engine and the API
     // layer reference. This allows runtime config changes made via the API
@@ -833,13 +1366,478 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     #[cfg(feature = "plugins")]
     let api_state = api_state.with_plugin_manager(plugin_manager);
 
+    // Enterprise tier: construct EnterpriseState, inject the three trait
+    // impls (AuthProvider, Authorizer, AuditSink) into AppState, and build
+    // the enterprise router to merge under /api. This entire block is
+    // compiled out in the OSS build (--no-default-features), so no
+    // enterprise code is linked.
+    #[cfg(feature = "enterprise")]
+    let (api_state, enterprise_router, redis_state_for_shutdown) = {
+        let jwt_secret = args.jwt_secret.clone().unwrap_or_else(|| {
+            tracing::warn!(
+                "No --jwt-secret provided; using default development secret. \
+                 Set --jwt-secret or MADHYAMAS_JWT_SECRET in production."
+            );
+            madhyamas_enterprise::AuthConfig::default().jwt_secret
+        });
+        let auth_config = madhyamas_enterprise::AuthConfig {
+            enabled: args.enable_auth,
+            jwt_secret: jwt_secret.clone(),
+            ..madhyamas_enterprise::AuthConfig::default()
+        };
+        // Phase 3: Ed25519 license verification. If --license-file is
+        // provided, verify it at startup (fail-fast on invalid/expired/
+        // tampered licenses). If no license file is provided, the binary
+        // starts in unlicensed enterprise mode — auth/RBAC/audit still
+        // function; seat-count enforcement and feature gating arrive in
+        // later phases.
+        let license: Option<madhyamas_enterprise::License> =
+            if let Some(ref license_path) = args.license_file {
+                let mut verifier = madhyamas_enterprise::LicenseVerifier::from_env()
+                    .map_err(|e| anyhow::anyhow!("license verifier init failed: {e}"))?;
+                // Phase 9.14: instance ID replay prevention. When
+                // --instance-id is provided, the license's instance_id must
+                // match.
+                if let Some(ref expected_id) = args.instance_id {
+                    tracing::info!(
+                        "License instance ID enforcement enabled (expected: {})",
+                        expected_id
+                    );
+                    verifier = verifier.with_expected_instance_id(expected_id.clone());
+                }
+                let license = verifier
+                    .verify(std::path::Path::new(license_path))
+                    .map_err(|e| {
+                        tracing::error!("License verification failed: {e}");
+                        anyhow::anyhow!("license verification failed: {e}")
+                    })?;
+                tracing::info!(
+                    "License verified: {} (plan={}, seats={}, expires={})",
+                    license.claims.license_id,
+                    license.claims.plan,
+                    license.claims.seats,
+                    license.claims.expires_at
+                );
+                Some(license)
+            } else {
+                tracing::info!(
+                    "No license file provided; running in unlicensed enterprise mode \
+                     (auth/RBAC/audit still functional)"
+                );
+                None
+            };
+        // Construct the persistent enterprise store. When using PostgreSQL,
+        // the enterprise store shares the same database; otherwise it uses
+        // a separate SQLite file (enterprise.db) alongside traffic.db.
+        let store: std::sync::Arc<dyn madhyamas_enterprise::EnterpriseStore> =
+            if let Some(ref db_url) = database_url {
+                if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+                    tracing::info!(
+                        "Enterprise store using PostgreSQL: {}",
+                        redact_db_url(db_url)
+                    );
+                    let pool = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(5)
+                        .connect(db_url)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("failed to connect to PostgreSQL for enterprise: {e}")
+                        })?;
+                    let store = madhyamas_enterprise::PostgresEnterpriseStore::new(pool)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("failed to initialize enterprise store: {e}")
+                        })?;
+                    std::sync::Arc::new(store)
+                } else {
+                    let enterprise_db_path =
+                        std::path::Path::new(&config.db_path).with_file_name("enterprise.db");
+                    let enterprise_db_dir = enterprise_db_path
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| std::path::PathBuf::from("."));
+                    std::fs::create_dir_all(&enterprise_db_dir).ok();
+                    let db_url = format!("sqlite://{}", enterprise_db_path.display());
+                    let connect_options = sqlx::sqlite::SqliteConnectOptions::from_str(&db_url)
+                        .map_err(|e| anyhow::anyhow!("failed to parse enterprise db url: {e}"))?
+                        .create_if_missing(true);
+                    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                        .max_connections(5)
+                        .connect_with(connect_options)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("failed to open enterprise db: {e}"))?;
+                    tracing::info!(
+                        "Enterprise store opened at {}",
+                        enterprise_db_path.display()
+                    );
+                    let store = madhyamas_enterprise::SqliteEnterpriseStore::new(pool)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("failed to initialize enterprise store: {e}")
+                        })?;
+                    std::sync::Arc::new(store)
+                }
+            } else {
+                let enterprise_db_path =
+                    std::path::Path::new(&config.db_path).with_file_name("enterprise.db");
+                let enterprise_db_dir = enterprise_db_path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                std::fs::create_dir_all(&enterprise_db_dir).ok();
+                let db_url = format!("sqlite://{}", enterprise_db_path.display());
+                let connect_options = sqlx::sqlite::SqliteConnectOptions::from_str(&db_url)
+                    .map_err(|e| anyhow::anyhow!("failed to parse enterprise db url: {e}"))?
+                    .create_if_missing(true);
+                let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(5)
+                    .connect_with(connect_options)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to open enterprise db: {e}"))?;
+                tracing::info!(
+                    "Enterprise store opened at {}",
+                    enterprise_db_path.display()
+                );
+                let store = madhyamas_enterprise::SqliteEnterpriseStore::new(pool)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to initialize enterprise store: {e}"))?;
+                std::sync::Arc::new(store)
+            };
+        // Phase 4a.5: bootstrap admin user on first run (empty users table).
+        bootstrap_admin_user(
+            &store,
+            args.admin_username.clone(),
+            args.admin_password.clone(),
+        )
+        .await?;
+        // Phase 6a/6c: Redis cross-instance state coordination. When
+        // --redis-url is provided, connect to Redis and enable pub/sub event
+        // broadcasting + license seat tracking. When omitted, multi-instance
+        // features are disabled (single-instance mode).
+        let instance_id = uuid::Uuid::new_v4().to_string();
+        let redis_state: Option<std::sync::Arc<madhyamas_enterprise::RedisState>> =
+            if let Some(ref redis_url) = args.redis_url {
+                tracing::info!(
+                    "Connecting to Redis for multi-instance state: {}",
+                    redis_url
+                );
+                let state = madhyamas_enterprise::RedisState::new(redis_url, instance_id.clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to connect to Redis: {e}"))?;
+                tracing::info!("Redis connected (instance_id={})", instance_id);
+                Some(std::sync::Arc::new(state))
+            } else {
+                tracing::info!(
+                    "No --redis-url provided; running in single-instance mode \
+                     (multi-instance features disabled)"
+                );
+                None
+            };
+        // Phase 6c: license seat coordination. When both --license-file and
+        // --redis-url are provided, register this instance in Redis and check
+        // the active instance count against the license seat limit.
+        if let (Some(ref rs), Some(ref lic)) = (&redis_state, &license) {
+            let addr = format!("{}:{}", config.host, config.api_port);
+            let license_id = lic.claims.license_id.clone();
+            rs.register_instance(&instance_id, &license_id, &addr)
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to register instance in Redis: {e}"))?;
+            let active = rs
+                .active_instance_count()
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to query active instance count: {e}"))?;
+            let seats = lic.claims.seats as usize;
+            tracing::info!(
+                "License seat check: {active} active instances, license allows {seats} seats"
+            );
+            if active > seats {
+                if let Err(e) = rs.deregister_instance(&instance_id).await {
+                    tracing::warn!("failed to deregister instance: {e}");
+                }
+                return Err(anyhow::anyhow!(
+                    "license seat limit exceeded: {active} active instances, license allows {seats} seats"
+                ));
+            }
+            // Start heartbeat task (every 60s, refresh instance score + TTL).
+            let rs_heartbeat = rs.clone();
+            let hb_id = instance_id.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                interval.tick().await; // skip immediate tick
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = rs_heartbeat.heartbeat(&hb_id).await {
+                        tracing::warn!("Redis heartbeat failed: {e}");
+                    }
+                }
+            });
+            // Phase 6e: start background cluster metrics task (every 30s).
+            // Collects local metrics from the MetricsCollector and updates
+            // the instance's metrics snapshot in Redis so /api/metrics/cluster
+            // can aggregate across all instances.
+            let rs_metrics = rs.clone();
+            let metrics_id = instance_id.clone();
+            let metrics_mc = metrics_collector_for_redis.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                interval.tick().await; // skip immediate tick
+                loop {
+                    interval.tick().await;
+                    let snap = metrics_mc.snapshot();
+                    let instance_metrics = madhyamas_enterprise::InstanceMetrics {
+                        cpu_usage: 0.0, // CPU usage not tracked locally; future work
+                        memory_usage_mb: 0,
+                        active_connections: snap.active_connections,
+                        request_count: snap.request_count,
+                        uptime_secs: snap.uptime_secs,
+                    };
+                    if let Err(e) = rs_metrics
+                        .update_instance_metrics(&metrics_id, &instance_metrics)
+                        .await
+                    {
+                        tracing::warn!("Redis metrics update failed: {e}");
+                    }
+                }
+            });
+        }
+        let enterprise = madhyamas_enterprise::EnterpriseState::new(auth_config)
+            .with_store(store.clone())
+            .with_license(license)
+            .with_redis(redis_state.clone());
+        // Wire the store into AuthManager (for API key validation) and
+        // AuditLogger (for persistent audit events + hash chain).
+        let auth = std::sync::Arc::new(
+            madhyamas_enterprise::AuthManager::new(madhyamas_enterprise::AuthConfig {
+                enabled: args.enable_auth,
+                require_auth: args.enable_auth,
+                jwt_secret: jwt_secret.clone(),
+                ..madhyamas_enterprise::AuthConfig::default()
+            })
+            .with_store(store.clone()),
+        );
+        let audit = std::sync::Arc::new(
+            madhyamas_enterprise::AuditLogger::default().with_store(store.clone()),
+        );
+        // Phase 9.6: attach proxy auth validator when --proxy-auth is
+        // enabled. The proxy engine is already running (started earlier),
+        // but the validator is stored in a OnceLock that hasn't been set
+        // yet — so this takes effect immediately for all subsequent
+        // connections.
+        if args.proxy_auth {
+            tracing::info!("Proxy auth enabled: CONNECT/HTTP requests require credentials");
+            // with_proxy_auth_validator sets a OnceLock on the underlying
+            // ProxyEngine (shared via Arc). The returned Arc is dropped.
+            let _ = proxy_engine.clone().with_proxy_auth_validator(auth.clone());
+        }
+        let api_state = api_state
+            .with_auth_provider(auth.clone())
+            .with_authorizer(enterprise.rbac.clone())
+            .with_audit_sink(audit.clone());
+        // Wire the Redis event publisher into AppState so API handlers can
+        // publish config/intercept change notifications cross-instance.
+        // Also create a separate broadcast channel for cross-instance traffic
+        // events to prevent an infinite event loop (local → Redis → local
+        // broadcast → Redis → …). The Redis→local bridge sends to this
+        // separate channel instead of the traffic store's broadcast.
+        let (cross_instance_tx, _cross_instance_rx_dummy) =
+            tokio::sync::broadcast::channel::<madhyamas_core::TrafficEvent>(256);
+        let api_state = if let Some(ref rs) = redis_state {
+            api_state
+                .with_event_publisher(rs.clone())
+                .with_cross_instance_sender(cross_instance_tx.clone())
+        } else {
+            api_state
+        };
+        // Phase 6a: start Redis pub/sub bridge tasks for cross-instance
+        // WebSocket event broadcasting, config propagation, and intercept
+        // rule sync. These are no-ops when redis_state is None.
+        if let Some(ref rs) = redis_state {
+            // WS event bridge: local broadcast → Redis publish.
+            let rs_pub = rs.clone();
+            let mut local_rx = api_state.traffic_store.subscribe();
+            let pub_instance_id = instance_id.clone();
+            tokio::spawn(async move {
+                loop {
+                    match local_rx.recv().await {
+                        Ok(event) => {
+                            let wrapper = madhyamas_enterprise::RedisTrafficEvent {
+                                instance_id: pub_instance_id.clone(),
+                                event,
+                            };
+                            if let Ok(json) = serde_json::to_string(&wrapper) {
+                                if let Err(e) =
+                                    rs_pub.publish(madhyamas_core::CHANNEL_EVENTS, &json).await
+                                {
+                                    tracing::warn!("Redis event publish failed: {e}");
+                                }
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!("Redis bridge lagged behind by {n} local events");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tracing::debug!("Local event channel closed, stopping Redis bridge");
+                            break;
+                        }
+                    }
+                }
+            });
+            // WS event bridge: Redis subscribe → cross-instance channel.
+            // Events from other instances are sent to the cross_instance_tx
+            // channel (NOT the traffic store's local broadcast) to prevent
+            // an infinite loop: the local→Redis bridge subscribes to the
+            // traffic store's broadcast, so if we re-broadcast Redis events
+            // there, they would be re-published to Redis and bounce forever.
+            // The WebSocket handler subscribes to both the local broadcast
+            // and this cross-instance channel.
+            let rs_sub = rs.clone();
+            let cross_tx = cross_instance_tx.clone();
+            let sub_instance_id = instance_id.clone();
+            tokio::spawn(async move {
+                use futures::StreamExt;
+                loop {
+                    match rs_sub.subscribe(madhyamas_core::CHANNEL_EVENTS).await {
+                        Ok(mut stream) => {
+                            while let Some(msg) = stream.next().await {
+                                if let Ok(payload) = msg.get_payload::<String>() {
+                                    if let Ok(wrapper) =
+                                        serde_json::from_str::<
+                                            madhyamas_enterprise::RedisTrafficEvent,
+                                        >(&payload)
+                                    {
+                                        if wrapper.instance_id == sub_instance_id {
+                                            continue;
+                                        }
+                                        let _ = cross_tx.send(wrapper.event);
+                                    }
+                                }
+                            }
+                            tracing::warn!("Redis events stream ended, reconnecting...");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Redis events subscribe failed: {e}");
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            });
+            // Config change subscriber: on notification, log (reload from
+            // shared store is future work — config is currently local file +
+            // in-memory).
+            let rs_cfg = rs.clone();
+            tokio::spawn(async move {
+                use futures::StreamExt;
+                loop {
+                    match rs_cfg.subscribe(madhyamas_core::CHANNEL_CONFIG_EVENT).await {
+                        Ok(mut stream) => {
+                            while let Some(msg) = stream.next().await {
+                                if let Ok(payload) = msg.get_payload::<String>() {
+                                    tracing::info!(
+                                        "Config change notification from Redis: {payload}"
+                                    );
+                                }
+                            }
+                            tracing::debug!("Redis config stream ended, reconnecting...");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Redis config subscribe failed: {e}");
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            });
+            // Intercept rule change subscriber: on notification, reload all
+            // intercept rules from the shared store so this instance picks up
+            // changes made on other instances.
+            let rs_int = rs.clone();
+            let int_mock = api_state.mock_manager.clone();
+            let int_rewrite = api_state.rewrite_manager.clone();
+            let int_breakpoint = api_state.breakpoint_manager.clone();
+            let int_throttle = api_state.throttle_manager.clone();
+            let int_block_list = api_state.block_list_manager.clone();
+            tokio::spawn(async move {
+                use futures::StreamExt;
+                use madhyamas_core::Persistable;
+                loop {
+                    match rs_int
+                        .subscribe(madhyamas_core::CHANNEL_INTERCEPT_EVENT)
+                        .await
+                    {
+                        Ok(mut stream) => {
+                            while let Some(msg) = stream.next().await {
+                                if let Ok(payload) = msg.get_payload::<String>() {
+                                    tracing::info!(
+                                        "Intercept rule change notification from Redis: {payload}; reloading rules"
+                                    );
+                                    if let Err(e) = int_mock.load().await {
+                                        tracing::warn!("Failed to reload mock rules: {e}");
+                                    }
+                                    if let Err(e) = int_rewrite.load().await {
+                                        tracing::warn!("Failed to reload rewrite rules: {e}");
+                                    }
+                                    if let Err(e) = int_breakpoint.load().await {
+                                        tracing::warn!("Failed to reload breakpoint rules: {e}");
+                                    }
+                                    if let Err(e) = int_throttle.load().await {
+                                        tracing::warn!("Failed to reload throttle profile: {e}");
+                                    }
+                                    if let Err(e) = int_block_list.load().await {
+                                        tracing::warn!("Failed to reload block list: {e}");
+                                    }
+                                }
+                            }
+                            tracing::debug!("Redis intercept stream ended, reconnecting...");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Redis intercept subscribe failed: {e}");
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            });
+            // Periodic session sync: check shared state for current session
+            // changes made by other instances so this instance records new
+            // traffic against the correct session.
+            let sync_store = api_state.traffic_store.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    if let Err(e) = sync_store.sync_current_session().await {
+                        tracing::debug!("Session sync failed: {e}");
+                    }
+                }
+            });
+        }
+        let router = madhyamas_enterprise::create_enterprise_router(
+            store,
+            auth.clone(),
+            audit.clone(),
+            enterprise.license.clone(),
+            redis_state.clone(),
+        );
+        (api_state, Some(router), redis_state)
+    };
+    #[cfg(not(feature = "enterprise"))]
+    let enterprise_router: Option<axum::Router<std::sync::Arc<madhyamas_api::AppState>>> = None;
+    #[cfg(not(feature = "enterprise"))]
+    let _redis_state_for_shutdown: Option<()> = None;
+
     let rate_limit_config = if args.rate_limit {
         RateLimitConfig::enabled(args.rate_limit_rps, args.rate_limit_burst)
     } else {
         RateLimitConfig::disabled()
     };
 
-    let app = create_router(api_state, rate_limit_config);
+    // Capture the WS manager before api_state is moved into create_router
+    // (needed for graceful shutdown — closing all WS connections).
+    let shutdown_ws = api_state.ws_manager.clone();
+
+    let app = create_router(
+        api_state,
+        rate_limit_config,
+        enterprise_router,
+        args.base_path.as_deref().unwrap_or("/"),
+    );
 
     let api_addr = config.api_addr();
     info!("Starting API server on {}", api_addr);
@@ -898,12 +1896,65 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
 
     // Graceful shutdown: wait for SIGINT/SIGTERM, then drain the API server
     // and abort the proxy task so in-flight work is not abandoned abruptly.
+    // In multi-instance mode (Redis enabled), the instance is deregistered
+    // from the Redis seat tracker so the seat is released promptly.
+    // WebSocket connections are closed and audit log is flushed (Phase 6d).
+    #[cfg(feature = "enterprise")]
+    let shutdown_redis = redis_state_for_shutdown.clone();
+    // Phase 10b.1: clone the traffic store so we can flush the write
+    // batcher during graceful shutdown (avoids data loss).
+    let shutdown_traffic_store = traffic_store.clone();
     let shutdown = async move {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            tracing::warn!("signal handler error: {e}");
-            return;
+        // Wait for either SIGINT (ctrl_c) or SIGTERM (Unix signal).
+        let sigint = tokio::signal::ctrl_c();
+        #[cfg(unix)]
+        let sigterm = async {
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(mut s) => {
+                    s.recv().await;
+                }
+                Err(e) => {
+                    tracing::warn!("SIGTERM handler setup error: {e}");
+                }
+            }
+        };
+        #[cfg(not(unix))]
+        let sigterm = std::future::pending::<()>();
+        tokio::select! {
+            res = sigint => {
+                if let Err(e) = res {
+                    tracing::warn!("signal handler error: {e}");
+                    return;
+                }
+            }
+            _ = sigterm => {}
         }
         info!("Shutdown signal received, draining connections...");
+        // Close all WebSocket connections so in-flight proxy WS tunnels are
+        // torn down promptly (Phase 6d).
+        shutdown_ws.close_all_connections();
+        // Phase 6c: deregister this instance from the Redis seat tracker so
+        // the seat is released promptly (no waiting for the 120s TTL).
+        #[cfg(feature = "enterprise")]
+        if let Some(rs) = shutdown_redis {
+            if let Err(e) = rs.deregister_instance(rs.instance_id()).await {
+                tracing::warn!("Failed to deregister instance from Redis: {e}");
+            } else {
+                tracing::info!("Instance deregistered from Redis seat tracker");
+            }
+        }
+        // Flush pending audit log entries (Phase 6d). The audit logger writes
+        // synchronously to the store, so there is no batch to drain — log
+        // confirmation for operational visibility.
+        info!("Audit log flushed");
+        // Phase 10b.1: flush the write batcher so buffered traffic entries
+        // are not lost on shutdown.
+        if let Err(e) = shutdown_traffic_store.flush().await {
+            tracing::warn!("Failed to flush traffic store on shutdown: {e}");
+        } else {
+            info!("Traffic store flushed");
+        }
+        info!("Graceful shutdown complete");
     };
 
     let api_handle = axum::serve(
@@ -1058,6 +2109,143 @@ fn init_logging(
             .expect("failed to create disabled log writer in temp dir");
         LogHandle::new(writer)
     })
+}
+
+/// Apply runtime configuration (size limits, capture flags, ignored
+/// domains) to a [`TrafficStore`]. This is a helper used by the SQLite
+/// code path in [`run_proxy_server`].
+fn configure_traffic_store(store: &TrafficStore, config: &ProxyConfig) {
+    store.set_max_body_size(config.max_body_size);
+    store.set_max_entries(config.max_requests);
+    if let Some(mb) = config.max_total_size_mb {
+        store.set_max_total_size_bytes(mb * 1024 * 1024);
+    }
+    store.set_capture_request_bodies(config.capture_request_bodies);
+    store.set_capture_response_bodies(config.capture_response_bodies);
+    store.set_ignored_domains(config.ignored_domains.clone());
+}
+
+/// Run PostgreSQL schema migrations under a transactional advisory lock.
+///
+/// The advisory lock (`pg_advisory_xact_lock`) prevents concurrent
+/// migration attempts when multiple proxy instances start simultaneously
+/// against the same database. Each store's `new()` constructor also runs
+/// idempotent `CREATE TABLE IF NOT EXISTS` DDL, so this function is a
+/// no-op once tables exist.
+async fn run_pg_migrations(pool: &sqlx::PgPool) -> Result<()> {
+    // Advisory lock key — arbitrary fixed value chosen for Madhyamas.
+    // Using a transactional lock ensures it's released on commit/rollback.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(0x4D414448)")
+        .execute(&mut *tx)
+        .await?;
+    // The individual store constructors run their own DDL, so there's
+    // nothing to do here beyond holding the lock. In the future, sqlx
+    // migrations can be added here.
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Bootstrap a default admin user on first run (empty users table).
+///
+/// Username comes from `--admin-username` / `MADHYAMAS_ADMIN_USERNAME`
+/// (default `admin`). Password comes from `--admin-password` /
+/// `MADHYAMAS_ADMIN_PASSWORD`; if neither is set a random password is
+/// generated and logged once with a warning to change it. The password is
+/// never logged when provided via flag/env.
+#[cfg(feature = "enterprise")]
+async fn bootstrap_admin_user(
+    store: &std::sync::Arc<dyn madhyamas_enterprise::EnterpriseStore>,
+    admin_username: Option<String>,
+    admin_password: Option<String>,
+) -> Result<()> {
+    use madhyamas_enterprise::{hash_password, User, UserRole, UserStatus};
+
+    // Fast path: if users already exist, another instance (or a prior
+    // run) has already bootstrapped. This is an optimization only — the
+    // real race-safety comes from `ON CONFLICT DO NOTHING` in
+    // `create_user` plus the post-insert lookup below.
+    let existing = store
+        .list_users()
+        .await
+        .map_err(|e| anyhow::anyhow!("bootstrap: failed to list users: {e}"))?;
+    if !existing.is_empty() {
+        return Ok(());
+    }
+    let username = admin_username.unwrap_or_else(|| "admin".to_string());
+    let (password, auto_generated) = match admin_password {
+        Some(p) if !p.is_empty() => (p, false),
+        _ => {
+            // Generate a random 24-character password.
+            use rand::Rng;
+            const CHARSET: &[u8] =
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            let mut rng = rand::rng();
+            let password: String = (0..24)
+                .map(|_| {
+                    let idx = rng.random_range(0..CHARSET.len());
+                    CHARSET[idx] as char
+                })
+                .collect();
+            (password, true)
+        }
+    };
+    let password_hash = hash_password(&password)
+        .map_err(|e| anyhow::anyhow!("bootstrap: password hashing failed: {e}"))?;
+    let user = User::new(
+        uuid::Uuid::new_v4().to_string(),
+        username.clone(),
+        Some(format!("{username}@local")),
+        UserRole::Admin,
+        username.clone(),
+        UserStatus::Active,
+    );
+    // Try to create the admin user. If a racing instance already inserted
+    // the same username, `ON CONFLICT (username) DO NOTHING` makes this a
+    // no-op instead of crashing with a unique-constraint violation.
+    store
+        .create_user(&user, &password_hash)
+        .await
+        .map_err(|e| anyhow::anyhow!("bootstrap: failed to create admin user: {e}"))?;
+
+    // Determine whether we actually created the user or whether a racing
+    // instance beat us to it. We look the user up by username and compare
+    // the stored id against the one we just attempted to insert.
+    let stored = store
+        .get_user_by_username(&username)
+        .await
+        .map_err(|e| anyhow::anyhow!("bootstrap: failed to look up admin user: {e}"))?;
+    match stored {
+        Some(u) if u.id == user.id => {
+            // We won the race and created the admin user.
+            if auto_generated {
+                tracing::warn!(
+                    "Bootstrap: created admin user '{}'. \
+                     Auto-generated password (CHANGE IMMEDIATELY): {}",
+                    username,
+                    password
+                );
+            } else {
+                tracing::info!("Bootstrap: created admin user '{}'", username);
+            }
+        }
+        Some(_) => {
+            // Another instance created the admin user first. Don't log
+            // credentials — we don't know them. The user is ready to use.
+            tracing::info!(
+                "Bootstrap: admin user '{}' already exists (created by another instance); skipping",
+                username
+            );
+        }
+        None => {
+            // Should not happen given the INSERT above, but be resilient.
+            tracing::warn!(
+                "Bootstrap: admin user '{}' not found after create attempt; skipping",
+                username
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

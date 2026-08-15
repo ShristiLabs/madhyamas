@@ -177,6 +177,7 @@ echo "=== Code-Sync Checks ==="
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 MCP_TOOLS_DIR="$REPO_ROOT/crates/madhyamas-mcp/src/tools"
 ROUTES_FILE="$REPO_ROOT/crates/madhyamas-api/src/routes.rs"
+ENTERPRISE_ROUTES_FILE="$REPO_ROOT/crates/madhyamas-enterprise/src/router.rs"
 CLI_DIR="$REPO_ROOT/crates/madhyamas-cli/src/commands"
 
 # 10a. MCP tools: code vs doc count
@@ -204,14 +205,20 @@ fi
 # 10b. REST endpoints: code vs doc count
 if [ -f "$ROUTES_FILE" ]; then
     # Extract all quoted path strings from routes.rs (handles multi-line .route() calls)
-    CODE_REST=$(grep -oE '"/[a-zA-Z0-9/{}_.-]+"' "$ROUTES_FILE" | sed 's/"//g' | sort -u | wc -l | tr -d ' ')
+    CODE_REST=$(grep -oE '"/[a-zA-Z0-9/{}_.-]+"' "$ROUTES_FILE" | sed 's/"//g' | sort -u)
+    # Also include enterprise routes (conditionally compiled, in a separate router)
+    if [ -f "$ENTERPRISE_ROUTES_FILE" ]; then
+        ENTERPRISE_REST=$(grep -oE '"/[a-zA-Z0-9/{}_.-]+"' "$ENTERPRISE_ROUTES_FILE" | sed 's/"//g' | sort -u)
+        CODE_REST=$(printf '%s\n%s\n' "$CODE_REST" "$ENTERPRISE_REST" | sort -u)
+    fi
+    CODE_REST_COUNT=$(echo "$CODE_REST" | wc -l | tr -d ' ')
     # Extract the path only from the 2nd column of table rows (| METHOD | `path` | ...)
     DOC_REST_PATHS=$(grep -E '^\| (GET|POST|PUT|DELETE|PATCH) \|' "$SKILL_DIR/references/rest-api.md" \
         | awk -F'|' '{print $3}' | grep -oE '`/[^`]+`' | sed 's/`//g' | sort -u | wc -l | tr -d ' ')
-    if [ "$CODE_REST" -ne "$DOC_REST_PATHS" ]; then
-        error "REST endpoint path mismatch: code has $CODE_REST unique paths, doc has $DOC_REST_PATHS. Run the ai-agent-tooling sync workflow."
+    if [ "$CODE_REST_COUNT" -ne "$DOC_REST_PATHS" ]; then
+        error "REST endpoint path mismatch: code has $CODE_REST_COUNT unique paths, doc has $DOC_REST_PATHS. Run the ai-agent-tooling sync workflow."
     else
-        ok "REST endpoint paths match code ($CODE_REST paths)"
+        ok "REST endpoint paths match code ($CODE_REST_COUNT paths)"
     fi
 else
     warning "Routes file not found at $ROUTES_FILE (skipping code-sync)"

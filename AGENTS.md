@@ -117,10 +117,14 @@ how to *use* Madhyamas as a debugging proxy. They do not overlap.
 ./startup.sh           # Build and start with Docker Compose
 ./stop.sh              # Stop containers
 
-# Local development (runs directly on host)
-./startup-local.sh     # Build and run locally
-./startup-local.sh --clean  # Clean rebuild
-./stop-local.sh        # Stop local instance
+# Local development
+./startup-local.sh                    # Enterprise: Docker multi-instance stack
+                                      # (PostgreSQL + Redis + 2x Madhyamas + nginx LB)
+./startup-local.sh --tier oss         # OSS: local binary (SQLite, single instance)
+./startup-local.sh --clean            # Clean rebuild (current tier)
+./stop-local.sh                       # Stop all instances (local + Docker)
+./stop-local.sh --tier oss            # Stop OSS local binary only
+./stop-local.sh --tier enterprise     # Stop enterprise Docker stack + local binary
 
 # Manual commands
 cargo build --release -p madhyamas   # Build unified binary
@@ -179,7 +183,24 @@ Each feature has a dedicated doc page. Read the relevant one before working on t
 | Persistence layer | [docs/PERSISTENCE.md](docs/PERSISTENCE.md) | SQLite schema, traffic/intercept/config stores, session model |
 | Web frontend | [docs/WEB_FRONTEND.md](docs/WEB_FRONTEND.md) | React architecture, TanStack Query, WebSocket client, build/embed flow |
 | Performance | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Memory tracking, metrics collector, alerting, connection pool |
-| Enterprise | [docs/ENTERPRISE.md](docs/ENTERPRISE.md) | Auth (JWT + API keys), RBAC, audit logging, user management |
+| Enterprise (current internals) | [docs/ENTERPRISE.md](docs/ENTERPRISE.md) | Auth (JWT + API keys), RBAC, audit logging (PostgreSQL hash chain), user management |
+| Enterprise crate guide | [docs/ENTERPRISE_CRATE_GUIDE.md](docs/ENTERPRISE_CRATE_GUIDE.md) | Enterprise crate structure, public API, key types, extension points, Mermaid diagrams |
+| Enterprise API integration | [docs/ENTERPRISE_API_INTEGRATION.md](docs/ENTERPRISE_API_INTEGRATION.md) | AuthProvider/Authorizer/AuditSink traits, AppState injection, router merging, middleware, Mermaid sequence diagrams |
+| Enterprise startup flow | [docs/ENTERPRISE_STARTUP_FLOW.md](docs/ENTERPRISE_STARTUP_FLOW.md) | 17-step initialization sequence, CLI flags, error handling, graceful shutdown, Mermaid flowchart + sequence diagrams |
+| Storage backend guide | [docs/STORAGE_BACKEND_GUIDE.md](docs/STORAGE_BACKEND_GUIDE.md) | Storage trait reference, implementation checklist for new backends, schema design, testing, migration, Mermaid ER diagrams |
+| Enterprise testing | [docs/ENTERPRISE_TESTING.md](docs/ENTERPRISE_TESTING.md) | Enterprise testing guide: unit, integration, multi-instance, Playwright E2E, CI/CD, Mermaid diagrams |
+| Enterprise analysis (overview) | [docs/ENTERPRISE_OVERVIEW.md](docs/ENTERPRISE_OVERVIEW.md) | Two-tier model, crate architecture, database strategy, licensing overview, roadmap (historical — written pre-implementation) |
+| Enterprise licensing server | [docs/ENTERPRISE_LICENSING_SERVER.md](docs/ENTERPRISE_LICENSING_SERVER.md) | SaaS licensing: accounts, Stripe payments, license issuance/revocation, support tickets, admin dashboard |
+| Enterprise storage traits | [docs/ENTERPRISE_STORAGE_TRAITS.md](docs/ENTERPRISE_STORAGE_TRAITS.md) | Shared async storage traits, rusqlite → sqlx migration, SQLite + PostgreSQL backends |
+| Enterprise auth/RBAC/IdP | [docs/ENTERPRISE_AUTH_RBAC.md](docs/ENTERPRISE_AUTH_RBAC.md) | Authentication modes, RBAC model, OIDC/header/LDAP/SAML integration |
+| Enterprise web UI | [docs/ENTERPRISE_WEB_UI.md](docs/ENTERPRISE_WEB_UI.md) | Same-folder runtime-gated approach, tier detection, auth UI, admin panels, build/embedding |
+| Enterprise CI/CD | [docs/ENTERPRISE_CICD.md](docs/ENTERPRISE_CICD.md) | Two-tier CI matrix, release workflow, Docker build-args, licensing server pipeline, secrets |
+| Enterprise multi-instance | [docs/ENTERPRISE_MULTI_INSTANCE.md](docs/ENTERPRISE_MULTI_INSTANCE.md) | LB routing (context path/subdomain), PostgreSQL+Redis state sync, atomic config propagation, shared CA, license seat tracking, K8s manifests |
+| Enterprise perf & security | [docs/ENTERPRISE_PERF_SECURITY.md](docs/ENTERPRISE_PERF_SECURITY.md) | Threat model, 16 security gaps, 10 perf bottlenecks, 16 database optimizations (tiered body storage, write batching, GIN/BRIN/trigram indexes, partitioning, cursor pagination, PgBouncer, read replicas), checklists |
+| OSS vs Enterprise comparison | [docs/ENTERPRISE_OSS_COMPARISON.md](docs/ENTERPRISE_OSS_COMPARISON.md) | Side-by-side comparison: architecture, feature parity matrix (42 shared + 17 enterprise-only), build/distribution, database, deployment, security, performance, web UI, CLI/MCP, pricing, upgrade path, FAQ |
+| Enterprise AI agent integration | [docs/ENTERPRISE_AI_AGENTS.md](docs/ENTERPRISE_AI_AGENTS.md) | Gap analysis (MCP/CLI/API auth broken for enterprise), MCP server changes (auth config, HTTP transport, enterprise tools, dynamic resources, prompts, annotations), API key middleware, RBAC scopes, multi-instance agent access, agent workflows, security, implementation plan |
+| Enterprise crate migration | [docs/ENTERPRISE_CRATE_MIGRATION.md](docs/ENTERPRISE_CRATE_MIGRATION.md) | Detailed migration analysis for extracting madhyamas-enterprise crate: inventory of all enterprise code (859 lines in core, 742 in api), all 17 #[cfg] gates, dependency analysis, cross-crate reference map, trait abstractions (AuthProvider/Authorizer/AuditSink), AppState changes, 6-phase migration plan, risk assessment |
+| Enterprise implementation plan | [docs/ENTERPRISE_IMPLEMENTATION_PLAN.md](docs/ENTERPRISE_IMPLEMENTATION_PLAN.md) | Comprehensive implementation plan synthesizing all 12 analysis docs: 13 phases (0-12), dependency graph, critical path, per-phase steps with files and exit criteria, milestone summary (M1-M7), Gantt chart, effort estimates (194 dev-days / ~6mo with 2 devs), risk register (10 risks), verification checklist |
 
 ### Intercept Pipeline Priority Order
 

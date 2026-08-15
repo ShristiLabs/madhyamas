@@ -331,7 +331,8 @@ pub async fn get_traffic_script_traces(
 ) -> impl IntoResponse {
     let traces = state
         .script_runtime
-        .get_executions_for_traffic_entry(&id, 200);
+        .get_executions_for_traffic_entry(&id, 200)
+        .await;
 
     // Enrich each trace with the script name (if the script still exists).
     #[derive(serde::Serialize)]
@@ -453,7 +454,8 @@ pub async fn get_script_history(
         Some(_) => {
             let history = state
                 .script_runtime
-                .get_script_history(&id, query.limit.unwrap_or(50));
+                .get_script_history(&id, query.limit.unwrap_or(50))
+                .await;
             Json(history).into_response()
         }
         None => (
@@ -469,7 +471,7 @@ pub async fn get_scripts_history(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ScriptHistoryQuery>,
 ) -> impl IntoResponse {
-    let history = state.script_runtime.get_history(query.limit);
+    let history = state.script_runtime.get_history(query.limit).await;
 
     // Enrich each execution with the script name (if the script still
     // exists) so the UI can display a human-readable label instead of
@@ -659,7 +661,7 @@ pub async fn enable_plugin(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.plugin_manager.enable_plugin(&id) {
+    match state.plugin_manager.enable_plugin(&id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (
             StatusCode::NOT_FOUND,
@@ -674,7 +676,7 @@ pub async fn disable_plugin(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.plugin_manager.disable_plugin(&id) {
+    match state.plugin_manager.disable_plugin(&id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (
             StatusCode::NOT_FOUND,
@@ -701,7 +703,7 @@ pub async fn get_plugin_stats(
 
 /// Reload all plugins
 pub async fn reload_plugins(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.plugin_manager.reload_all() {
+    match state.plugin_manager.reload_all().await {
         Ok(count) => (
             StatusCode::OK,
             Json(serde_json::json!({ "reloaded": count })),
@@ -801,7 +803,7 @@ pub async fn uninstall_plugin(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.plugin_manager.uninstall_plugin(&id) {
+    match state.plugin_manager.uninstall_plugin(&id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -832,7 +834,7 @@ pub async fn update_plugin_settings(
     Path(id): Path<String>,
     Json(settings): Json<HashMap<String, serde_json::Value>>,
 ) -> impl IntoResponse {
-    if state.plugin_manager.update_settings(&id, settings) {
+    if state.plugin_manager.update_settings(&id, settings).await {
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -883,7 +885,7 @@ pub async fn get_plugin_logs(
         .get("limit")
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(50);
-    let logs = state.plugin_manager.get_invocations(&id, limit);
+    let logs = state.plugin_manager.get_invocations(&id, limit).await;
     Json(logs).into_response()
 }
 

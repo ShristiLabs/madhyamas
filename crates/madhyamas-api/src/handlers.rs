@@ -5,7 +5,9 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use madhyamas_core::{AccessControlList, ProxyConfig, TrafficFilter, WsFilter};
+use madhyamas_core::{
+    AccessControlList, PaginatedTraffic, ProxyConfig, TrafficCursor, TrafficFilter, WsFilter,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -28,6 +30,13 @@ pub struct TrafficQuery {
     pub is_passthrough: Option<String>,
     /// Filter by host pattern (substring match)
     pub host: Option<String>,
+    /// Phase 10b.3: cursor for cursor-based pagination. When provided,
+    /// OFFSET is ignored and keyset pagination is used. The response
+    /// format changes to `PaginatedTraffic` (with `next_cursor`).
+    pub cursor: Option<String>,
+    /// Phase 10b.4: when "false", omit body columns from the response
+    /// to reduce payload size. Defaults to "true" (include bodies).
+    pub include_bodies: Option<String>,
 }
 
 /// Get all traffic entries
@@ -47,6 +56,12 @@ pub async fn get_traffic(
         })
         .unwrap_or((None, None));
 
+    let include_bodies = query
+        .include_bodies
+        .as_deref()
+        .map(|s| !s.eq_ignore_ascii_case("false"))
+        .unwrap_or(true);
+
     let filter = TrafficFilter {
         url_pattern: query.url,
         method: query.method.and_then(|m| m.parse().ok()),
@@ -64,10 +79,26 @@ pub async fn get_traffic(
             _ => None,
         }),
         host: query.host,
+        cursor: query.cursor,
+        include_bodies: Some(include_bodies),
     };
 
-    match state.traffic_store.get_traffic(&filter) {
-        Ok(entries) => Json(entries).into_response(),
+    match state.traffic_store.get_traffic(&filter).await {
+        Ok(entries) => {
+            // Phase 10b.3: when cursor pagination is used, return
+            // PaginatedTraffic with next_cursor. Otherwise, return a
+            // plain array for backward compatibility.
+            if filter.cursor.is_some() {
+                let next_cursor = entries.last().map(TrafficCursor::from_entry);
+                let paginated = PaginatedTraffic {
+                    entries,
+                    next_cursor,
+                };
+                Json(paginated).into_response()
+            } else {
+                Json(entries).into_response()
+            }
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -100,7 +131,7 @@ pub async fn get_traffic_entry(
         .map(|s| s.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
-    match state.traffic_store.get_by_id(&id) {
+    match state.traffic_store.get_by_id(&id).await {
         Ok(Some(mut entry)) => {
             if decompress {
                 if let Some(response) = entry.response.as_mut() {
@@ -149,7 +180,7 @@ pub async fn get_traffic_entry(
 
 /// Clear all traffic for current session
 pub async fn clear_traffic(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.traffic_store.clear_traffic() {
+    match state.traffic_store.clear_traffic().await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -163,7 +194,7 @@ pub async fn clear_traffic(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
 /// Get traffic count
 pub async fn get_traffic_count(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.traffic_store.count() {
+    match state.traffic_store.count().await {
         Ok(count) => Json(serde_json::json!({ "count": count })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -172,6 +203,21 @@ pub async fn get_traffic_count(State(state): State<Arc<AppState>>) -> impl IntoR
             }),
         )
             .into_response(),
+    }
+}
+
+/// Health check handler for `/api/health`. Verifies database connectivity
+/// via `TrafficStoreBackend::ping` so the instance is not reported healthy
+/// before schema initialization completes. Returns `200 "OK"` when the
+/// database is ready, `503 "Database not ready"` otherwise. Unauthenticated
+/// — intended for Docker/nginx health probes.
+pub async fn health_check(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.traffic_store.ping().await {
+        Ok(()) => (StatusCode::OK, "OK").into_response(),
+        Err(e) => {
+            tracing::error!("Health check failed: database not ready: {e}");
+            (StatusCode::SERVICE_UNAVAILABLE, "Database not ready").into_response()
+        }
     }
 }
 
@@ -210,7 +256,11 @@ pub async fn create_session(
     if let Err(e) = super::validation::validate(&req) {
         return e.into_response();
     }
-    match state.traffic_store.create_session(req.name.as_deref()) {
+    match state
+        .traffic_store
+        .create_session(req.name.as_deref())
+        .await
+    {
         Ok(session) => Json(session).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -227,7 +277,7 @@ pub async fn get_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.session_manager.get_session(&id) {
+    match state.session_manager.get_session(&id).await {
         Ok(Some(session)) => Json(session).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
@@ -251,7 +301,7 @@ pub async fn delete_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.session_manager.delete_session(&id) {
+    match state.session_manager.delete_session(&id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -267,7 +317,7 @@ pub async fn delete_session(
 pub async fn export_har(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let session_id = state.traffic_store.current_session_id();
 
-    match state.traffic_store.export_har(&session_id) {
+    match state.traffic_store.export_har(&session_id).await {
         Ok(har) => Json(har).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -312,10 +362,11 @@ pub async fn import_traffic_har(
     match state
         .traffic_store
         .import_har(&req.har, req.session_name.as_deref())
+        .await
     {
         Ok(result) => {
             if req.switch_session {
-                let _ = state.traffic_store.switch_session(&result.session_id);
+                let _ = state.traffic_store.switch_session(&result.session_id).await;
             }
             Json(result).into_response()
         }
@@ -334,7 +385,7 @@ pub async fn export_curl(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.traffic_store.get_by_id(&id) {
+    match state.traffic_store.get_by_id(&id).await {
         Ok(Some(entry)) => {
             let curl = generate_curl(&entry.request);
             Json(serde_json::json!({ "curl": curl })).into_response()
@@ -461,7 +512,7 @@ pub async fn toggle_capture(State(state): State<Arc<AppState>>) -> impl IntoResp
 
 /// Get recording quota statistics (entry count, total size, limits, usage).
 pub async fn get_capture_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.traffic_store.get_capture_stats() {
+    match state.traffic_store.get_capture_stats().await {
         Ok(stats) => Json(stats).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -889,6 +940,14 @@ pub async fn patch_config(
         tracing::warn!("Failed to persist config to disk: {}", e);
     }
 
+    // Notify other instances (multi-instance mode) that config changed so
+    // they can reload from the shared store. No-op in single-instance mode.
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_CONFIG_EVENT,
+        "config-changed",
+    );
+
     (StatusCode::OK, Json(resp)).into_response()
 }
 
@@ -1112,12 +1171,83 @@ pub async fn trigger_autosave_snapshot(State(state): State<Arc<AppState>>) -> im
     }
 }
 
-/// WebSocket handler
+/// Query parameters for the WebSocket upgrade endpoint. Browsers cannot
+/// set custom headers on a WebSocket handshake, so the JWT is passed via
+/// the `?token=` query parameter (or the `Sec-WebSocket-Protocol`
+/// subprotocol header). See Phase 9.1.
+#[derive(Debug, Deserialize)]
+pub struct WsAuthQuery {
+    pub token: Option<String>,
+}
+
+/// WebSocket handler (Phase 9.1: auth on upgrade).
+///
+/// In enterprise mode with auth enabled (`AppState::auth_provider` is
+/// `Some`), the WebSocket upgrade is rejected with `401 Unauthorized`
+/// unless a valid JWT is supplied. Browsers cannot set custom headers on
+/// the WS handshake, so the token is accepted from:
+/// 1. `?token=` query parameter, or
+/// 2. `Sec-WebSocket-Protocol` subprotocol header (the first protocol
+///    value is treated as the token).
+///
+/// In OSS mode (or when auth is disabled — `auth_provider` is `None`),
+/// all connections are allowed (unchanged behavior).
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws(socket, state.traffic_store.clone()))
+    Query(query): Query<WsAuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    // If an auth provider is configured, validate the token before
+    // allowing the upgrade. This runs inside the handler (not as
+    // middleware) because the WebSocketUpgrade extractor must consume
+    // the connection — the enterprise auth middleware cannot reject it
+    // before the extractor runs.
+    if let Some(ref auth_provider) = state.auth_provider {
+        if auth_provider.auth_required() {
+            // Extract the token: query param first, then subprotocol header.
+            let token = query.token.or_else(|| {
+                headers
+                    .get("sec-websocket-protocol")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.split(',').next())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+
+            let token = match token {
+                Some(t) => t,
+                None => {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(serde_json::json!({
+                            "error": "unauthorized",
+                            "message": "WebSocket authentication required: provide ?token= or Sec-WebSocket-Protocol header"
+                        })),
+                    )
+                        .into_response();
+                }
+            };
+
+            if let Err(err) = auth_provider.validate_token(&token).await {
+                tracing::debug!("WebSocket auth rejected: {err}");
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({
+                        "error": "unauthorized",
+                        "message": err.to_string(),
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    ws.on_upgrade(move |socket| {
+        let cross_rx = state.cross_instance_sender.as_ref().map(|s| s.subscribe());
+        handle_ws(socket, state.traffic_store.clone(), cross_rx)
+    })
+    .into_response()
 }
 
 /// Get CA certificate for HTTPS interception
@@ -1168,7 +1298,7 @@ pub async fn export_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.session_manager.export_session(&id) {
+    match state.session_manager.export_session(&id).await {
         Ok(export) => Json(export).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1185,7 +1315,7 @@ pub async fn switch_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.traffic_store.switch_session(&id) {
+    match state.traffic_store.switch_session(&id).await {
         Ok(()) => Json(serde_json::json!({ "success": true })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1202,7 +1332,7 @@ pub async fn import_session(
     State(state): State<Arc<AppState>>,
     Json(export): Json<madhyamas_core::SessionExport>,
 ) -> impl IntoResponse {
-    match state.session_manager.import_session(export) {
+    match state.session_manager.import_session(export).await {
         Ok(session) => Json(session).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1293,7 +1423,7 @@ pub async fn clear_ws_traffic(State(state): State<Arc<AppState>>) -> impl IntoRe
 /// Export all rules
 pub async fn export_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match &state.intercept_store {
-        Some(store) => match store.export_all() {
+        Some(store) => match store.export_all().await {
             Ok(json) => Json(serde_json::json!({ "data": json })).into_response(),
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1328,7 +1458,7 @@ pub async fn import_all_rules(
         return e.into_response();
     }
     match &state.intercept_store {
-        Some(store) => match store.import_all(&req.data) {
+        Some(store) => match store.import_all(&req.data).await {
             Ok(()) => Json(serde_json::json!({ "success": true })).into_response(),
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1370,7 +1500,7 @@ pub async fn save_all_rules(
         Some(store) => {
             // Save mock rules
             for rule in state.mock_manager.get_rules() {
-                if let Err(e) = store.save_mock_rule(&rule) {
+                if let Err(e) = store.save_mock_rule(&rule).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
@@ -1383,7 +1513,7 @@ pub async fn save_all_rules(
 
             // Save rewrite rules
             for rule in state.rewrite_manager.get_rules() {
-                if let Err(e) = store.save_rewrite_rule(&rule) {
+                if let Err(e) = store.save_rewrite_rule(&rule).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
@@ -1396,7 +1526,7 @@ pub async fn save_all_rules(
 
             // Save breakpoint rules
             for rule in state.breakpoint_manager.get_rules() {
-                if let Err(e) = store.save_breakpoint_rule(&rule) {
+                if let Err(e) = store.save_breakpoint_rule(&rule).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
@@ -1410,8 +1540,9 @@ pub async fn save_all_rules(
             // Save throttle profile
             {
                 let profile = state.throttle_manager.get_profile();
-                if let Err(e) =
-                    store.save_throttle_profile(&profile, state.throttle_manager.is_enabled())
+                if let Err(e) = store
+                    .save_throttle_profile(&profile, state.throttle_manager.is_enabled())
+                    .await
                 {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -1425,7 +1556,7 @@ pub async fn save_all_rules(
 
             // Save block list entries
             for entry in state.block_list_manager.get_entries() {
-                if let Err(e) = store.save_block_list_entry(&entry) {
+                if let Err(e) = store.save_block_list_entry(&entry).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
@@ -1453,7 +1584,7 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
     match &state.intercept_store {
         Some(store) => {
             // Load mock rules
-            match store.load_mock_rules() {
+            match store.load_mock_rules().await {
                 Ok(rules) => {
                     state.mock_manager.clear();
                     state.mock_manager.import_rules(rules);
@@ -1470,11 +1601,11 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
             }
 
             // Load rewrite rules
-            match store.load_rewrite_rules() {
+            match store.load_rewrite_rules().await {
                 Ok(rules) => {
                     state.rewrite_manager.clear();
                     for rule in rules {
-                        state.rewrite_manager.add_rule(rule);
+                        state.rewrite_manager.add_rule(rule).await;
                     }
                 }
                 Err(e) => {
@@ -1489,11 +1620,11 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
             }
 
             // Load breakpoint rules
-            match store.load_breakpoint_rules() {
+            match store.load_breakpoint_rules().await {
                 Ok(rules) => {
                     state.breakpoint_manager.clear();
                     for rule in rules {
-                        state.breakpoint_manager.add_rule(rule);
+                        state.breakpoint_manager.add_rule(rule).await;
                     }
                 }
                 Err(e) => {
@@ -1508,10 +1639,10 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
             }
 
             // Load throttle profile
-            match store.load_throttle_profile() {
+            match store.load_throttle_profile().await {
                 Ok(Some((profile, enabled))) => {
-                    state.throttle_manager.set_profile(profile);
-                    state.throttle_manager.set_enabled(enabled);
+                    state.throttle_manager.set_profile(profile).await;
+                    state.throttle_manager.set_enabled(enabled).await;
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -1526,11 +1657,11 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
             }
 
             // Load block list entries
-            match store.load_block_list_entries() {
+            match store.load_block_list_entries().await {
                 Ok(entries) => {
-                    state.block_list_manager.clear();
+                    state.block_list_manager.clear().await;
                     for entry in entries {
-                        state.block_list_manager.add_entry(entry);
+                        state.block_list_manager.add_entry(entry).await;
                     }
                 }
                 Err(e) => {
@@ -1562,7 +1693,7 @@ pub async fn load_all_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
 
 /// Get all focus host patterns
 pub async fn get_focus_hosts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.traffic_store.list_focus_hosts() {
+    match state.traffic_store.list_focus_hosts().await {
         Ok(hosts) => Json(hosts).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1589,7 +1720,7 @@ pub async fn add_focus_host(
     if let Err(e) = super::validation::validate(&req) {
         return e.into_response();
     }
-    match state.traffic_store.add_focus_host(&req.pattern) {
+    match state.traffic_store.add_focus_host(&req.pattern).await {
         Ok(host) => (StatusCode::CREATED, Json(host)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1606,7 +1737,7 @@ pub async fn remove_focus_host(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.traffic_store.remove_focus_host(&id) {
+    match state.traffic_store.remove_focus_host(&id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => (
             StatusCode::NOT_FOUND,
@@ -1627,7 +1758,7 @@ pub async fn remove_focus_host(
 
 /// Clear all focus hosts
 pub async fn clear_focus_hosts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.traffic_store.clear_focus_hosts() {
+    match state.traffic_store.clear_focus_hosts().await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

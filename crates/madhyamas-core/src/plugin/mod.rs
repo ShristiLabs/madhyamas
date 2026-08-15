@@ -55,7 +55,7 @@ pub use hooks::{PluginContext, PluginHook, PluginRequest, PluginResponse, Plugin
 pub use hot_reload::HotReloader;
 pub use installer::{InstallResult, InstallSource, PluginInstaller};
 pub use manager::PluginManager;
-pub use persistence::{PluginInvocationRow, PluginPersistence, PluginStateRow};
+pub use persistence::{PluginInvocationRow, PluginStateRow};
 pub use registry::PluginRegistry;
 pub use signing::{
     bytes_to_hex, generate_keypair, hex_to_bytes, sign_package, verify_package, PluginKeypair,

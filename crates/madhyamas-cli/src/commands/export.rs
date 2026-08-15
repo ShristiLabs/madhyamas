@@ -27,8 +27,8 @@ pub enum ExportCommands {
 }
 
 impl ExportCommands {
-    pub async fn execute(&self, api_url: String) -> Result<()> {
-        let client = ApiClient::new(api_url);
+    pub async fn execute(&self, api_url: String, auth: super::CliAuth) -> Result<()> {
+        let client = ApiClient::new(api_url, auth.clone());
 
         match self {
             ExportCommands::Har(args) => {

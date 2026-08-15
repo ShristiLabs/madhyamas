@@ -1,0 +1,42 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: madhyamas
+  namespace: madhyamas
+  labels:
+    app.kubernetes.io/name: madhyamas
+    app.kubernetes.io/part-of: madhyamas
+  annotations:
+    # WebSocket upgrade support
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+    # Sticky sessions for WebSocket connection persistence
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "madhyamas-route"
+    nginx.ingress.kubernetes.io/session-cookie-hash: "sha1"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: madhyamas.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: madhyamas
+                port:
+                  name: api
+    # Context-path routing example (uncomment for /madhyamas/ deployment):
+    # - host: apps.example.com
+    #   http:
+    #     paths:
+    #       - path: /madhyamas
+    #         pathType: Prefix
+    #         backend:
+    #           service:
+    #             name: madhyamas
+    #             port:
+    #               name: api

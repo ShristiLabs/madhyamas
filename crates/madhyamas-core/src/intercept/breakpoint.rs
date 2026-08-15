@@ -2,7 +2,7 @@
 
 use super::regex_cache;
 use super::{InterceptDirection, MatchCondition, Modification};
-use crate::persistence::InterceptStore;
+use crate::storage::InterceptStoreBackend;
 use crate::traffic::{RequestData, ResponseData};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -98,7 +98,7 @@ pub struct BreakpointManager {
     /// Maximum number of paused items
     max_paused: usize,
     /// Optional SQLite persistence backend
-    store: Option<Arc<InterceptStore>>,
+    store: Option<Arc<dyn InterceptStoreBackend + Send + Sync>>,
 }
 
 impl BreakpointManager {
@@ -112,16 +112,16 @@ impl BreakpointManager {
     }
 
     /// Attach a SQLite persistence backend.
-    pub fn with_store(mut self, store: Arc<InterceptStore>) -> Self {
+    pub fn with_store(mut self, store: Arc<dyn InterceptStoreBackend + Send + Sync>) -> Self {
         self.store = Some(store);
         self
     }
 
     /// Add a breakpoint rule
-    pub fn add_rule(&self, rule: BreakpointRule) -> String {
+    pub async fn add_rule(&self, rule: BreakpointRule) -> String {
         let id = rule.id.clone();
         if let Some(store) = &self.store {
-            if let Err(e) = store.save_breakpoint_rule(&rule) {
+            if let Err(e) = store.save_breakpoint_rule(&rule).await {
                 tracing::warn!("Failed to persist breakpoint rule: {}", e);
             }
         }
@@ -130,19 +130,24 @@ impl BreakpointManager {
     }
 
     /// Remove a breakpoint rule
-    pub fn remove_rule(&self, id: &str) -> bool {
-        let mut rules = self.rules.write();
-        if let Some(pos) = rules.iter().position(|r| r.id == id) {
-            rules.remove(pos);
+    pub async fn remove_rule(&self, id: &str) -> bool {
+        let removed = {
+            let mut rules = self.rules.write();
+            if let Some(pos) = rules.iter().position(|r| r.id == id) {
+                rules.remove(pos);
+                true
+            } else {
+                false
+            }
+        };
+        if removed {
             if let Some(store) = &self.store {
-                if let Err(e) = store.delete_breakpoint_rule(id) {
+                if let Err(e) = store.delete_breakpoint_rule(id).await {
                     tracing::warn!("Failed to delete breakpoint rule from store: {}", e);
                 }
             }
-            true
-        } else {
-            false
         }
+        removed
     }
 
     /// Update a rule
@@ -415,28 +420,29 @@ impl BreakpointManager {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::persistence::Persistable for BreakpointManager {
-    fn save(&self) -> crate::Result<()> {
+    async fn save(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            let rules = self.rules.read();
-            for rule in rules.iter() {
-                store.save_breakpoint_rule(rule)?;
+            let rules = self.rules.read().clone();
+            for rule in &rules {
+                store.save_breakpoint_rule(rule).await?;
             }
         }
         Ok(())
     }
 
-    fn load(&self) -> crate::Result<()> {
+    async fn load(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            let loaded = store.load_breakpoint_rules()?;
+            let loaded = store.load_breakpoint_rules().await?;
             *self.rules.write() = loaded;
         }
         Ok(())
     }
 
-    fn clear(&self) -> crate::Result<()> {
+    async fn clear(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            store.clear_breakpoint_rules()?;
+            store.clear_breakpoint_rules().await?;
         }
         self.rules.write().clear();
         Ok(())

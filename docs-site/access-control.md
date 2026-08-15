@@ -156,4 +156,4 @@ One of your entries is malformed. Common mistakes:
 - [Configuration](./configuration) — the `--allowed-ip` flag and `MADHYAMAS_ALLOWED_IPS` env var
 - [Mobile Setup](./mobile-setup) — binding to `0.0.0.0` for mobile devices
 - [Security Overview](./security) — network exposure and the overall security model
-- [Enterprise](./enterprise) — auth and RBAC for user-level access control
+- [Enterprise](./enterprise/) — auth and RBAC for user-level access control

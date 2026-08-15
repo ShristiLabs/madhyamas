@@ -1,7 +1,7 @@
 //! Traffic storage and management
 
 mod events;
-mod store;
+pub(crate) mod store;
 mod types;
 
 pub use events::{
@@ -10,6 +10,6 @@ pub use events::{
 };
 pub use store::TrafficStore;
 pub use types::{
-    host_matches_pattern, CaptureStats, FocusHost, HttpMethod, ImportResult, RequestData,
-    ResponseData, Session, TrafficEntry, TrafficFilter,
+    host_matches_pattern, CaptureStats, FocusHost, HttpMethod, ImportResult, PaginatedTraffic,
+    RequestData, ResponseData, Session, TrafficCursor, TrafficEntry, TrafficFilter,
 };

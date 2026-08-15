@@ -175,3 +175,4 @@ Once connected, try these prompts in your AI agent:
 - [Scripting](./scripting) — programmatic traffic handling inside the proxy
 - [Plugins](./plugins) — extend the proxy with WebAssembly
 - [Troubleshooting](./troubleshooting) — MCP connection and tool-discovery fixes
+- [Enterprise CLI & MCP Tools](./enterprise/cli-mcp) — enterprise MCP tools (users, audit, license, metrics, config)

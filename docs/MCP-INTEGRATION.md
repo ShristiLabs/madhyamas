@@ -8,7 +8,7 @@ The Model Context Protocol (MCP) is a standard that allows AI assistants to inte
 
 ## Available MCP Tools
 
-The Madhyamas MCP server provides 67 tools covering traffic inspection, mocking, breakpoints, rewrites, throttling, replay, sessions, gRPC, scripting, and plugins. Key tools include:
+The Madhyamas MCP server provides 67 tools covering traffic inspection, mocking, breakpoints, rewrites, throttling, replay, sessions, gRPC, scripting, and plugins. In enterprise mode, 11 additional tools are registered for user management, audit, license, metrics, and config operations. Key tools include:
 
 | Tool | Description |
 |------|-------------|
@@ -386,5 +386,83 @@ skills/madhyamas/
 ├── scripts/                    # build.sh, install.sh, validate.sh, pre-commit.sh
 └── assets/                     # MCP config templates for each harness
 ```
+
+## Enterprise MCP Tools
+
+When the MCP server connects to an enterprise backend (detected via
+`GET /api/health/detailed` returning `tier: "enterprise"`), 11 additional
+tools are registered. These tools require authentication via API key or JWT.
+
+### Authentication
+
+Configure the MCP server with enterprise credentials:
+
+```json
+{
+  "mcpServers": {
+    "madhyamas": {
+      "command": "madhyamas",
+      "args": ["mcp"],
+      "env": {
+        "MADHYAMAS_API_URL": "http://localhost:3001",
+        "MADHYAMAS_API_KEY": "mad_abc123..."
+      }
+    }
+  }
+}
+```
+
+Alternatively, use a JWT token via `MADHYAMAS_TOKEN`.
+
+### Tool Registration Flow
+
+```mermaid
+flowchart TD
+    START["MCP server starts"] --> HEALTH["GET /api/health/detailed"]
+    HEALTH --> TIER{"tier ==<br/>'enterprise'?"}
+    TIER -->|No| OSS["Register 67 OSS tools"]
+    TIER -->|Yes| AUTH{"Auth configured?<br/>(API key or JWT)"}
+    AUTH -->|No| WARN["Log warning<br/>Register 67 OSS tools only"]
+    AUTH -->|Yes| ENT["Register 67 OSS + 11 enterprise tools"]
+```
+
+### Enterprise Tool Reference
+
+Source: `crates/madhyamas-mcp/src/tools/enterprise.rs`
+
+| Tool | Annotation | Permission | Description |
+|------|------------|------------|-------------|
+| `madhyamas_list_users` | `read_only` | `users:read` | List all registered users |
+| `madhyamas_create_user` | — | `users:write` | Create a new user (username, email, password, role) |
+| `madhyamas_delete_user` | `destructive` | `users:write` | Delete a user by ID |
+| `madhyamas_update_user_role` | `idempotent` | `users:write` | Update a user's role |
+| `madhyamas_get_audit_events` | `read_only` | `audit:read` | Query audit events with filters |
+| `madhyamas_export_audit` | `read_only` | `audit:export` | Export all audit events as JSON |
+| `madhyamas_get_license_info` | `read_only` | — | Get license status and seat usage |
+| `madhyamas_get_metrics` | `read_only` | — | Get performance metrics |
+| `madhyamas_get_health` | `read_only` | — | Get detailed health status |
+| `madhyamas_export_config` | `read_only` | `config:read` | Export full configuration as JSON |
+| `madhyamas_import_config` | `idempotent` | `config:write` | Import configuration from JSON |
+
+### Tool Annotations
+
+Each enterprise tool includes annotations for agent safety:
+
+| Annotation | Meaning | Tools |
+|------------|---------|-------|
+| `read_only` | No side effects; safe to call freely | list_users, get_audit_events, export_audit, get_license_info, get_metrics, get_health, export_config |
+| `destructive` | Permanently deletes data; confirm before calling | delete_user |
+| `idempotent` | Repeated calls produce the same result | update_user_role, import_config |
+| `required_permission` | RBAC permission required | All tools except health/license/metrics |
+
+### RBAC Enforcement
+
+Enterprise MCP tools are subject to the same RBAC as interactive users. The
+API key or JWT determines what the agent can do. Create API keys with only
+the scopes the agent needs (principle of least privilege).
+
+See [ENTERPRISE_API_INTEGRATION.md](ENTERPRISE_API_INTEGRATION.md) for the
+trait abstractions and [API_ENTERPRISE.md](API_ENTERPRISE.md) for the
+endpoint reference.
 
 See [skills/README.md](../skills/README.md) for complete documentation.

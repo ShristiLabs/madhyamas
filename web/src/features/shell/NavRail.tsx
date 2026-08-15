@@ -11,6 +11,12 @@ import {
   FolderTree,
   Shield,
   HardDriveDownload,
+  Users,
+  ScrollText,
+  BarChart3,
+  KeyRound,
+  Key,
+  Server,
   type LucideIcon,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -37,6 +43,12 @@ const ICONS: Record<string, LucideIcon> = {
   FolderTree,
   Shield,
   HardDriveDownload,
+  Users,
+  ScrollText,
+  BarChart3,
+  KeyRound,
+  Key,
+  Server,
 }
 
 interface NavRailProps {

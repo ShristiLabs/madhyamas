@@ -53,7 +53,12 @@ pub async fn create_breakpoint_rule(
         rule.priority = priority;
     }
 
-    let id = state.breakpoint_manager.add_rule(rule);
+    let id = state.breakpoint_manager.add_rule(rule).await;
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "breakpoint-created",
+    );
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -80,7 +85,12 @@ pub async fn delete_breakpoint_rule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if state.breakpoint_manager.remove_rule(&id) {
+    if state.breakpoint_manager.remove_rule(&id).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "breakpoint-deleted",
+        );
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -178,7 +188,12 @@ pub async fn create_mock_rule(
         rule.priority = priority;
     }
 
-    let id = state.mock_manager.add_rule(rule);
+    let id = state.mock_manager.add_rule(rule).await;
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "mock-created",
+    );
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -217,6 +232,11 @@ pub async fn update_mock_rule(
         return super::error::ApiError::bad_request(e.to_string()).into_response();
     }
     if state.mock_manager.update_rule(&id, rule) {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "mock-updated",
+        );
         StatusCode::OK.into_response()
     } else {
         (
@@ -234,7 +254,12 @@ pub async fn delete_mock_rule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if state.mock_manager.remove_rule(&id) {
+    if state.mock_manager.remove_rule(&id).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "mock-deleted",
+        );
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -259,6 +284,11 @@ pub async fn toggle_mock_rule(
     Json(req): Json<ToggleRequest>,
 ) -> impl IntoResponse {
     if state.mock_manager.toggle_rule(&id, req.enabled) {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "mock-toggled",
+        );
         StatusCode::OK.into_response()
     } else {
         (
@@ -329,7 +359,7 @@ pub async fn create_mock_from_traffic(
     let enabled = req.enabled.unwrap_or(true);
 
     for entry_id in &req.entry_ids {
-        match state.traffic_store.get_by_id(entry_id) {
+        match state.traffic_store.get_by_id(entry_id).await {
             Ok(Some(entry)) => {
                 let request = &entry.request;
                 let response = match &entry.response {
@@ -355,14 +385,17 @@ pub async fn create_mock_from_traffic(
                 let mock_response = MockResponse {
                     status_code: response.status_code,
                     headers: response.headers.clone(),
-                    body: response.body.as_ref().and_then(|b| String::from_utf8(b.clone()).ok()),
+                    body: response
+                        .body
+                        .as_ref()
+                        .and_then(|b| String::from_utf8(b.clone()).ok()),
                     ..Default::default()
                 };
 
                 let mut rule = MockRule::new(name, condition, mock_response);
                 rule.enabled = enabled;
 
-                let id = state.mock_manager.add_rule(rule);
+                let id = state.mock_manager.add_rule(rule).await;
                 created_ids.push(id);
             }
             Ok(None) => {
@@ -932,7 +965,7 @@ pub async fn create_advanced_mock_rule(
         rule.collection_id = Some(collection_id);
     }
 
-    let id = state.mock_manager.add_rule(rule);
+    let id = state.mock_manager.add_rule(rule).await;
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -974,7 +1007,12 @@ pub async fn create_rewrite_rule(
         rule.priority = priority;
     }
 
-    let id = state.rewrite_manager.add_rule(rule);
+    let id = state.rewrite_manager.add_rule(rule).await;
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "rewrite-created",
+    );
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -1022,7 +1060,12 @@ pub async fn update_rewrite_rule(
     rule.enabled = req.enabled.unwrap_or(existing.enabled);
     rule.priority = req.priority.unwrap_or(existing.priority);
 
-    if state.rewrite_manager.update_rule(&id, rule) {
+    if state.rewrite_manager.update_rule(&id, rule).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "rewrite-updated",
+        );
         StatusCode::OK.into_response()
     } else {
         (
@@ -1057,7 +1100,12 @@ pub async fn delete_rewrite_rule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if state.rewrite_manager.remove_rule(&id) {
+    if state.rewrite_manager.remove_rule(&id).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "rewrite-deleted",
+        );
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -1194,10 +1242,15 @@ pub async fn set_throttle_profile(
     if let Err(e) = super::validation::validate(&req) {
         return e.into_response();
     }
-    state.throttle_manager.set_profile(req.profile);
+    state.throttle_manager.set_profile(req.profile).await;
     if let Some(enabled) = req.enabled {
-        state.throttle_manager.set_enabled(enabled);
+        state.throttle_manager.set_enabled(enabled).await;
     }
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "throttle-updated",
+    );
     StatusCode::OK.into_response()
 }
 
@@ -1206,7 +1259,12 @@ pub async fn set_throttle_enabled(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ToggleRequest>,
 ) -> impl IntoResponse {
-    state.throttle_manager.set_enabled(req.enabled);
+    state.throttle_manager.set_enabled(req.enabled).await;
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "throttle-toggled",
+    );
     StatusCode::OK
 }
 
@@ -1281,13 +1339,12 @@ pub async fn batch_save_requests_from_traffic(
     let mut errors: Vec<serde_json::Value> = Vec::new();
 
     for entry_id in &req.entry_ids {
-        match state.traffic_store.get_by_id(entry_id) {
+        match state.traffic_store.get_by_id(entry_id).await {
             Ok(Some(entry)) => {
                 let name = match &req.name_prefix {
-                    Some(prefix) => format!(
-                        "{}: {} {}",
-                        prefix, entry.request.method, entry.request.url
-                    ),
+                    Some(prefix) => {
+                        format!("{}: {} {}", prefix, entry.request.method, entry.request.url)
+                    }
                     None => format!("{} {}", entry.request.method, entry.request.url),
                 };
                 let saved = SavedRequest::from_traffic(entry_id, entry.request.clone());
@@ -1463,7 +1520,12 @@ pub async fn create_block_list_entry(
         entry.content_type = content_type;
     }
 
-    let id = state.block_list_manager.add_entry(entry);
+    let id = state.block_list_manager.add_entry(entry).await;
+    super::pubsub::notify(
+        &state.event_publisher,
+        madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+        "blocklist-created",
+    );
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 
@@ -1493,7 +1555,12 @@ pub async fn update_block_list_entry(
     if entry.pattern.trim().is_empty() {
         return super::error::ApiError::bad_request("pattern cannot be empty").into_response();
     }
-    if state.block_list_manager.update_entry(&id, entry) {
+    if state.block_list_manager.update_entry(&id, entry).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "blocklist-updated",
+        );
         StatusCode::OK.into_response()
     } else {
         (
@@ -1511,7 +1578,12 @@ pub async fn delete_block_list_entry(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if state.block_list_manager.remove_entry(&id) {
+    if state.block_list_manager.remove_entry(&id).await {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "blocklist-deleted",
+        );
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -1530,7 +1602,16 @@ pub async fn toggle_block_list_entry(
     Path(id): Path<String>,
     Json(req): Json<ToggleRequest>,
 ) -> impl IntoResponse {
-    if state.block_list_manager.toggle_entry(&id, req.enabled) {
+    if state
+        .block_list_manager
+        .toggle_entry(&id, req.enabled)
+        .await
+    {
+        super::pubsub::notify(
+            &state.event_publisher,
+            madhyamas_core::CHANNEL_INTERCEPT_EVENT,
+            "blocklist-toggled",
+        );
         StatusCode::OK.into_response()
     } else {
         (

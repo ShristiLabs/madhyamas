@@ -8,20 +8,19 @@ repository.workspace = true
 authors.workspace = true
 
 [features]
-default = ["grpc", "scripting", "plugins", "enterprise", "embedded-assets"]
+default = ["grpc", "scripting", "plugins", "embedded-assets"]
 ## gRPC API routes and handlers
 grpc = ["madhyamas-core/grpc"]
 ## Scripting API routes and handlers
 scripting = ["madhyamas-core/scripting"]
 ## Plugin API routes and handlers
 plugins = ["madhyamas-core/plugins"]
-## Enterprise API routes and handlers (auth, RBAC, audit, onboarding)
-enterprise = ["madhyamas-core/enterprise"]
 ## Embed web UI assets at compile time (requires web/dist to exist)
 embedded-assets = ["dep:rust-embed"]
 
 [dependencies]
 madhyamas-core.workspace = true
+async-trait.workspace = true
 tokio.workspace = true
 axum.workspace = true
 axum-extra.workspace = true

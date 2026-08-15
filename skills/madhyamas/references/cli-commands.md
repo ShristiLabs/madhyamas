@@ -1536,3 +1536,156 @@ Clear all WebSocket traffic (messages and closed connections).
 ```bash
 madhyamas wstraffic clear
 ```
+
+## users — User Management (Enterprise)
+
+### users list
+
+List all registered users (enterprise tier).
+
+```bash
+madhyamas users list [OPTIONS]
+
+Options:
+      --json    Output as JSON
+```
+
+### users create
+
+Create a new user account (enterprise tier).
+
+```bash
+madhyamas users create [OPTIONS]
+
+Options:
+      --username <USERNAME>    Username for the new user
+      --email <EMAIL>          Email address
+      --password <PASSWORD>    Initial password
+      --role <ROLE>            User role (admin, user, viewer)
+      --json                   Output as JSON
+```
+
+Example: `madhyamas users create --username alice --email alice@example.com --password secret --role user`
+
+### users delete
+
+Delete a user by ID (enterprise tier).
+
+```bash
+madhyamas users delete [OPTIONS]
+
+Options:
+      --id <ID>    User ID to delete
+```
+
+### users update-role
+
+Update a user's role (enterprise tier).
+
+```bash
+madhyamas users update-role [OPTIONS]
+
+Options:
+      --id <ID>        User ID to update
+      --role <ROLE>    New role (admin, user, viewer)
+      --json           Output as JSON
+```
+
+## audit — Audit Logging (Enterprise)
+
+### audit list
+
+List audit events with optional filters (enterprise tier).
+
+```bash
+madhyamas audit list [OPTIONS]
+
+Options:
+      --user-id <USER_ID>       Filter by user ID
+      --event-type <TYPE>       Filter by event type
+      --limit <LIMIT>           Max results [default: 100]
+      --json                    Output as JSON
+```
+
+### audit export
+
+Export all audit events as JSON (enterprise tier).
+
+```bash
+madhyamas audit export
+```
+
+### audit stats
+
+Show audit statistics (enterprise tier).
+
+```bash
+madhyamas audit stats
+```
+
+## license — License Management (Enterprise)
+
+### license info
+
+Show license information (enterprise tier).
+
+```bash
+madhyamas license info
+```
+
+## auth — Authentication (Enterprise)
+
+### auth login
+
+Login and obtain a JWT token (enterprise tier).
+
+```bash
+madhyamas auth login [OPTIONS]
+
+Options:
+      --username <USERNAME>    Username
+      --password <PASSWORD>    Password
+```
+
+Example: `madhyamas auth login --username admin --password mypass`
+
+### auth logout
+
+Logout and invalidate the current session (enterprise tier).
+
+```bash
+madhyamas auth logout
+```
+
+### auth api-keys list
+
+List all API keys (enterprise tier).
+
+```bash
+madhyamas auth api-keys list
+```
+
+### auth api-keys create
+
+Create a new API key (enterprise tier).
+
+```bash
+madhyamas auth api-keys create [OPTIONS]
+
+Options:
+      --name <NAME>      Name for the API key
+      --scopes <SCOPES>  Comma-separated scopes [default: *:*]
+```
+
+Example: `madhyamas auth api-keys create --name my-key --scopes "*:*"`
+
+### auth api-keys revoke
+
+Revoke an API key by ID (enterprise tier).
+
+```bash
+madhyamas auth api-keys revoke [OPTIONS]
+
+Options:
+      --id <ID>    API key ID to revoke
+```

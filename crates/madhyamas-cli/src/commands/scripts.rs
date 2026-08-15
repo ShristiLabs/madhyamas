@@ -152,8 +152,8 @@ pub enum ScriptCommands {
 }
 
 impl ScriptCommands {
-    pub async fn execute(&self, api_url: String) -> Result<()> {
-        let client = ApiClient::new(api_url);
+    pub async fn execute(&self, api_url: String, auth: super::CliAuth) -> Result<()> {
+        let client = ApiClient::new(api_url, auth.clone());
 
         match self {
             ScriptCommands::List => {

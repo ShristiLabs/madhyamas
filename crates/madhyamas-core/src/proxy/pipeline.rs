@@ -30,7 +30,8 @@ use crate::performance::{MemoryManager, MemoryPressure, MetricsCollector};
 use crate::plugin::{PluginContext, PluginHook, PluginManager};
 #[cfg(feature = "scripting")]
 use crate::scripting::{ScriptContext, ScriptHook, ScriptRuntime};
-use crate::traffic::{RequestData, ResponseData, TrafficEntry, TrafficStore};
+use crate::storage::TrafficStoreBackend;
+use crate::traffic::{RequestData, ResponseData, TrafficEntry};
 use crate::Error;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -61,7 +62,7 @@ pub struct Pipeline<'a> {
     config: ProxyConfig,
     /// Shared, pooled HTTP client for upstream forwarding.
     http_client: reqwest::Client,
-    traffic_store: &'a TrafficStore,
+    traffic_store: &'a (dyn TrafficStoreBackend + Send + Sync),
     traffic_tx: &'a broadcast::Sender<TrafficEntry>,
     mock_manager: Option<&'a Arc<MockManager>>,
     rewrite_manager: Option<&'a Arc<RewriteManager>>,
@@ -88,7 +89,7 @@ impl<'a> Pipeline<'a> {
     pub fn new(
         config: ProxyConfig,
         http_client: reqwest::Client,
-        traffic_store: &'a TrafficStore,
+        traffic_store: &'a (dyn TrafficStoreBackend + Send + Sync),
         traffic_tx: &'a broadcast::Sender<TrafficEntry>,
         mock_manager: Option<&'a Arc<MockManager>>,
         rewrite_manager: Option<&'a Arc<RewriteManager>>,
@@ -239,8 +240,10 @@ impl<'a> Pipeline<'a> {
             entry.id = id.to_string();
         }
         entry.script_intercepted = script_intercepted;
-        self.traffic_store.store_request(&entry)?;
-        self.traffic_store.store_response(&entry.id, response)?;
+        self.traffic_store.store_request(&entry).await?;
+        self.traffic_store
+            .store_response(&entry.id, response)
+            .await?;
         let _ = self.traffic_tx.send(entry);
 
         let response_bytes = self.build_response_bytes(response);
@@ -516,7 +519,7 @@ impl<'a> Pipeline<'a> {
         entry.id = request_id.clone();
         entry.script_intercepted = script_intercepted;
         if should_capture {
-            self.traffic_store.store_request(&entry)?;
+            self.traffic_store.store_request(&entry).await?;
             // Broadcast to WebSocket clients
             let _ = self.traffic_tx.send(entry.clone());
         }
@@ -609,7 +612,9 @@ impl<'a> Pipeline<'a> {
 
                 // Store the response (if not excluded)
                 if should_capture {
-                    self.traffic_store.store_response(&entry.id, &response)?;
+                    self.traffic_store
+                        .store_response(&entry.id, &response)
+                        .await?;
                 }
 
                 // Record as mock if recording is enabled
@@ -683,7 +688,8 @@ impl<'a> Pipeline<'a> {
                         http_version: request_data.http_version.clone(),
                     };
                     self.traffic_store
-                        .store_response(&entry.id, &error_response)?;
+                        .store_response(&entry.id, &error_response)
+                        .await?;
                 }
             }
         }

@@ -3,10 +3,12 @@ resolver = "2"
 members = [
     "crates/madhyamas-core",
     "crates/madhyamas-api",
+    "crates/madhyamas-enterprise",
     "crates/madhyamas",
     "crates/madhyamas-cli",
     "crates/madhyamas-mcp",
     "crates/madhyamas-plugin-sdk",
+    "licensing-server",
 ]
 
 [workspace.package]
@@ -55,7 +57,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Storage
-rusqlite = { version = "0.31", features = ["bundled"] }
+sqlx = { version = "0.8.1", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "postgres", "macros", "chrono", "uuid", "migrate"] }
 
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
@@ -106,6 +108,27 @@ sysinfo = "0.30"
 boa_engine = "0.20"
 # SHA-256 for the script `crypto.hash` API
 sha2 = "0.10"
+
+# Ed25519 signature verification for enterprise license files (Phase 3).
+# Pinned to 2.x to match the version already used for plugin signing in
+# madhyamas-core; the licensing server must sign with the same crate line.
+ed25519-dalek = { version = "2", default-features = false, features = [
+    "std",
+    "rand_core",
+] }
+
+# Argon2id password hashing for enterprise user management (Phase 4a).
+# `password-hash` is the companion PHC-string crate; argon2 0.5 re-exports it
+# under `argon2::password_hash`, but declaring it explicitly keeps the dep
+# graph stable and lets the credentials module import it directly.
+argon2 = "0.5"
+password-hash = "0.5"
+
+# Redis client for enterprise multi-instance state synchronization (Phase 6a).
+# `tokio-comp` enables the async (tokio) runtime; `tokio-rustls-comp` enables
+# TLS support for `rediss://` URLs. Auth (`redis://:password@host:port`) is
+# handled natively by the URL parser — no extra feature needed.
+redis = { version = "1.4", features = ["tokio-comp", "tokio-rustls-comp"] }
 
 # Internal crates
 madhyamas-core = { path = "crates/madhyamas-core", version = "0.1.6" }

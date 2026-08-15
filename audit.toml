@@ -11,4 +11,16 @@ ignore = [
     "RUSTSEC-2025-0134", # rustls-pemfile is unmaintained
     "RUSTSEC-2026-0190", # anyhow unsoundness in Error::downcast_mut (not used)
     "RUSTSEC-2026-0097", # rand unsound with custom logger (not used)
+    # rsa: Marvin Attack timing side-channel. No fix available upstream.
+    # rsa is a transitive dep (via rcgen for CA key generation). The timing
+    # side-channel is not exploitable in our usage (we generate keys locally,
+    # not in response to attacker-controlled input).
+    "RUSTSEC-2023-0071",
+    # rustls-webpki 0.101.x: CRL parsing panic + name constraint issues.
+    # This is pulled in by an old rustls 0.21 transitively. Upgrading rustls
+    # is a breaking change tracked separately. The vulnerable code paths
+    # (CRL parsing, name constraints) are not exercised by Madhyamas.
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
 ]

@@ -334,7 +334,7 @@ curl -X PATCH http://localhost:3001/api/config \
 
 ## Enterprise Endpoints (feature-gated)
 
-These endpoints are conditionally enabled and may require JWT authentication. Several are stubs returning `NOT_IMPLEMENTED`; see [Enterprise](./enterprise) for the feature matrix.
+These endpoints are conditionally enabled and may require JWT authentication. Several are stubs returning `NOT_IMPLEMENTED`; see [Enterprise](./enterprise/) for the feature matrix.
 
 ### Performance and Monitoring
 
@@ -395,4 +395,5 @@ These endpoints are conditionally enabled and may require JWT authentication. Se
 - [CLI reference](./cli) — a friendlier wrapper over the same API
 - [MCP & AI Agents](./mcp) — LLM access to the API via MCP tools
 - [Configuration](./configuration) — the runtime config fields accepted by `PATCH /api/config`
-- [Enterprise](./enterprise) — auth, RBAC, audit, and user management
+- [Enterprise Overview](./enterprise/) — auth, RBAC, audit, licensing, and multi-instance deployment
+- [Enterprise CLI & MCP Tools](./enterprise/cli-mcp) — enterprise commands and MCP tools

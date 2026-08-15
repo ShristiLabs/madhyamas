@@ -1138,6 +1138,119 @@ The MCP server also exposes read-only resources:
 | `madhyamas://traffic` | All captured traffic |
 | `madhyamas://sessions` | All debugging sessions |
 | `madhyamas://config` | Proxy configuration |
+| `madhyamas://session/{id}` | Details of a specific session |
+| `madhyamas://traffic/{id}` | Details of a specific traffic entry |
+| `madhyamas://mock/{id}` | Details of a specific mock rule |
+
+## MCP Prompts
+
+The MCP server exposes debugging prompts that inject API context:
+
+| Prompt | Description | Arguments |
+|--------|-------------|-----------|
+| `debug-4xx` | Analyze recent 4xx responses and suggest fixes | None |
+| `debug-5xx` | Analyze recent 5xx responses and identify root causes | None |
+| `find-auth-issues` | Check for authentication-related issues in recent traffic | None |
+| `mock-missing-endpoint` | Create a mock for a missing endpoint found in 404 responses | None |
+| `compare-staging-prod` | Compare traffic between two sessions | `session1`, `session2` (required) |
+| `audit-trail` | Show audit trail for a specific user or time period | `user_id` (optional) |
+
+## Enterprise Tools (11 tools)
+
+These tools are registered when the MCP server detects an enterprise-tier API server (via `/api/health/detailed`). Against an OSS server they are not registered.
+
+### madhyamas_list_users
+
+List all registered users (enterprise tier). Requires admin permission. No parameters.
+
+Example: `madhyamas_list_users()`
+
+### madhyamas_create_user
+
+Create a new user account (enterprise tier). Requires admin permission.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `username` | string | Yes | Username for the new user |
+| `email` | string | Yes | Email address |
+| `password` | string | Yes | Initial password |
+| `role` | string | Yes | User role. Enum: `admin`, `user`, `viewer` |
+
+Example: `madhyamas_create_user(username="alice", email="alice@example.com", password="secret", role="user")`
+
+### madhyamas_delete_user
+
+Delete a user account by ID (enterprise tier). Requires admin permission.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | Yes | The ID of the user to delete |
+
+Example: `madhyamas_delete_user(id="abc123")`
+
+### madhyamas_update_user_role
+
+Update a user's role by ID (enterprise tier). Requires admin permission.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | Yes | The ID of the user to update |
+| `role` | string | Yes | New role. Enum: `admin`, `user`, `viewer` |
+
+Example: `madhyamas_update_user_role(id="abc123", role="admin")`
+
+### madhyamas_get_audit_events
+
+Query audit events with optional filters (enterprise tier).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `user_id` | string | No | Filter by user ID |
+| `event_type` | string | No | Filter by event type |
+| `limit` | integer | No | Maximum results (default: 100) |
+| `offset` | integer | No | Pagination offset |
+
+Example: `madhyamas_get_audit_events(user_id="abc123", limit=50)`
+
+### madhyamas_export_audit
+
+Export all audit events (enterprise tier). Returns a JSON document. No parameters.
+
+Example: `madhyamas_export_audit()`
+
+### madhyamas_get_license_info
+
+Get the current license status and details (enterprise tier). No parameters.
+
+Example: `madhyamas_get_license_info()`
+
+### madhyamas_get_metrics
+
+Get current performance and operational metrics (enterprise tier). No parameters.
+
+Example: `madhyamas_get_metrics()`
+
+### madhyamas_get_health
+
+Get detailed health status including tier, license, and dependency checks. No parameters.
+
+Example: `madhyamas_get_health()`
+
+### madhyamas_export_config
+
+Export the full Madhyamas configuration as JSON (enterprise tier). No parameters.
+
+Example: `madhyamas_export_config()`
+
+### madhyamas_import_config
+
+Import a configuration JSON document (enterprise tier).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `config_json` | object | Yes | The configuration JSON to import |
+
+Example: `madhyamas_import_config(config_json={"version":"0.1.6","settings":{}})`
 
 ## Environment Variables
 

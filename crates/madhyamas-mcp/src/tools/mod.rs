@@ -35,6 +35,7 @@ mod blocklist;
 mod breakpoints;
 mod certificate;
 mod config;
+mod enterprise;
 mod focus;
 mod grpc;
 mod helpers;
@@ -112,6 +113,13 @@ pub use traffic::{
 };
 pub use ws_traffic::{
     ClearWsTrafficTool, GetWsConnectionTool, GetWsMessagesTool, ListWsConnectionsTool,
+};
+
+// Re-export enterprise tool structs.
+pub use enterprise::{
+    CreateUserTool, DeleteUserTool, ExportAuditTool, ExportConfigTool, GetAuditEventsTool,
+    GetHealthTool, GetLicenseInfoTool, GetMetricsTool, ImportConfigTool, ListUsersTool,
+    UpdateUserRoleTool,
 };
 
 /// Sanitize an ID for safe inclusion in a URL path segment.
@@ -323,5 +331,14 @@ pub fn default_registry() -> DynToolRegistry {
     reg.register(Box::new(UpdateAutoSaveConfigTool));
     reg.register(Box::new(TriggerAutoSaveSnapshotTool));
 
+    reg
+}
+
+/// Build a [`DynToolRegistry`] containing only the enterprise-specific
+/// tools. Call this when the connected API server reports an enterprise
+/// tier, then merge the result into the default registry.
+pub fn enterprise_registry() -> DynToolRegistry {
+    let mut reg = DynToolRegistry::new();
+    enterprise::register_enterprise_tools(&mut reg);
     reg
 }

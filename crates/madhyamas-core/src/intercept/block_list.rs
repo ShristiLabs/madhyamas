@@ -23,12 +23,12 @@
 //!
 //! # Persistence
 //!
-//! When an [`InterceptStore`] is attached via [`BlockListManager::with_store`],
+//! When an [`InterceptStoreBackend`] is attached via [`BlockListManager::with_store`],
 //! entries are saved to / loaded from the `block_list_entries` SQLite table,
 //! surviving proxy restarts.
 
 use super::handler::{InterceptAction, InterceptHandler};
-use crate::persistence::InterceptStore;
+use crate::storage::InterceptStoreBackend;
 use crate::traffic::{RequestData, ResponseData};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -239,7 +239,7 @@ mod regex_syntax {
 /// upstream servers or other intercept handlers.
 pub struct BlockListManager {
     entries: RwLock<Vec<BlockListEntry>>,
-    store: Option<Arc<InterceptStore>>,
+    store: Option<Arc<dyn InterceptStoreBackend + Send + Sync>>,
 }
 
 impl Default for BlockListManager {
@@ -259,7 +259,7 @@ impl BlockListManager {
 
     /// Attach a SQLite persistence backend. When set, [`Persistable::save`]
     /// and [`Persistable::load`] read/write entries through this store.
-    pub fn with_store(mut self, store: Arc<InterceptStore>) -> Self {
+    pub fn with_store(mut self, store: Arc<dyn InterceptStoreBackend + Send + Sync>) -> Self {
         self.store = Some(store);
         self
     }
@@ -267,10 +267,10 @@ impl BlockListManager {
     // ── CRUD ───────────────────────────────────────────────────────
 
     /// Add a block list entry. Returns the entry's ID.
-    pub fn add_entry(&self, entry: BlockListEntry) -> String {
+    pub async fn add_entry(&self, entry: BlockListEntry) -> String {
         let id = entry.id.clone();
         if let Some(store) = &self.store {
-            if let Err(e) = store.save_block_list_entry(&entry) {
+            if let Err(e) = store.save_block_list_entry(&entry).await {
                 tracing::warn!("Failed to persist block list entry: {}", e);
             }
         }
@@ -280,19 +280,24 @@ impl BlockListManager {
 
     /// Remove a block list entry by ID. Returns `true` if the entry
     /// existed and was removed.
-    pub fn remove_entry(&self, id: &str) -> bool {
-        let mut entries = self.entries.write();
-        if let Some(pos) = entries.iter().position(|e| e.id == id) {
-            entries.remove(pos);
+    pub async fn remove_entry(&self, id: &str) -> bool {
+        let removed = {
+            let mut entries = self.entries.write();
+            if let Some(pos) = entries.iter().position(|e| e.id == id) {
+                entries.remove(pos);
+                true
+            } else {
+                false
+            }
+        };
+        if removed {
             if let Some(store) = &self.store {
-                if let Err(e) = store.delete_block_list_entry(id) {
+                if let Err(e) = store.delete_block_list_entry(id).await {
                     tracing::warn!("Failed to delete block list entry from store: {}", e);
                 }
             }
-            true
-        } else {
-            false
         }
+        removed
     }
 
     /// Get a copy of all entries.
@@ -307,14 +312,20 @@ impl BlockListManager {
 
     /// Toggle an entry's enabled state. Returns `true` if the entry
     /// existed.
-    pub fn toggle_entry(&self, id: &str, enabled: bool) -> bool {
-        let mut entries = self.entries.write();
-        if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
-            entry.enabled = enabled;
-            entry.updated_at = Utc::now();
-            // Persist the change.
+    pub async fn toggle_entry(&self, id: &str, enabled: bool) -> bool {
+        let entry_to_save = {
+            let mut entries = self.entries.write();
+            if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                entry.enabled = enabled;
+                entry.updated_at = Utc::now();
+                Some(entry.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(entry) = entry_to_save {
             if let Some(store) = &self.store {
-                if let Err(e) = store.save_block_list_entry(entry) {
+                if let Err(e) = store.save_block_list_entry(&entry).await {
                     tracing::warn!("Failed to persist block list entry toggle: {}", e);
                 }
             }
@@ -325,16 +336,23 @@ impl BlockListManager {
     }
 
     /// Update an existing entry in place. Returns `true` if found.
-    pub fn update_entry(&self, id: &str, mut entry: BlockListEntry) -> bool {
-        let mut entries = self.entries.write();
-        if let Some(pos) = entries.iter().position(|e| e.id == id) {
-            // Preserve the original ID and hit_count; update the timestamp.
-            entry.id = id.to_string();
-            entry.hit_count = entries[pos].hit_count;
-            entry.updated_at = Utc::now();
-            entries[pos] = entry.clone();
+    pub async fn update_entry(&self, id: &str, mut entry: BlockListEntry) -> bool {
+        let entry_to_save = {
+            let mut entries = self.entries.write();
+            if let Some(pos) = entries.iter().position(|e| e.id == id) {
+                // Preserve the original ID and hit_count; update the timestamp.
+                entry.id = id.to_string();
+                entry.hit_count = entries[pos].hit_count;
+                entry.updated_at = Utc::now();
+                entries[pos] = entry.clone();
+                Some(entry)
+            } else {
+                None
+            }
+        };
+        if let Some(entry) = entry_to_save {
             if let Some(store) = &self.store {
-                if let Err(e) = store.save_block_list_entry(&entry) {
+                if let Err(e) = store.save_block_list_entry(&entry).await {
                     tracing::warn!("Failed to persist block list entry update: {}", e);
                 }
             }
@@ -345,10 +363,10 @@ impl BlockListManager {
     }
 
     /// Clear all entries.
-    pub fn clear(&self) {
+    pub async fn clear(&self) {
         self.entries.write().clear();
         if let Some(store) = &self.store {
-            if let Err(e) = store.clear_block_list_entries() {
+            if let Err(e) = store.clear_block_list_entries().await {
                 tracing::warn!("Failed to clear block list entries in store: {}", e);
             }
         }
@@ -392,13 +410,19 @@ impl BlockListManager {
 
     /// Increment the hit count of the entry with the given ID. Called
     /// when a request is blocked by that entry.
-    fn increment_hit_count(&self, id: &str) {
-        let mut entries = self.entries.write();
-        if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
-            entry.hit_count += 1;
-            // Persist the updated hit count (best-effort).
+    async fn increment_hit_count(&self, id: &str) {
+        let exists = {
+            let mut entries = self.entries.write();
+            if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                entry.hit_count += 1;
+                true
+            } else {
+                false
+            }
+        };
+        if exists {
             if let Some(store) = &self.store {
-                if let Err(e) = store.increment_block_list_hit_count(id) {
+                if let Err(e) = store.increment_block_list_hit_count(id).await {
                     tracing::warn!("Failed to persist block list hit count: {}", e);
                 }
             }
@@ -446,7 +470,7 @@ impl InterceptHandler for BlockListManager {
             );
             // Increment hit count after cloning the entry (the write
             // lock is acquired separately to avoid holding two locks).
-            self.increment_hit_count(&entry.id);
+            self.increment_hit_count(&entry.id).await;
 
             let mut headers = std::collections::HashMap::new();
             headers.insert("Content-Type".to_string(), entry.content_type.clone());
@@ -469,27 +493,28 @@ impl InterceptHandler for BlockListManager {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::persistence::Persistable for BlockListManager {
-    fn save(&self) -> crate::Result<()> {
+    async fn save(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            let entries = self.entries.read();
-            for entry in entries.iter() {
-                store.save_block_list_entry(entry)?;
+            let entries = self.entries.read().clone();
+            for entry in &entries {
+                store.save_block_list_entry(entry).await?;
             }
         }
         Ok(())
     }
 
-    fn load(&self) -> crate::Result<()> {
+    async fn load(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            let loaded = store.load_block_list_entries()?;
+            let loaded = store.load_block_list_entries().await?;
             *self.entries.write() = loaded;
         }
         Ok(())
     }
 
-    fn clear(&self) -> crate::Result<()> {
-        self.clear();
+    async fn clear(&self) -> crate::Result<()> {
+        self.clear().await;
         Ok(())
     }
 
@@ -670,11 +695,15 @@ mod tests {
 
     // ── BlockListManager CRUD ───────────────────────────────────────
 
-    #[test]
-    fn manager_add_and_get_entries() {
+    #[tokio::test]
+    async fn manager_add_and_get_entries() {
         let mgr = BlockListManager::new();
-        let id1 = mgr.add_entry(BlockListEntry::new("ads.com".to_string()));
-        let id2 = mgr.add_entry(BlockListEntry::new("tracker.com".to_string()));
+        let id1 = mgr
+            .add_entry(BlockListEntry::new("ads.com".to_string()))
+            .await;
+        let id2 = mgr
+            .add_entry(BlockListEntry::new("tracker.com".to_string()))
+            .await;
 
         assert_eq!(mgr.len(), 2);
         assert!(!mgr.is_empty());
@@ -684,47 +713,55 @@ mod tests {
         assert!(entries.iter().any(|e| e.id == id2));
     }
 
-    #[test]
-    fn manager_get_entry_by_id() {
+    #[tokio::test]
+    async fn manager_get_entry_by_id() {
         let mgr = BlockListManager::new();
-        let id = mgr.add_entry(BlockListEntry::new("ads.com".to_string()));
+        let id = mgr
+            .add_entry(BlockListEntry::new("ads.com".to_string()))
+            .await;
 
         assert!(mgr.get_entry(&id).is_some());
         assert!(mgr.get_entry("nonexistent").is_none());
     }
 
-    #[test]
-    fn manager_remove_entry() {
+    #[tokio::test]
+    async fn manager_remove_entry() {
         let mgr = BlockListManager::new();
-        let id = mgr.add_entry(BlockListEntry::new("ads.com".to_string()));
+        let id = mgr
+            .add_entry(BlockListEntry::new("ads.com".to_string()))
+            .await;
 
-        assert!(mgr.remove_entry(&id));
+        assert!(mgr.remove_entry(&id).await);
         assert_eq!(mgr.len(), 0);
-        assert!(!mgr.remove_entry(&id)); // already removed
+        assert!(!mgr.remove_entry(&id).await); // already removed
     }
 
-    #[test]
-    fn manager_toggle_entry() {
+    #[tokio::test]
+    async fn manager_toggle_entry() {
         let mgr = BlockListManager::new();
-        let id = mgr.add_entry(BlockListEntry::new("ads.com".to_string()));
+        let id = mgr
+            .add_entry(BlockListEntry::new("ads.com".to_string()))
+            .await;
 
         assert!(mgr.get_entry(&id).unwrap().enabled);
-        assert!(mgr.toggle_entry(&id, false));
+        assert!(mgr.toggle_entry(&id, false).await);
         assert!(!mgr.get_entry(&id).unwrap().enabled);
-        assert!(mgr.toggle_entry(&id, true));
+        assert!(mgr.toggle_entry(&id, true).await);
         assert!(mgr.get_entry(&id).unwrap().enabled);
-        assert!(!mgr.toggle_entry("nonexistent", true));
+        assert!(!mgr.toggle_entry("nonexistent", true).await);
     }
 
-    #[test]
-    fn manager_update_entry() {
+    #[tokio::test]
+    async fn manager_update_entry() {
         let mgr = BlockListManager::new();
-        let id = mgr.add_entry(BlockListEntry::new("ads.com".to_string()));
+        let id = mgr
+            .add_entry(BlockListEntry::new("ads.com".to_string()))
+            .await;
 
         let mut updated = BlockListEntry::new("ads.com".to_string());
         updated.status_code = 503;
         updated.response_body = "Service Unavailable".to_string();
-        assert!(mgr.update_entry(&id, updated));
+        assert!(mgr.update_entry(&id, updated).await);
 
         let entry = mgr.get_entry(&id).unwrap();
         assert_eq!(entry.status_code, 503);
@@ -733,30 +770,35 @@ mod tests {
         assert_eq!(entry.id, id);
     }
 
-    #[test]
-    fn manager_update_nonexistent_returns_false() {
+    #[tokio::test]
+    async fn manager_update_nonexistent_returns_false() {
         let mgr = BlockListManager::new();
         let entry = BlockListEntry::new("ads.com".to_string());
-        assert!(!mgr.update_entry("nonexistent", entry));
+        assert!(!mgr.update_entry("nonexistent", entry).await);
     }
 
-    #[test]
-    fn manager_clear() {
+    #[tokio::test]
+    async fn manager_clear() {
         let mgr = BlockListManager::new();
-        mgr.add_entry(BlockListEntry::new("ads.com".to_string()));
-        mgr.add_entry(BlockListEntry::new("tracker.com".to_string()));
+        mgr.add_entry(BlockListEntry::new("ads.com".to_string()))
+            .await;
+        mgr.add_entry(BlockListEntry::new("tracker.com".to_string()))
+            .await;
 
-        mgr.clear();
+        mgr.clear().await;
         assert_eq!(mgr.len(), 0);
         assert!(mgr.is_empty());
     }
 
-    #[test]
-    fn manager_stats() {
+    #[tokio::test]
+    async fn manager_stats() {
         let mgr = BlockListManager::new();
-        let id1 = mgr.add_entry(BlockListEntry::new("ads.com".to_string()));
-        mgr.add_entry(BlockListEntry::new("tracker.com".to_string()));
-        mgr.toggle_entry(&id1, false);
+        let id1 = mgr
+            .add_entry(BlockListEntry::new("ads.com".to_string()))
+            .await;
+        mgr.add_entry(BlockListEntry::new("tracker.com".to_string()))
+            .await;
+        mgr.toggle_entry(&id1, false).await;
 
         let stats = mgr.stats();
         assert_eq!(stats.total, 2);
@@ -792,7 +834,8 @@ mod tests {
     #[tokio::test]
     async fn on_request_blocks_matching_host() {
         let mgr = BlockListManager::new();
-        mgr.add_entry(BlockListEntry::new("ads.example.com".to_string()));
+        mgr.add_entry(BlockListEntry::new("ads.example.com".to_string()))
+            .await;
 
         let mut req = make_request("ads.example.com");
         let action = mgr.on_request(&mut req).await;
@@ -813,7 +856,8 @@ mod tests {
     #[tokio::test]
     async fn on_request_blocks_subdomain_of_pattern() {
         let mgr = BlockListManager::new();
-        mgr.add_entry(BlockListEntry::new("example.com".to_string()));
+        mgr.add_entry(BlockListEntry::new("example.com".to_string()))
+            .await;
 
         let mut req = make_request("api.example.com");
         let action = mgr.on_request(&mut req).await;
@@ -823,7 +867,8 @@ mod tests {
     #[tokio::test]
     async fn on_request_does_not_block_non_matching() {
         let mgr = BlockListManager::new();
-        mgr.add_entry(BlockListEntry::new("ads.example.com".to_string()));
+        mgr.add_entry(BlockListEntry::new("ads.example.com".to_string()))
+            .await;
 
         let mut req = make_request("safe.example.org");
         let action = mgr.on_request(&mut req).await;
@@ -833,8 +878,10 @@ mod tests {
     #[tokio::test]
     async fn on_request_does_not_block_disabled_entry() {
         let mgr = BlockListManager::new();
-        let id = mgr.add_entry(BlockListEntry::new("ads.example.com".to_string()));
-        mgr.toggle_entry(&id, false);
+        let id = mgr
+            .add_entry(BlockListEntry::new("ads.example.com".to_string()))
+            .await;
+        mgr.toggle_entry(&id, false).await;
 
         let mut req = make_request("ads.example.com");
         let action = mgr.on_request(&mut req).await;
@@ -844,7 +891,9 @@ mod tests {
     #[tokio::test]
     async fn on_request_increments_hit_count() {
         let mgr = BlockListManager::new();
-        let id = mgr.add_entry(BlockListEntry::new("ads.example.com".to_string()));
+        let id = mgr
+            .add_entry(BlockListEntry::new("ads.example.com".to_string()))
+            .await;
 
         let mut req = make_request("ads.example.com");
         let _ = mgr.on_request(&mut req).await;
@@ -861,7 +910,7 @@ mod tests {
         entry.status_code = 503;
         entry.response_body = "Service Unavailable".to_string();
         entry.content_type = "application/json".to_string();
-        mgr.add_entry(entry);
+        mgr.add_entry(entry).await;
 
         let mut req = make_request("blocked.com");
         let action = mgr.on_request(&mut req).await;
@@ -882,7 +931,8 @@ mod tests {
     #[tokio::test]
     async fn on_request_adds_x_blocked_by_header() {
         let mgr = BlockListManager::new();
-        mgr.add_entry(BlockListEntry::new("ads.com".to_string()));
+        mgr.add_entry(BlockListEntry::new("ads.com".to_string()))
+            .await;
 
         let mut req = make_request("ads.com");
         let action = mgr.on_request(&mut req).await;
@@ -900,10 +950,10 @@ mod tests {
         let mgr = BlockListManager::new();
         let mut e1 = BlockListEntry::new("ads.com".to_string());
         e1.status_code = 403;
-        mgr.add_entry(e1);
+        mgr.add_entry(e1).await;
         let mut e2 = BlockListEntry::new("ads.com".to_string());
         e2.status_code = 503;
-        mgr.add_entry(e2);
+        mgr.add_entry(e2).await;
 
         let mut req = make_request("ads.com");
         let action = mgr.on_request(&mut req).await;
@@ -917,24 +967,38 @@ mod tests {
 
     // ── Persistence (in-memory store) ───────────────────────────────
 
-    #[test]
-    fn persistence_load_save_roundtrip() {
-        let store = crate::persistence::InterceptStore::in_memory().unwrap();
-        let mgr = BlockListManager::new().with_store(store);
+    async fn make_in_memory_store() -> Arc<dyn InterceptStoreBackend + Send + Sync> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        Arc::new(
+            crate::storage::SqliteInterceptStore::new(pool)
+                .await
+                .unwrap(),
+        )
+    }
 
-        mgr.add_entry(BlockListEntry::new("ads.com".to_string()));
+    #[tokio::test]
+    async fn persistence_load_save_roundtrip() {
+        let store = make_in_memory_store().await;
+        let mgr = BlockListManager::new().with_store(store.clone());
+
+        mgr.add_entry(BlockListEntry::new("ads.com".to_string()))
+            .await;
         mgr.add_entry(BlockListEntry::with_note(
             "tracker.com".to_string(),
             "Analytics tracker".to_string(),
-        ));
+        ))
+        .await;
 
         // Save to store.
-        mgr.save().unwrap();
+        mgr.save().await.unwrap();
 
         // Create a new manager backed by the same store and load.
-        let store2 = mgr.store.clone().unwrap();
-        let mgr2 = BlockListManager::new().with_store(store2);
-        mgr2.load().unwrap();
+        let mgr2 = BlockListManager::new().with_store(store);
+        mgr2.load().await.unwrap();
 
         assert_eq!(mgr2.len(), 2);
         let entries = mgr2.get_entries();
@@ -942,33 +1006,37 @@ mod tests {
         assert!(entries.iter().any(|e| e.pattern == "tracker.com"));
     }
 
-    #[test]
-    fn persistence_delete_removes_from_store() {
-        let store = crate::persistence::InterceptStore::in_memory().unwrap();
+    #[tokio::test]
+    async fn persistence_delete_removes_from_store() {
+        let store = make_in_memory_store().await;
         let mgr = BlockListManager::new().with_store(store.clone());
 
-        let id = mgr.add_entry(BlockListEntry::new("ads.com".to_string()));
-        mgr.remove_entry(&id);
+        let id = mgr
+            .add_entry(BlockListEntry::new("ads.com".to_string()))
+            .await;
+        mgr.remove_entry(&id).await;
 
         // Loading from store should not find the deleted entry.
         let mgr2 = BlockListManager::new().with_store(store);
-        mgr2.load().unwrap();
+        mgr2.load().await.unwrap();
         assert_eq!(mgr2.len(), 0);
     }
 
-    #[test]
-    fn persistence_clear_removes_all() {
-        let store = crate::persistence::InterceptStore::in_memory().unwrap();
+    #[tokio::test]
+    async fn persistence_clear_removes_all() {
+        let store = make_in_memory_store().await;
         let mgr = BlockListManager::new().with_store(store.clone());
 
-        mgr.add_entry(BlockListEntry::new("ads.com".to_string()));
-        mgr.add_entry(BlockListEntry::new("tracker.com".to_string()));
-        mgr.save().unwrap();
+        mgr.add_entry(BlockListEntry::new("ads.com".to_string()))
+            .await;
+        mgr.add_entry(BlockListEntry::new("tracker.com".to_string()))
+            .await;
+        mgr.save().await.unwrap();
 
-        mgr.clear();
+        mgr.clear().await;
 
         let mgr2 = BlockListManager::new().with_store(store);
-        mgr2.load().unwrap();
+        mgr2.load().await.unwrap();
         assert_eq!(mgr2.len(), 0);
     }
 

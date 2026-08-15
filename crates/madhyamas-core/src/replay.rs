@@ -443,18 +443,19 @@ impl Default for ReplayManager {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::persistence::Persistable for ReplayManager {
-    fn save(&self) -> crate::Result<()> {
+    async fn save(&self) -> crate::Result<()> {
         // In-memory only for now; no backing store wired up yet.
         Ok(())
     }
 
-    fn load(&self) -> crate::Result<()> {
+    async fn load(&self) -> crate::Result<()> {
         // In-memory only for now; no backing store wired up yet.
         Ok(())
     }
 
-    fn clear(&self) -> crate::Result<()> {
+    async fn clear(&self) -> crate::Result<()> {
         self.saved_requests.write().clear();
         self.clear_history();
         Ok(())

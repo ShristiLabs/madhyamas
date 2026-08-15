@@ -1,6 +1,6 @@
 //! Bandwidth throttling and network simulation
 
-use crate::persistence::InterceptStore;
+use crate::storage::InterceptStoreBackend;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -174,7 +174,7 @@ pub struct ThrottleManager {
     /// Whether throttling is enabled
     enabled: RwLock<bool>,
     /// Optional SQLite persistence backend
-    store: Option<Arc<InterceptStore>>,
+    store: Option<Arc<dyn InterceptStoreBackend + Send + Sync>>,
 }
 
 impl ThrottleManager {
@@ -187,15 +187,16 @@ impl ThrottleManager {
     }
 
     /// Attach a SQLite persistence backend.
-    pub fn with_store(mut self, store: Arc<InterceptStore>) -> Self {
+    pub fn with_store(mut self, store: Arc<dyn InterceptStoreBackend + Send + Sync>) -> Self {
         self.store = Some(store);
         self
     }
 
     /// Set the throttle profile
-    pub fn set_profile(&self, profile: ThrottleProfile) {
+    pub async fn set_profile(&self, profile: ThrottleProfile) {
         if let Some(store) = &self.store {
-            if let Err(e) = store.save_throttle_profile(&profile, *self.enabled.read()) {
+            let enabled = *self.enabled.read();
+            if let Err(e) = store.save_throttle_profile(&profile, enabled).await {
                 tracing::warn!("Failed to persist throttle profile: {}", e);
             }
         }
@@ -208,10 +209,11 @@ impl ThrottleManager {
     }
 
     /// Enable/disable throttling
-    pub fn set_enabled(&self, enabled: bool) {
+    pub async fn set_enabled(&self, enabled: bool) {
         *self.enabled.write() = enabled;
         if let Some(store) = &self.store {
-            if let Err(e) = store.save_throttle_profile(&self.profile.read(), enabled) {
+            let profile = self.profile.read().clone();
+            if let Err(e) = store.save_throttle_profile(&profile, enabled).await {
                 tracing::warn!("Failed to persist throttle enabled state: {}", e);
             }
         }
@@ -276,17 +278,20 @@ impl Default for ThrottleManager {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::persistence::Persistable for ThrottleManager {
-    fn save(&self) -> crate::Result<()> {
+    async fn save(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            store.save_throttle_profile(&self.profile.read(), *self.enabled.read())?;
+            let profile = self.profile.read().clone();
+            let enabled = *self.enabled.read();
+            store.save_throttle_profile(&profile, enabled).await?;
         }
         Ok(())
     }
 
-    fn load(&self) -> crate::Result<()> {
+    async fn load(&self) -> crate::Result<()> {
         if let Some(store) = &self.store {
-            if let Some((profile, enabled)) = store.load_throttle_profile()? {
+            if let Some((profile, enabled)) = store.load_throttle_profile().await? {
                 *self.profile.write() = profile;
                 *self.enabled.write() = enabled;
             }
@@ -294,7 +299,7 @@ impl crate::persistence::Persistable for ThrottleManager {
         Ok(())
     }
 
-    fn clear(&self) -> crate::Result<()> {
+    async fn clear(&self) -> crate::Result<()> {
         *self.profile.write() = ThrottleProfile::none();
         *self.enabled.write() = false;
         Ok(())
@@ -542,23 +547,23 @@ mod tests {
             assert!(!manager.is_enabled());
         }
 
-        #[test]
-        fn test_set_enabled() {
+        #[tokio::test]
+        async fn test_set_enabled() {
             let manager = ThrottleManager::new();
 
-            manager.set_enabled(true);
+            manager.set_enabled(true).await;
             assert!(manager.is_enabled());
 
-            manager.set_enabled(false);
+            manager.set_enabled(false).await;
             assert!(!manager.is_enabled());
         }
 
-        #[test]
-        fn test_set_profile() {
+        #[tokio::test]
+        async fn test_set_profile() {
             let manager = ThrottleManager::new();
 
             let profile = ThrottleProfile::three_g();
-            manager.set_profile(profile);
+            manager.set_profile(profile).await;
 
             let current = manager.get_profile();
             assert_eq!(current.name, "3G");
@@ -576,11 +581,11 @@ mod tests {
             assert_eq!(time, Duration::ZERO);
         }
 
-        #[test]
-        fn test_transfer_time_enabled() {
+        #[tokio::test]
+        async fn test_transfer_time_enabled() {
             let manager = ThrottleManager::new();
-            manager.set_enabled(true);
-            manager.set_profile(ThrottleProfile::three_g());
+            manager.set_enabled(true).await;
+            manager.set_profile(ThrottleProfile::three_g()).await;
 
             // 3G: 1 MB/s download
             let time = manager.transfer_time(1_000_000, false);
@@ -591,20 +596,20 @@ mod tests {
             assert_eq!(time, Duration::from_millis(1000));
         }
 
-        #[test]
-        fn test_transfer_time_unlimited() {
+        #[tokio::test]
+        async fn test_transfer_time_unlimited() {
             let manager = ThrottleManager::new();
-            manager.set_enabled(true);
-            manager.set_profile(ThrottleProfile::none());
+            manager.set_enabled(true).await;
+            manager.set_profile(ThrottleProfile::none()).await;
 
             let time = manager.transfer_time(1_000_000, false);
             assert_eq!(time, Duration::ZERO);
         }
 
-        #[test]
-        fn test_check_packet_loss_disabled() {
+        #[tokio::test]
+        async fn test_check_packet_loss_disabled() {
             let manager = ThrottleManager::new();
-            manager.set_profile(ThrottleProfile::gprs()); // Has 2% packet loss
+            manager.set_profile(ThrottleProfile::gprs()).await; // Has 2% packet loss
 
             // Disabled, should never drop
             for _ in 0..100 {
@@ -615,7 +620,7 @@ mod tests {
         #[tokio::test]
         async fn test_apply_latency_disabled() {
             let manager = ThrottleManager::new();
-            manager.set_profile(ThrottleProfile::satellite()); // 600ms latency
+            manager.set_profile(ThrottleProfile::satellite()).await; // 600ms latency
 
             let start = std::time::Instant::now();
             manager.apply_latency().await;

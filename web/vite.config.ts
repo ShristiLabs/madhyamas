@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 export default defineConfig({
+  // Base path for asset URLs. Set MADHYAMAS_BASE_PATH at build time for
+  // context-path deployments (e.g. MADHYAMAS_BASE_PATH=/madhyamas/). The
+  // API side handles the base path at runtime; the frontend must be
+  // rebuilt if the base path changes. Defaults to '/' (root deployment).
+  base: process.env.MADHYAMAS_BASE_PATH || '/',
   plugins: [react()],
   resolve: {
     alias: {

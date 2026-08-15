@@ -5,7 +5,6 @@
 //! workspace:
 //!
 //! - [`crate::Error`] — the core proxy engine error enum.
-//! - [`crate::enterprise::EnterpriseError`] — enterprise/auth/RBAC errors.
 //! - [`madhyamas_mcp::types::McpError`] — MCP protocol errors.
 //!
 //! The trait bridges these otherwise-unrelated error types so that the API
@@ -18,9 +17,7 @@
 
 use serde_json::{json, Value};
 
-use crate::enterprise::EnterpriseError;
-
-/// A unified error trait bridging the core, enterprise, and MCP error types.
+/// A unified error trait bridging the core and MCP error types.
 ///
 /// All implementors must also implement [`std::error::Error`] and be
 /// `Send + Sync + 'static` so they can be used across threads and stored in
@@ -62,12 +59,11 @@ impl AppError for crate::Error {
             crate::Error::Io(_) => "CORE_IO",
             crate::Error::Tls(_) => "CORE_TLS",
             crate::Error::Certificate(_) => "CORE_CERTIFICATE",
-            crate::Error::Database(_) => "CORE_DATABASE",
+            crate::Error::Sqlx(_) => "CORE_DATABASE",
             crate::Error::Serialization(_) => "CORE_SERIALIZATION",
             crate::Error::Proxy(_) => "CORE_PROXY",
             crate::Error::Config(_) => "CORE_CONFIG",
             crate::Error::Channel(_) => "CORE_CHANNEL",
-            crate::Error::Enterprise(_) => "CORE_ENTERPRISE",
         }
     }
 
@@ -79,66 +75,10 @@ impl AppError for crate::Error {
             // issues are unlikely to resolve themselves on retry.
             crate::Error::Tls(_)
             | crate::Error::Certificate(_)
-            | crate::Error::Database(_)
+            | crate::Error::Sqlx(_)
             | crate::Error::Serialization(_)
             | crate::Error::Proxy(_)
-            | crate::Error::Config(_)
-            | crate::Error::Enterprise(_) => false,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Implementation for `EnterpriseError`
-// ---------------------------------------------------------------------------
-
-impl AppError for EnterpriseError {
-    fn error_code(&self) -> &str {
-        match self {
-            EnterpriseError::AuthFailed { .. } => "ENTERPRISE_AUTH_FAILED",
-            EnterpriseError::TokenExpired => "ENTERPRISE_TOKEN_EXPIRED",
-            EnterpriseError::JwtError { .. } => "ENTERPRISE_JWT_ERROR",
-            EnterpriseError::PermissionDenied { .. } => "ENTERPRISE_PERMISSION_DENIED",
-            EnterpriseError::UserNotFound { .. } => "ENTERPRISE_USER_NOT_FOUND",
-            EnterpriseError::AuditError { .. } => "ENTERPRISE_AUDIT_ERROR",
-            EnterpriseError::RoleNotFound { .. } => "ENTERPRISE_ROLE_NOT_FOUND",
-            EnterpriseError::InvalidConfig { .. } => "ENTERPRISE_INVALID_CONFIG",
-        }
-    }
-
-    fn is_retryable(&self) -> bool {
-        match self {
-            // An expired token can be refreshed and the request retried.
-            EnterpriseError::TokenExpired => true,
-            // Auth/permission failures require user action, not a blind retry.
-            EnterpriseError::AuthFailed { .. }
-            | EnterpriseError::JwtError { .. }
-            | EnterpriseError::PermissionDenied { .. }
-            | EnterpriseError::UserNotFound { .. }
-            | EnterpriseError::AuditError { .. }
-            | EnterpriseError::RoleNotFound { .. }
-            | EnterpriseError::InvalidConfig { .. } => false,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Conversions between `Error` and `EnterpriseError`
-// ---------------------------------------------------------------------------
-//
-// `From<EnterpriseError> for crate::Error` is generated automatically by
-// `thiserror` via the `#[from]` attribute on the `Error::Enterprise` variant.
-// We only need to provide the reverse direction here.
-
-/// Allow core errors to be represented as enterprise errors when the
-/// enterprise layer needs to normalize on a single error type.
-impl From<crate::Error> for EnterpriseError {
-    fn from(err: crate::Error) -> Self {
-        match err {
-            crate::Error::Enterprise(e) => e,
-            other => EnterpriseError::InvalidConfig {
-                message: other.to_string(),
-            },
+            | crate::Error::Config(_) => false,
         }
     }
 }
@@ -163,55 +103,11 @@ mod tests {
     }
 
     #[test]
-    fn enterprise_error_codes_are_stable() {
-        assert_eq!(
-            EnterpriseError::TokenExpired.error_code(),
-            "ENTERPRISE_TOKEN_EXPIRED"
-        );
-        assert_eq!(
-            EnterpriseError::AuthFailed {
-                message: "no".into()
-            }
-            .error_code(),
-            "ENTERPRISE_AUTH_FAILED"
-        );
-    }
-
-    #[test]
-    fn token_expired_is_retryable() {
-        assert!(EnterpriseError::TokenExpired.is_retryable());
-        assert!(!EnterpriseError::AuthFailed {
-            message: "no".into()
-        }
-        .is_retryable());
-    }
-
-    #[test]
     fn response_json_contains_expected_fields() {
         let err = crate::Error::Config("bad value".into());
         let json = err.as_response_json();
         assert_eq!(json["code"], "CORE_CONFIG");
         assert_eq!(json["retryable"], false);
         assert!(json["message"].as_str().unwrap().contains("bad value"));
-    }
-
-    #[test]
-    fn enterprise_to_core_roundtrip() {
-        let ent = EnterpriseError::TokenExpired;
-        let core: crate::Error = ent.into();
-        assert!(matches!(
-            core,
-            crate::Error::Enterprise(EnterpriseError::TokenExpired)
-        ));
-        // And back.
-        let back: EnterpriseError = core.into();
-        assert!(matches!(back, EnterpriseError::TokenExpired));
-    }
-
-    #[test]
-    fn non_enterprise_core_error_converts_to_invalid_config() {
-        let core = crate::Error::Proxy("boom".into());
-        let ent: EnterpriseError = core.into();
-        assert!(matches!(ent, EnterpriseError::InvalidConfig { .. }));
     }
 }

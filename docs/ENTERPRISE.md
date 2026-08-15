@@ -1,6 +1,6 @@
 # Enterprise Features
 
-> **Last verified:** 2026-08-12 against Madhyamas `0.1.6`.
+> **Last verified:** 2025-01 against Madhyamas `0.1.6` (enterprise crate fully implemented).
 
 ## Overview
 
@@ -10,23 +10,22 @@ behind the `enterprise` Cargo feature and conditionally enabled at startup via
 `create_routes_with_enterprise`. When an auth service is provided, enterprise
 endpoints are JWT-protected via `auth_middleware`.
 
-Source: `crates/madhyamas-core/src/enterprise/` and
-`crates/madhyamas-api/src/enterprise_handlers.rs`,
-`crates/madhyamas-api/src/middleware.rs`.
+Source: `crates/madhyamas-enterprise/src/` (auth, rbac, audit, user,
+handlers, middleware, router).
 
 ## Architecture
 
 ```mermaid
 graph TD
-    subgraph "Core (madhyamas-core/src/enterprise)"
+    subgraph "Enterprise crate (madhyamas-enterprise/src)"
         AUTH["auth.rs<br/>AuthManager"]
         RBAC["rbac.rs<br/>RbacManager"]
         AUDIT["audit.rs<br/>AuditLogger"]
         USER["user.rs<br/>User, UserRole"]
     end
-    subgraph "API (madhyamas-api)"
+    subgraph "Enterprise crate (cont.)"
         MW["middleware.rs<br/>auth_middleware"]
-        HAND["enterprise_handlers.rs"]
+        HAND["handlers.rs"]
     end
     REQ["HTTP Request"] --> MW
     MW -->|"validate JWT"| AUTH
@@ -40,7 +39,7 @@ graph TD
 
 ## Authentication
 
-Source: `enterprise/auth.rs`
+Source: `crates/madhyamas-enterprise/src/auth.rs`
 
 `AuthManager` supports two authentication mechanisms:
 
@@ -64,7 +63,7 @@ Source: `enterprise/auth.rs`
 
 ### Auth middleware
 
-`auth_middleware` (in `middleware.rs`) runs on enterprise routes when an auth
+`auth_middleware` (in `crates/madhyamas-enterprise/src/middleware.rs`) runs on enterprise routes when an auth
 service is configured:
 
 1. Extracts the `Authorization: Bearer <token>` header.
@@ -94,7 +93,7 @@ Presets: `AuthConfig::development()` (no secret) and
 
 ## Role-Based Access Control
 
-Source: `enterprise/rbac.rs`
+Source: `crates/madhyamas-enterprise/src/rbac.rs`
 
 `RbacManager` holds a `role_permissions` map. Roles and their default
 permissions:
@@ -117,10 +116,13 @@ returning `403` on insufficient permissions.
 
 ## Audit Logging
 
-Source: `enterprise/audit.rs`
+Source: `crates/madhyamas-enterprise/src/audit.rs`
 
-`AuditLogger` records security-relevant events in an in-memory ring buffer
-capped at 10,000 events (FIFO eviction).
+`AuditLogger` records security-relevant events in PostgreSQL with a
+SHA-256 hash chain for tamper evidence. Each event's `prev_hash` field
+contains the hash of the previous event, making any modification or
+deletion detectable. Insertion is serialized across instances using a
+PostgreSQL advisory lock (`pg_advisory_xact_lock`).
 
 ### Event types
 
@@ -140,12 +142,13 @@ capped at 10,000 events (FIFO eviction).
 | `client_ip` | Client IP address (optional) |
 | `description` | Human-readable description |
 | `metadata` | Arbitrary `HashMap<String, serde_json::Value>` |
+| `prev_hash` | SHA-256 hash of the previous event (tamper-evidence chain) |
 
 Events are queried via `AuditFilter` (by type, user, time range, limit/offset).
 
 ## User Management
 
-Source: `enterprise/user.rs`
+Source: `crates/madhyamas-enterprise/src/user.rs`
 
 | Type | Variants / Fields |
 |------|-------------------|
@@ -168,5 +171,8 @@ See [API_ENTERPRISE.md](API_ENTERPRISE.md) for the full endpoint reference.
 ## See Also
 
 - [API_ENTERPRISE.md](API_ENTERPRISE.md) — Enterprise API endpoints
+- [ENTERPRISE_CRATE_GUIDE.md](ENTERPRISE_CRATE_GUIDE.md) — Enterprise crate developer guide
+- [ENTERPRISE_API_INTEGRATION.md](ENTERPRISE_API_INTEGRATION.md) — API layer trait abstractions
+- [ENTERPRISE_STARTUP_FLOW.md](ENTERPRISE_STARTUP_FLOW.md) — Startup initialization sequence
 - [PERFORMANCE.md](PERFORMANCE.md) — Performance monitoring (exposed via enterprise endpoints)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture
