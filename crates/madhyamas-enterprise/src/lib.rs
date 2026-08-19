@@ -13,6 +13,11 @@
 //! the concrete enterprise types ([`AuthManager`], [`RbacManager`],
 //! [`AuditLogger`]).
 
+// Beta clippy (2026-08 rollout) fires `double_must_use` on `#[async_trait]`
+// store/handler signatures (macro-generated boxed future is `must_use`, and
+// so is the returned `Result`). Silenced until the lint behavior stabilizes.
+#![allow(clippy::double_must_use, clippy::manual_clamp)]
+
 pub mod audit;
 pub mod auth;
 pub mod credentials;

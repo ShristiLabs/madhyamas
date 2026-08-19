@@ -1,5 +1,12 @@
 //! Madhyamas Core - HTTP/HTTPS debugging proxy engine
 
+// Beta clippy (2026-08 rollout) fires `double_must_use` on the
+// `#[async_trait]` storage/engine method signatures (the macro's boxed
+// future is `must_use`, and so is the returned `Result`), plus two
+// `manual_clamp` suggestions. Silenced crate-wide until the lint behavior
+// stabilizes; revisit then.
+#![allow(clippy::double_must_use, clippy::manual_clamp)]
+
 pub mod access_control;
 pub mod auto_save;
 pub mod config;
