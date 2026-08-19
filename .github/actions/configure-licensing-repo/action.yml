@@ -25,14 +25,30 @@ runs:
           echo "::warning::LICENSING_TOKEN secret is not set — jobs will fail to fetch licensing-core from the private ShristiLabs/licensing repo. Create a fine-grained PAT (Contents: read-only, repository access limited to ShristiLabs/licensing) and add it as the LICENSING_TOKEN secret."
           exit 0
         fi
+
+        # Diagnose the token against the GitHub API (value is auto-masked
+        # in logs): 200 = ok, 401 = bad/expired value, 404 = valid token
+        # but no access to the repo.
+        code=$(curl -s -o /dev/null -w "%{http_code}" \
+          -H "Authorization: Bearer ${TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          https://api.github.com/repos/ShristiLabs/licensing)
+        case "$code" in
+          200) ;;
+          401)
+            echo "::error::LICENSING_TOKEN is rejected by GitHub (HTTP 401): the secret holds a bad or expired token value. Regenerate the token and re-save the secret with the exact github_pat_... value."
+            exit 1 ;;
+          403|404)
+            echo "::error::LICENSING_TOKEN is valid but cannot access ShristiLabs/licensing (HTTP $code). Check the token's Repository access includes ShristiLabs/licensing and that the org's personal-access-token policy allows this token (github.com/organizations/ShristiLabs/settings/personal-access-token-policies — a pending approval or restricted policy shows exactly this)."
+            exit 1 ;;
+          *)
+            echo "::error::Unexpected HTTP $code probing ShristiLabs/licensing with LICENSING_TOKEN."
+            exit 1 ;;
+        esac
+
         # Token lives in the ephemeral runner's git config only.
         git config --global \
           url."https://x-access-token:${TOKEN}@github.com/".insteadOf \
           "https://github.com/"
         echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
-        # Sanity check the token can read the private repo.
-        if ! git ls-remote --exit-code https://github.com/ShristiLabs/licensing.git HEAD >/dev/null 2>&1; then
-          echo "::error::LICENSING_TOKEN cannot read ShristiLabs/licensing (bad token, expired, or org has not enabled fine-grained PAT access)."
-          exit 1
-        fi
-        echo "Private licensing repo access configured."
+        echo "Private licensing repo access configured (token verified via API)."
