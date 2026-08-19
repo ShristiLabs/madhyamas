@@ -1,6 +1,6 @@
 ---
 title: REST API Reference
-description: The Madhyamas REST API — 177 endpoints under /api for traffic, sessions, mocks, breakpoints, rewrites, replay, scripts, plugins, gRPC, WebSocket traffic, config, and enterprise features.
+description: The Madhyamas REST API — 184 endpoints under /api for traffic, sessions, mocks, breakpoints, rewrites, replay, scripts, plugins, gRPC, WebSocket traffic, config, and enterprise features.
 ---
 
 # REST API Reference

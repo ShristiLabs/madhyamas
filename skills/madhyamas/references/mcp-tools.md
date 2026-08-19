@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-All 135 MCP tools exposed by the Madhyamas MCP server. The MCP server uses stdio transport and connects to a running Madhyamas proxy instance via REST API.
+All 146 MCP tools exposed by the Madhyamas MCP server (135 core + 11 enterprise). The MCP server uses stdio transport and connects to a running Madhyamas proxy instance via REST API.
 
 ## Traffic Inspection (7 tools)
 

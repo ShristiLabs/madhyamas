@@ -41,7 +41,7 @@ madhyamas                          # Start proxy + web UI (default subcommand)
 madhyamas mcp                      # Run as MCP server (stdio transport)
 madhyamas traffic list             # CLI: list captured traffic
 madhyamas export har --output f.har # CLI: export HAR
-madhyamas --help                   # See all 128 CLI subcommands
+madhyamas --help                   # See all 159 CLI subcommands
 ```
 
 Full CLI reference: `skills/madhyamas/references/cli-commands.md`.

@@ -1,6 +1,6 @@
 # CLI Commands Reference
 
-All 128 CLI subcommands for the `madhyamas` binary. The CLI communicates with a running Madhyamas proxy instance via REST API.
+All 159 CLI subcommands for the `madhyamas` binary. The CLI communicates with a running Madhyamas proxy instance via REST API.
 
 ## Global Flags
 
@@ -16,6 +16,45 @@ Global Flags:
 ```
 
 Most subcommands support `--json` for machine-readable JSON output.
+
+## serve — Start the Proxy
+
+### serve
+
+Start the proxy server with web UI (default action when no command is given).
+
+```bash
+madhyamas serve [OPTIONS]
+
+Options:
+  -p, --proxy-port <PORT>     Proxy server port [default: 8888]
+  -a, --api-port <PORT>       Web UI / API port [default: 3001]
+      --host <HOST>           Host to bind to [default: 127.0.0.1]
+      --db-path <PATH>        Traffic database path (defaults to ~/.madhyamas/traffic.db)
+      --cert-path <PATH>      Certificate storage path (defaults to ~/.madhyamas/certs)
+      --log-path <PATH>       Log file path (defaults to ~/.madhyamas/logs)
+      --no-https              Disable HTTPS interception
+      --enable-socks          Enable the SOCKS5 listener (see --socks-port)
+      --max-requests <N>      Maximum requests to keep in memory [default: 10000]
+```
+
+All options can also be set via `MADHYAMAS_*` environment variables. Run `madhyamas serve --help` for the complete list (upstream proxy, SOCKS auth, access control, enterprise flags).
+
+## mcp — MCP Server
+
+### mcp
+
+Run as an MCP (Model Context Protocol) server via stdio or HTTP for AI agent integration.
+
+```bash
+madhyamas mcp [OPTIONS]
+
+Options:
+      --api-url <URL>          API server URL to connect to [default: http://127.0.0.1:3001]
+      --timeout-secs <SECS>    Request timeout in seconds [default: 30]
+      --transport <MODE>       Transport mode: stdio or http [default: stdio]
+      --mcp-port <PORT>        Port for HTTP transport [default: 3002]
+```
 
 ## traffic — Traffic Inspection
 
@@ -80,6 +119,38 @@ Clear all captured traffic.
 
 ```bash
 madhyamas traffic clear
+```
+
+### traffic import-har
+
+Import traffic from a HAR file into a new session.
+
+```bash
+madhyamas traffic import-har [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>    Path to the HAR file to import
+
+Options:
+  -n, --name <NAME>    Optional name for the newly created session
+      --switch         Switch to the newly created session after import
+      --json           Output as JSON
+```
+
+Example: `madhyamas traffic import-har capture.har --name "prod-trace" --switch`
+
+### traffic script-traces
+
+Show script execution traces for a traffic entry.
+
+```bash
+madhyamas traffic script-traces [OPTIONS] <ID>
+
+Arguments:
+  <ID>    Traffic entry ID
+
+Options:
+      --json    Output as JSON
 ```
 
 ## mocks — Mock Responses
@@ -295,6 +366,41 @@ Subcommands:
   promote                 Promote recorded mocks to active rules
 ```
 
+### mocks recording set
+
+Enable or disable mock recording mode.
+
+```bash
+madhyamas mocks recording set [OPTIONS]
+
+Options:
+  -e, --enabled    Enable or disable recording
+```
+
+### mocks recording status
+
+Get current recording status.
+
+```bash
+madhyamas mocks recording status
+```
+
+### mocks recording list
+
+List all recorded mock candidates.
+
+```bash
+madhyamas mocks recording list
+```
+
+### mocks recording promote
+
+Promote recorded mocks to active rules.
+
+```bash
+madhyamas mocks recording promote
+```
+
 ### mocks collections
 
 Mock collection subcommands.
@@ -309,6 +415,79 @@ Subcommands:
   delete <ID> [--delete-rules]            Delete a collection
   toggle <ID> <ENABLED>                   Toggle all mocks in a collection
   update <ID> [--name N] [--description D] [--enabled BOOL]  Update collection metadata
+```
+
+### mocks collections list
+
+List all mock collections.
+
+```bash
+madhyamas mocks collections list
+```
+
+### mocks collections create
+
+Create a new mock collection.
+
+```bash
+madhyamas mocks collections create [OPTIONS] --name <NAME>
+
+Options:
+  -n, --name <NAME>              Collection name
+  -d, --description <DESC>       Optional description
+```
+
+### mocks collections get
+
+Get a specific mock collection by ID.
+
+```bash
+madhyamas mocks collections get <ID>
+
+Arguments:
+  <ID>    Collection ID
+```
+
+### mocks collections delete
+
+Delete a mock collection.
+
+```bash
+madhyamas mocks collections delete [OPTIONS] <ID>
+
+Arguments:
+  <ID>    Collection ID
+
+Options:
+  -d, --delete-rules    Also delete all rules in the collection
+```
+
+### mocks collections toggle
+
+Toggle all mocks in a collection on/off.
+
+```bash
+madhyamas mocks collections toggle <ID> [ENABLED]
+
+Arguments:
+  <ID>        Collection ID
+  [ENABLED]   Enable or disable all rules
+```
+
+### mocks collections update
+
+Update a mock collection's metadata.
+
+```bash
+madhyamas mocks collections update [OPTIONS] <ID>
+
+Arguments:
+  <ID>    Collection ID
+
+Options:
+  -n, --name <NAME>              New name for the collection
+  -d, --description <DESC>       New description for the collection
+  -e, --enabled <BOOL>           Enable or disable the collection (true|false)
 ```
 
 ### mocks get
@@ -409,15 +588,38 @@ Arguments:
 
 ### breakpoints paused
 
-Paused traffic subcommands.
+List all traffic paused by breakpoints.
 
 ```bash
-madhyamas breakpoints paused <SUBCOMMAND>
+madhyamas breakpoints paused
+```
 
-Subcommands:
-  list              List all traffic paused by breakpoints
-  get <ID>          Get a specific paused traffic item
-  resume <ID> <ACTION>   Resume a paused item (action: continue or abort)
+### breakpoints paused-get
+
+Get details of a specific paused item.
+
+```bash
+madhyamas breakpoints paused-get [OPTIONS] <ID>
+
+Arguments:
+  <ID>    Breakpoint paused item ID
+
+Options:
+      --json    Output as JSON
+```
+
+### breakpoints paused-resume
+
+Resume a paused item (continue or abort).
+
+```bash
+madhyamas breakpoints paused-resume [OPTIONS] <ID>
+
+Arguments:
+  <ID>    Paused item ID
+
+Options:
+  -a, --action <ACTION>    Action: continue, abort, or respond [default: continue]
 ```
 
 ## sessions — Session Management
@@ -481,6 +683,17 @@ Arguments:
 Options:
   -f, --format <FORMAT>    Export format (har, curl) [default: har]
       --json               Output as JSON
+```
+
+### sessions get
+
+Get a specific session by ID.
+
+```bash
+madhyamas sessions get <ID>
+
+Arguments:
+  <ID>    Session ID
 ```
 
 ## replay — Request Replay
@@ -561,6 +774,39 @@ madhyamas replay history [OPTIONS]
 Options:
       --json    Output as JSON
 ```
+
+### replay history-clear
+
+Clear all replay history.
+
+```bash
+madhyamas replay history-clear
+```
+
+### replay run-advanced
+
+Replay a captured request multiple times with concurrency and delay.
+
+```bash
+madhyamas replay run-advanced [OPTIONS] <ID>
+
+Arguments:
+  <ID>    Saved request ID to replay
+
+Options:
+      --iterations <N>          Total number of requests to send (max 10000) [default: 1]
+      --concurrency <N>         Number of simultaneous in-flight requests (max 100) [default: 1]
+      --delay-ms <MS>           Delay between requests in milliseconds
+      --url <URL>               Override the URL
+      --method <METHOD>         Override the HTTP method
+      --header <KEY: VALUE>     Header to add/replace (repeatable)
+      --body <BODY>             New request body (raw text)
+      --body-file <PATH>        Read request body from a file
+      --follow-redirects        Follow redirect responses (3xx)
+      --json                    Output as JSON
+```
+
+Example: `madhyamas replay run-advanced <ID> --iterations 100 --concurrency 10 --delay-ms 50 --json`
 
 ## config — Configuration
 
@@ -687,6 +933,17 @@ List all rewrite rules.
 
 ```bash
 madhyamas rewrites list
+```
+
+### rewrites get
+
+Get a specific rewrite rule.
+
+```bash
+madhyamas rewrites get <ID>
+
+Arguments:
+  <ID>    Rewrite rule ID
 ```
 
 ### rewrites create
@@ -1492,33 +1749,33 @@ Options:
       --json                       Output as JSON
 ```
 
-## wstraffic — WebSocket Traffic
+## ws-traffic — WebSocket Traffic
 
-### wstraffic connections
+### ws-traffic connections
 
 List all WebSocket connections.
 
 ```bash
-madhyamas wstraffic connections
+madhyamas ws-traffic connections
 ```
 
-### wstraffic connection
+### ws-traffic connection
 
 Get details of a specific WebSocket connection.
 
 ```bash
-madhyamas wstraffic connection <ID>
+madhyamas ws-traffic connection <ID>
 
 Arguments:
   <ID>    WebSocket connection ID
 ```
 
-### wstraffic messages
+### ws-traffic messages
 
 List WebSocket messages with optional filtering.
 
 ```bash
-madhyamas wstraffic messages [OPTIONS]
+madhyamas ws-traffic messages [OPTIONS]
 
 Options:
       --connection-id <ID>     Filter by connection ID
@@ -1529,12 +1786,12 @@ Options:
       --offset <OFFSET>        Offset for pagination
 ```
 
-### wstraffic clear
+### ws-traffic clear
 
 Clear all WebSocket traffic (messages and closed connections).
 
 ```bash
-madhyamas wstraffic clear
+madhyamas ws-traffic clear
 ```
 
 ## users — User Management (Enterprise)

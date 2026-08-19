@@ -118,8 +118,8 @@ for detailed examples.
   for Claude Desktop, Windsurf, and other AI-powered tools
 - **146 MCP Tools** — Full programmatic access to traffic, mocks, rewrites,
   breakpoints, sessions, and configuration
-- **CLI** — 141 CLI subcommands for scripting and automation
-- **REST API** — 148 REST endpoints for integration with external tools
+- **CLI** — 159 CLI subcommands for scripting and automation
+- **REST API** — 184 REST endpoints for integration with external tools
 
 ### Security
 
@@ -194,9 +194,9 @@ Full documentation is hosted at
 | [Scripting](https://shristilabs.github.io/madhyamas/scripting/) | JavaScript automation |
 | [Plugins](https://shristilabs.github.io/madhyamas/plugins/) | WASM plugin development |
 | [Enterprise](https://shristilabs.github.io/madhyamas/enterprise/) | Auth, RBAC, audit, multi-instance, licensing |
-| [REST API](https://shristilabs.github.io/madhyamas/rest-api/) | 148 endpoints reference |
+| [REST API](https://shristilabs.github.io/madhyamas/rest-api/) | 184 endpoints reference |
 | [MCP Integration](https://shristilabs.github.io/madhyamas/mcp/) | AI agent setup and tool reference |
-| [CLI](https://shristilabs.github.io/madhyamas/cli/) | 141 CLI subcommands |
+| [CLI](https://shristilabs.github.io/madhyamas/cli/) | 159 CLI subcommands |
 | [Migration from Charles](https://shristilabs.github.io/madhyamas/migration-from-charles/) | Switching from Charles Proxy |
 
 ## Enterprise Quick Start

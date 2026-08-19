@@ -33,7 +33,7 @@ For single-developer, loopback-only usage, the OSS tier is sufficient — the pr
 | Scripting (JavaScript) & plugins (WASM) | ✅ | ✅ |
 | gRPC, WebSocket, SOCKS5, upstream proxy | ✅ | ✅ |
 | HAR import/export, auto save, mirror | ✅ | ✅ |
-| CLI (128 subcommands) & MCP (135 tools) | ✅ | ✅ |
+| CLI (159 subcommands) & MCP (146 tools) | ✅ | ✅ |
 | SQLite storage | ✅ | ✅ |
 | PostgreSQL storage | — | ✅ |
 | JWT + API key authentication | — | ✅ |

@@ -65,6 +65,7 @@ onUnmounted(() => {
           <a href="#manipulate">Manipulation</a>
           <a href="#compare">Compare</a>
           <a href="#ai">AI Agents</a>
+          <a href="./enterprise/">Enterprise</a>
           <a href="#install">Install</a>
         </nav>
 
@@ -73,7 +74,7 @@ onUnmounted(() => {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.8c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 4.7 18 5 18 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
             <span>GitHub</span>
           </a>
-          <a class="lp-btn lp-btn--primary" href="#install">Get Started</a>
+          <a class="lp-btn lp-btn--primary" href="./getting-started">Get Started</a>
           <button class="lp-nav__toggle" @click="toggleMobile" aria-label="Toggle menu" :aria-expanded="mobileOpen">
             <span></span><span></span><span></span>
           </button>
@@ -85,6 +86,7 @@ onUnmounted(() => {
         <a href="#manipulate" @click="closeMobile">Manipulation</a>
         <a href="#compare" @click="closeMobile">Compare</a>
         <a href="#ai" @click="closeMobile">AI Agents</a>
+        <a href="./enterprise/" @click="closeMobile">Enterprise</a>
         <a href="#install" @click="closeMobile">Install</a>
         <a class="lp-btn lp-btn--primary" href="https://github.com/ShristiLabs/madhyamas" target="_blank" rel="noopener">View on GitHub</a>
       </div>
@@ -121,9 +123,10 @@ onUnmounted(() => {
               </a>
             </div>
             <ul class="lp-hero__stats">
-              <li><strong>Rust</strong><span>Memory-safe core</span></li>
-              <li><strong>Web UI</strong><span>Browser-based</span></li>
-              <li><strong>8 platforms</strong><span>Linux &middot; macOS &middot; Windows &middot; ARM</span></li>
+              <li><strong>159</strong><span>CLI subcommands</span></li>
+              <li><strong>184</strong><span>REST API endpoints</span></li>
+              <li><strong>146</strong><span>MCP tools for AI agents</span></li>
+              <li><strong>8</strong><span>Platforms &middot; Linux &middot; macOS &middot; Windows &middot; ARM</span></li>
             </ul>
           </div>
 
@@ -230,7 +233,7 @@ onUnmounted(() => {
         <div class="lp-container">
           <header class="lp-section__head">
             <span class="lp-eyebrow">Traffic inspection</span>
-            <h2>Read bodies like a pro</h2>
+            <h2>Inspect every response in detail</h2>
             <p class="lp-section__sub">Syntax-highlighted JSON, image previews, decompression, and powerful query languages built in.</p>
           </header>
 
@@ -362,9 +365,9 @@ onUnmounted(() => {
       <section class="lp-section lp-section--alt" id="advanced">
         <div class="lp-container">
           <header class="lp-section__head">
-            <span class="lp-eyebrow">Advanced &amp; experimental</span>
+            <span class="lp-eyebrow">Advanced capabilities</span>
             <h2>Beyond plain HTTP</h2>
-            <p class="lp-section__sub">WebSocket capture, gRPC debugging, scripting, and a plugin system to extend Madhyamas your way.</p>
+            <p class="lp-section__sub">WebSocket capture, gRPC debugging, scripting, a plugin system to extend Madhyamas your way — plus enterprise-grade features for teams.</p>
           </header>
           <div class="lp-grid lp-grid--3">
             <article class="lp-card lp-card--ghost">
@@ -395,13 +398,13 @@ onUnmounted(() => {
               <h3>Plugin System <span class="lp-tag lp-tag--beta">Experimental</span></h3>
               <p>Extend functionality with custom Rust plugins. Enable, disable, and reload at runtime.</p>
             </article>
-            <article class="lp-card lp-card--ghost">
+            <a class="lp-card lp-card--ghost" href="./enterprise/">
               <div class="lp-card__icon lp-card__icon--pink">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18" stroke-linecap="round"/><circle cx="12" cy="12" r="9"/></svg>
               </div>
-              <h3>Enterprise Features <span class="lp-tag lp-tag--beta">Experimental</span></h3>
-              <p>Authentication, user management, RBAC, audit logging, and an onboarding wizard.</p>
-            </article>
+              <h3>Enterprise <span class="lp-tag lp-tag--ent">For teams</span></h3>
+              <p>Authentication, RBAC, audit logging, SSO, and multi-instance deployment for team and production environments.</p>
+            </a>
             <article class="lp-card lp-card--ghost">
               <div class="lp-card__icon lp-card__icon--blue">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H4zM8 20h8M12 16v4" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -431,7 +434,7 @@ onUnmounted(() => {
                 <li><span class="lp-check"></span> Export sessions as HAR or cURL</li>
                 <li><span class="lp-check"></span> Full CLI with <code>--json</code> for machine-readable output</li>
               </ul>
-              <a class="lp-btn lp-btn--primary" href="https://github.com/ShristiLabs/madhyamas#mcp-server-for-ai-agents" target="_blank" rel="noopener">Read MCP docs</a>
+              <a class="lp-btn lp-btn--primary" href="./mcp">Read MCP docs</a>
             </div>
             <div class="lp-ai__media" aria-hidden="true">
               <div class="lp-chat">
@@ -478,14 +481,21 @@ onUnmounted(() => {
                 <tr><td>Free</td><td class="lp-compare__hl"><span class="yes">Yes</span></td><td><span class="no">$50</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="meh">Freemium</span></td></tr>
                 <tr><td>Cross-platform</td><td class="lp-compare__hl"><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="meh">Windows</span></td><td><span class="meh">macOS</span></td></tr>
                 <tr><td>Web UI</td><td class="lp-compare__hl"><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="meh">Limited</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
-                <tr><td>Rust-powered</td><td class="lp-compare__hl"><span class="yes">Yes</span></td><td><span class="no">Java</span></td><td><span class="no">Python</span></td><td><span class="no">.NET</span></td><td><span class="no">Swift</span></td></tr>
+                <tr><td>Native, memory-safe core</td><td class="lp-compare__hl"><span class="yes">Yes (Rust)</span></td><td><span class="no">No (Java)</span></td><td><span class="no">No (Python)</span></td><td><span class="no">No (.NET)</span></td><td><span class="no">No (Swift)</span></td></tr>
                 <tr><td>gRPC</td><td class="lp-compare__hl"><span class="meh">Exp.</span></td><td><span class="no">No</span></td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
                 <tr><td>WebSocket</td><td class="lp-compare__hl"><span class="yes">Yes</span></td><td><span class="meh">Limited</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td></tr>
                 <tr><td>Scripting</td><td class="lp-compare__hl"><span class="meh">JS/TS</span></td><td><span class="no">No</span></td><td><span class="yes">Python</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
                 <tr><td>JSON Query</td><td class="lp-compare__hl"><span class="yes">JSONPath + JMESPath</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
                 <tr><td>MCP / AI Agent</td><td class="lp-compare__hl"><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+                <tr><td>Auth &amp; RBAC</td><td class="lp-compare__hl"><span class="ent">Enterprise</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+                <tr><td>Audit Logging</td><td class="lp-compare__hl"><span class="ent">Enterprise</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+                <tr><td>Multi-Instance</td><td class="lp-compare__hl"><span class="ent">Enterprise</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+                <tr><td>PostgreSQL Storage</td><td class="lp-compare__hl"><span class="ent">Enterprise</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
               </tbody>
             </table>
+            <p class="lp-compare__note">
+              Comparison based on publicly documented capabilities as of August 2026. &ldquo;Fiddler&rdquo; refers to the classic Windows release; Fiddler Everywhere is a separate cross-platform product. &ldquo;Enterprise&rdquo; features require the enterprise tier; experimental (&ldquo;Exp.&rdquo;) features may have limitations.
+            </p>
           </div>
         </div>
       </section>
@@ -618,7 +628,7 @@ madhyamas --help       <span class="t-dim"># all commands</span></pre>
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v14H4z" stroke-linejoin="round"/><path d="M7 9l3 3-3 3M13 15h4" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </div>
               <h3>CLI Reference</h3>
-              <p>128 subcommands for traffic, mocks, replay, sessions, scripts, plugins, and more — with JSON output.</p>
+              <p>159 subcommands for traffic, mocks, replay, sessions, scripts, plugins, and more — with JSON output.</p>
             </a>
             <a class="lp-card lp-card--ghost" href="./troubleshooting">
               <div class="lp-card__icon lp-card__icon--amber">
@@ -663,10 +673,12 @@ madhyamas --help       <span class="t-dim"># all commands</span></pre>
             <a href="#inspect">Inspection</a>
             <a href="#manipulate">Manipulation</a>
             <a href="#ai">AI Agents</a>
+            <a href="./enterprise/">Enterprise</a>
           </div>
           <div class="lp-footer__col">
             <h5>Docs</h5>
             <a href="./getting-started">Getting Started</a>
+            <a href="./use-cases">Use Cases</a>
             <a href="./traffic-inspection">Traffic Inspection</a>
             <a href="./https-certificates">HTTPS &amp; Certificates</a>
             <a href="./mobile-setup">Mobile Setup</a>
@@ -688,7 +700,7 @@ madhyamas --help       <span class="t-dim"># all commands</span></pre>
       </div>
       <div class="lp-container lp-footer__bottom">
         <span>Dual-licensed under MIT OR Apache-2.0.</span>
-        <span>&copy; {{ year }} Madhyamas contributors.</span>
+        <span>&copy; 2024&ndash;{{ year }} ShristiLabs</span>
       </div>
     </footer>
   </div>
@@ -916,6 +928,7 @@ madhyamas --help       <span class="t-dim"># all commands</span></pre>
 /* tags */
 .lp-tag { font-size: .68rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; vertical-align: middle; margin-left: 4px; }
 .lp-tag--beta { background: rgba(245, 158, 11, .16); color: #fbbf24; border: 1px solid rgba(245,158,11,.3); }
+.lp-tag--ent { background: rgba(37, 99, 235, .16); color: #93c5fd; border: 1px solid rgba(59,130,246,.35); }
 
 /* split */
 .lp-split { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
@@ -968,6 +981,8 @@ madhyamas --help       <span class="t-dim"># all commands</span></pre>
 .lp-compare .yes { color: var(--lp-green); font-weight: 600; }
 .lp-compare .no { color: var(--lp-text-dim); }
 .lp-compare .meh { color: var(--lp-amber); }
+.lp-compare .ent { color: var(--lp-blue-bright); font-weight: 600; }
+.lp-compare__note { padding: 14px 18px; color: var(--lp-text-dim); font-size: .8rem; line-height: 1.6; border-top: 1px solid var(--lp-border); }
 
 /* install */
 .lp-install { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }

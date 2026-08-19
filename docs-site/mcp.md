@@ -7,7 +7,7 @@ description: Connect AI agents like Claude Desktop, Cursor, Windsurf, and Devin 
 
 Madhyamas ships with a built-in **Model Context Protocol (MCP)** server that lets AI agents inspect captured traffic, create mocks and rewrites, manage sessions, and control every feature of the proxy — without leaving your agent's chat or IDE.
 
-MCP is an open standard that lets LLM-powered tools call external services through a uniform interface. The Madhyamas MCP server exposes **135 tools** covering traffic inspection, mocks, breakpoints, replay, sessions, scripting, plugins, and more.
+MCP is an open standard that lets LLM-powered tools call external services through a uniform interface. The Madhyamas MCP server exposes **146 tools** covering traffic inspection, mocks, breakpoints, replay, sessions, scripting, plugins, and more — 135 core tools, plus 11 enterprise tools that are registered automatically when the connected server runs the enterprise tier.
 
 ## How It Works
 
@@ -132,12 +132,12 @@ After configuring your agent, verify the MCP server works:
 
 ## Tool Categories
 
-The MCP server exposes 135 tools grouped by feature. The table below summarizes the categories; see the [full tool reference](https://github.com/ShristiLabs/madhyamas/blob/main/skills/madhyamas/references/mcp-tools.md) for parameter-level detail.
+The MCP server exposes 146 tools grouped by feature (135 core + 11 enterprise). The table below summarizes the categories; see the [full tool reference](https://github.com/ShristiLabs/madhyamas/blob/main/skills/madhyamas/references/mcp-tools.md) for parameter-level detail.
 
 | Category | Tools | What you can do |
 |----------|-------|-----------------|
 | Traffic Inspection | 7 | List, search, count, clear traffic; import HAR; get script traces |
-| Mock Rules | 21 | Create, update, delete, toggle, test, and version mock rules |
+| Mock Rules | 22 | Create, update, delete, toggle, test, and version mock rules |
 | Mock Collections | 6 | Group mocks into collections and toggle them together |
 | Mock Analytics | 2 | Inspect mock hit counts and analytics |
 | Breakpoints | 7 | Create, list, delete, and pause/resume breakpoints |
@@ -149,7 +149,7 @@ The MCP server exposes 135 tools grouped by feature. The table below summarizes 
 | Rewrites | 7 | Create, update, toggle, and apply rewrite templates |
 | gRPC | 5 | Inspect gRPC connections, streams, frames, and stats |
 | Scripts | 16 | Create, validate, test, toggle, and view history for JS scripts |
-| Plugins | 21 | Install, enable, configure, sign, and scaffold WASM plugins |
+| Plugins | 19 | Install, enable, configure, sign, and scaffold WASM plugins |
 | Auto Save | 3 | Configure and trigger session backups |
 | Block List | 7 | Add, remove, and toggle blocked domains/patterns |
 | Focus Hosts | 4 | Add and remove hosts highlighted in the traffic view |
@@ -157,6 +157,7 @@ The MCP server exposes 135 tools grouped by feature. The table below summarizes 
 | Logs | 3 | View and rotate application logs |
 | WebSocket Traffic | 4 | Inspect WebSocket connections and messages |
 | Certificate | 1 | Download the CA certificate |
+| Enterprise (enterprise tier only) | 11 | Manage users, roles, audit logs, and licenses |
 
 ## Example Agent Prompts
 

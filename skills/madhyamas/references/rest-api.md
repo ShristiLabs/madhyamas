@@ -1,8 +1,8 @@
 # REST API Reference
 
-All 177 REST API endpoints. Base URL: `http://localhost:3001/api`. All endpoints return JSON unless otherwise noted.
+All 184 REST API endpoints (153 core + 31 enterprise). Base URL: `http://localhost:3001/api`. All endpoints return JSON unless otherwise noted.
 
-## Phase 1 — Core (24 endpoints)
+## Phase 1 — Core (30 endpoints)
 
 ### Traffic
 
@@ -94,7 +94,7 @@ All 177 REST API endpoints. Base URL: `http://localhost:3001/api`. All endpoints
 |--------|------|-------------|
 | GET | `/health` | Health check (returns "OK") |
 
-## Phase 2 — Interception (67 endpoints)
+## Phase 2 — Interception (80 endpoints)
 
 ### Breakpoints
 
@@ -263,7 +263,7 @@ All 177 REST API endpoints. Base URL: `http://localhost:3001/api`. All endpoints
 
 Example: `curl -H 'X-Madhyamas-Confirm: true' -X POST http://localhost:3001/api/persistence/save`
 
-## Phase 3 — Advanced (19 endpoints, feature-gated)
+## Phase 3 — Advanced (42 endpoints, feature-gated)
 
 ### gRPC (feature: `grpc`)
 
@@ -328,7 +328,7 @@ Example: `curl -H 'X-Madhyamas-Confirm: true' -X POST http://localhost:3001/api/
 
 **POST /plugins/install body:** `source` (`url`|`registry`), `url` (string, when source=url), `id` (string, when source=registry), `checksum` (string, optional for URL source)
 
-## Phase 4 — Enterprise (20+ endpoints, feature-gated, mostly stubs)
+## Phase 4 — Enterprise (31 endpoints, feature-gated)
 
 ### Performance & Monitoring
 

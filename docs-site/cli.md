@@ -1,6 +1,6 @@
 ---
 title: CLI Reference
-description: Drive Madhyamas from the command line — 128 subcommands across traffic, mocks, breakpoints, replay, sessions, scripts, plugins, config, export, and more, with JSON output for scripting.
+description: Drive Madhyamas from the command line — 159 subcommands across traffic, mocks, breakpoints, replay, sessions, scripts, plugins, config, export, and more, with JSON output for scripting.
 ---
 
 # CLI Reference
@@ -30,7 +30,7 @@ Most subcommands support `--json` for machine-readable JSON output, which is use
 
 ## Subcommand Groups
 
-The CLI is organized into 20 command groups, mirroring the features available in the web UI.
+The CLI is organized into 23 command groups, mirroring the features available in the web UI. The last four groups (`users`, `audit`, `license`, `auth`) require an enterprise-tier server.
 
 | Group | Purpose | Key subcommands |
 |-------|---------|-----------------|
@@ -52,7 +52,11 @@ The CLI is organized into 20 command groups, mirroring the features available in
 | `focus` | Focus hosts | `list`, `add`, `remove`, `clear` |
 | `logs` | Log rotation | `get`, `rotate`, `level` |
 | `mirror` | Mirror tool | `get`, `update`, `trigger` |
-| `wstraffic` | WebSocket traffic | `connections`, `messages`, `stats`, `clear` |
+| `ws-traffic` | WebSocket traffic | `connections`, `messages`, `stats`, `clear` |
+| `users` | User management (enterprise) | `list`, `create`, `delete`, `update-role` |
+| `audit` | Audit log (enterprise) | `list`, `export`, `stats` |
+| `license` | License info (enterprise) | `info` |
+| `auth` | Authentication (enterprise) | `login`, `logout`, `api-keys` (`list`, `create`, `revoke`) |
 | `serve` | Start the proxy | (default subcommand) |
 | `mcp` | Run as MCP server | (stdio transport) |
 

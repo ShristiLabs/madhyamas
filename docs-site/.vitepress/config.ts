@@ -2,13 +2,18 @@ import { defineConfig } from "vitepress"
 
 export default defineConfig({
   title: "Madhyamas",
-  description: "HTTP/HTTPS Debugging Proxy — User Documentation",
+  description:
+    "Madhyamas is a free, open-source HTTP/HTTPS debugging proxy with a modern web UI — capture, inspect, mock, and replay traffic on Linux, macOS, Windows, and ARM.",
 
   // GitHub Pages serves at /madhyamas/ for the ShristiLabs/madhyamas repo
   base: "/madhyamas/",
 
   lang: "en-US",
   cleanUrls: true,
+
+  // The repo README for the docs site itself is contributor-facing; don't
+  // publish it as an unlisted page.
+  srcExclude: ["README.md"],
 
   // Show last-modified time on each page (Git commit date of the file)
   lastUpdated: true,
@@ -29,6 +34,31 @@ export default defineConfig({
   head: [
     ["link", { rel: "icon", type: "image/svg+xml", href: "/madhyamas/favicon.svg" }],
     ["meta", { name: "theme-color", content: "#0b0e14" }],
+    // Open Graph / Twitter cards so shared links render properly in chat apps
+    ["meta", { property: "og:site_name", content: "Madhyamas" }],
+    ["meta", { property: "og:type", content: "website" }],
+    ["meta", { property: "og:url", content: "https://shristilabs.github.io/madhyamas/" }],
+    ["meta", { property: "og:title", content: "Madhyamas — Open-source HTTP/HTTPS debugging proxy" }],
+    [
+      "meta",
+      {
+        property: "og:description",
+        content:
+          "A free, open-source HTTP/HTTPS debugging proxy with a modern web UI. Capture, inspect, mock, and replay traffic on Linux, macOS, Windows, and ARM.",
+      },
+    ],
+    ["meta", { property: "og:image", content: "https://shristilabs.github.io/madhyamas/screenshots/app-overview.png" }],
+    ["meta", { name: "twitter:card", content: "summary_large_image" }],
+    ["meta", { name: "twitter:title", content: "Madhyamas — Open-source HTTP/HTTPS debugging proxy" }],
+    [
+      "meta",
+      {
+        name: "twitter:description",
+        content:
+          "A free, open-source HTTP/HTTPS debugging proxy with a modern web UI. Capture, inspect, mock, and replay traffic on Linux, macOS, Windows, and ARM.",
+      },
+    ],
+    ["meta", { name: "twitter:image", content: "https://shristilabs.github.io/madhyamas/screenshots/app-overview.png" }],
   ],
 
   themeConfig: {

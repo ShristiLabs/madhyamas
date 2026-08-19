@@ -14,8 +14,8 @@ If you currently use [Charles Proxy](https://www.charlesproxy.com/) and want to 
 | **License** | Commercial, paid | Open source (MIT OR Apache-2.0) |
 | **Runtime** | JVM/Java (requires a JRE) | Single native Rust binary |
 | **UI** | Java Swing desktop app | Embedded React web UI (any browser) |
-| **API** | HTML-only web interface | Documented REST API (177 endpoints) |
-| **AI agent support** | None | Built-in MCP server (135 tools) |
+| **API** | HTML-only web interface | Documented REST API (184 endpoints) |
+| **AI agent support** | None | Built-in MCP server (146 tools) |
 | **gRPC** | Limited (5.2 fixes only) | Dedicated gRPC inspection UI |
 | **Scripting** | None | Sandboxed JavaScript (boa_engine) |
 | **Plugins** | None | Sandboxed WebAssembly (wasmtime) |
@@ -135,11 +135,11 @@ These Charles features have no Madhyamas equivalent today:
 
 ## Features Madhyamas Has That Charles Doesn't
 
-- [MCP server](./mcp) for AI agent integration (135 tools)
+- [MCP server](./mcp) for AI agent integration (146 tools)
 - [Scripting](./scripting) — sandboxed JavaScript hooks
 - [Plugins](./plugins) — sandboxed WebAssembly extensions
-- Documented [REST API](./rest-api) with 177 endpoints
-- [CLI](./cli) with 128 subcommands
+- Documented [REST API](./rest-api) with 184 endpoints
+- [CLI](./cli) with 159 subcommands
 - [Enterprise](./enterprise/) auth, RBAC, and audit logging
 
 ## See also
