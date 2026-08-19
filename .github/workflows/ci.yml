@@ -13,19 +13,17 @@ on:
       - "docker-compose.yml"
       - "docker-compose.yaml"
       - ".github/workflows/ci.yml"
-  pull_request:
-    branches: [main, develop]
-    paths:
-      - "crates/**"
-      - "web/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "docker/**"
-      - "Dockerfile"
-      - "docker-compose.yml"
-      - "docker-compose.yaml"
-      - ".github/workflows/ci.yml"
   workflow_dispatch:
+  # Invoked per-PR by ci-pr.yml. Dependabot PRs must come in via the
+  # pull_request_target dispatcher: GitHub withholds repo secrets
+  # (LICENSING_TOKEN) from pull_request runs triggered by dependabot[bot],
+  # so the private licensing-core dep cannot be fetched in that context.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to check out (PR head SHA when dispatched)"
+        required: false
+        type: string
 
 # Superseded runs (rapid pushes to the same branch) are cancelled instead
 # of stacking full matrix runs.
@@ -45,6 +43,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -88,6 +88,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       # cargo fmt shells out to cargo metadata, which parses all member
       # manifests — including the private licensing-core git dep.
@@ -128,6 +130,8 @@ jobs:
             tier: oss
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - name: Configure private licensing repo access
         uses: ./.github/actions/configure-licensing-repo
         with:
@@ -187,6 +191,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - name: Configure private licensing repo access
         uses: ./.github/actions/configure-licensing-repo
         with:
@@ -231,11 +237,12 @@ jobs:
 
   # =============================================================================
   # Docker build test — both tiers via BUILD_TIER build-arg
-  # Push/dispatch only: PRs are already compile-validated by rust-checks,
-  # and the release pipeline builds the image independently anyway.
+  # Push/dispatch only: PRs (incl. the dependabot pull_request_target
+  # dispatch) are already compile-validated by rust-checks, and the release
+  # pipeline builds the image independently anyway.
   # =============================================================================
   docker-build:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
     name: Docker Build Test (${{ matrix.tier }})
     runs-on: ubuntu-latest
     strategy:
@@ -244,6 +251,8 @@ jobs:
         tier: [oss, enterprise]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - name: Configure private licensing repo access
         uses: ./.github/actions/configure-licensing-repo
         with:
@@ -316,7 +325,10 @@ jobs:
               "armv7-unknown-linux-gnueabihf",
               "riscv64gc-unknown-linux-gnu",
           ]
-          targets = pr_targets if os.environ["EVENT_NAME"] == "pull_request" else list(meta)
+          # Reduced matrix in any PR context (pull_request or the
+          # dependabot pull_request_target dispatch); full on push/dispatch.
+          is_pr = os.environ["EVENT_NAME"] in ("pull_request", "pull_request_target")
+          targets = pr_targets if is_pr else list(meta)
 
           combos = []
           for target in targets:
@@ -345,6 +357,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - name: Configure private licensing repo access
         uses: ./.github/actions/configure-licensing-repo
         with:

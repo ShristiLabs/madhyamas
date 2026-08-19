@@ -1,0 +1,73 @@
+name: CI PR
+
+# Per-PR dispatcher for ci.yml.
+#
+# Why this exists: GitHub withholds repository secrets from pull_request
+# runs triggered by dependabot[bot] (anti-exfiltration policy), so a plain
+# pull_request CI run on a Dependabot PR gets an empty LICENSING_TOKEN and
+# every cargo job dies fetching the private licensing-core dep. The only
+# PR context that receives secrets is pull_request_target.
+#
+# Exactly one of the two jobs below runs for any given PR:
+#   - ci (pull_request)      — everyone except dependabot[bot]; identical
+#                              security posture to a plain pull_request CI.
+#   - ci-dependabot
+#                            (pull_request_target) — strictly gated to
+#                              github.actor == 'dependabot[bot]' and the
+#                              same paths as ci.yml. Dependabot PRs only
+#                              modify manifests/lockfiles/workflow version
+#                              pins, and the workflow definitions used are
+#                              those of the BASE branch, so the privileged
+#                              context only runs trusted workflow code.
+#
+# Both call the same reusable ci.yml with the PR head SHA and inherited
+# secrets — Dependabot PRs get the full test suite, which the auto-merge
+# workflow depends on.
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "crates/**"
+      - "web/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "docker/**"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "docker-compose.yaml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/ci-pr.yml"
+  pull_request_target:
+    branches: [main, develop]
+    paths:
+      - "crates/**"
+      - "web/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "docker/**"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "docker-compose.yaml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/ci-pr.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+    secrets: inherit
+
+  ci-dependabot:
+    name: ci-dependabot
+    if: github.event_name == 'pull_request_target' && github.actor == 'dependabot[bot]'
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+    secrets: inherit

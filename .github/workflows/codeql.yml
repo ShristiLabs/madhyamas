@@ -24,6 +24,10 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    # Skip PR runs for Dependabot: secrets (LICENSING_TOKEN) are withheld
+    # in that context, so the Rust autobuild cannot fetch licensing-core.
+    # Dependency bumps are still analyzed post-merge (push) and weekly.
+    if: github.event_name != 'pull_request' || github.actor != 'dependabot[bot]'
     permissions:
       contents: read
       security-events: write
