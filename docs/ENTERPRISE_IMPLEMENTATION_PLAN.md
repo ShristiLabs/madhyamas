@@ -888,9 +888,17 @@ payment processing (Stripe), license issuance, and seat tracking.
 
 #### 12a: Core licensing server
 
+> **Status update (2026-08):** Phase 12 shipped, and the licensing server
+> has since moved out of this workspace to the private
+> [ShristiLabs/licensing](https://github.com/ShristiLabs/licensing) repo,
+> generalized into a multi-product platform (per-product Ed25519 keypairs,
+> `product_id` claim, DB-driven plans). Shared licensing logic now lives in
+> that repo's `licensing-core` crate, consumed by `madhyamas-enterprise` as
+> a pinned git dependency. The steps below are the historical plan.
+
 | Step | Action |
 |---|---|
-| 12a.1 | Create `licensing-server/` workspace member |
+| 12a.1 | Create `licensing-server/` workspace member (later moved to ShristiLabs/licensing) |
 | 12a.2 | Implement database schema (accounts, customers, licenses, seats, audit) |
 | 12a.3 | Implement Ed25519 license signing (using `ed25519-dalek`) |
 | 12a.4 | Implement license issuance API (create license, sign, return file) |

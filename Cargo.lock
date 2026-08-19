@@ -2520,6 +2520,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "licensing-core"
+version = "0.1.0"
+source = "git+https://github.com/ShristiLabs/licensing.git?tag=licensing-core-v0.1.0#44d718c155b4f9b34f0b680f6b81090993594d6b"
+dependencies = [
+ "base64",
+ "chrono",
+ "ed25519-dalek",
+ "rand 0.8.7",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2717,6 +2732,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "jsonwebtoken",
+ "licensing-core",
  "madhyamas-api",
  "madhyamas-core",
  "parking_lot",
@@ -2733,39 +2749,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "uuid",
-]
-
-[[package]]
-name = "madhyamas-licensing"
-version = "0.1.6"
-dependencies = [
- "anyhow",
- "argon2",
- "axum",
- "base64",
- "chrono",
- "clap",
- "ed25519-dalek",
- "hex",
- "hmac",
- "jsonwebtoken",
- "madhyamas-enterprise",
- "password-hash",
- "rand 0.8.7",
- "rand_core 0.6.4",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sqlx",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 
@@ -3806,7 +3789,6 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
- "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

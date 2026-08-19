@@ -1072,10 +1072,11 @@ volumes:
 
 ## 7. Licensing Server CI/CD
 
-The licensing server is in a **separate repository**
-(`madhyamas-license-server`) with its own CI/CD pipeline. See
-[ENTERPRISE_LICENSING_SERVER.md §15](ENTERPRISE_LICENSING_SERVER.md#15-portal-frontend)
-for the full portal frontend and build design.
+The licensing server lives in the private **[ShristiLabs/licensing](https://github.com/ShristiLabs/licensing)**
+repository (multi-product licensing platform) with its own CI/CD pipeline.
+This workspace consumes its `licensing-core` crate as a pinned git
+dependency — CI must have read access to that private repo (deploy key or
+token; see `.cargo/config.toml.example` for the local-development setup).
 
 ### Licensing server workflow
 

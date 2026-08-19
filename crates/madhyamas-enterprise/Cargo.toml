@@ -14,6 +14,9 @@ default = []
 [dependencies]
 madhyamas-api.workspace = true
 madhyamas-core.workspace = true
+# Shared licensing primitives — single source of truth for the license file
+# format and Ed25519 verification (see MAD root Cargo.toml for pinning).
+licensing-core.workspace = true
 axum.workspace = true
 tokio.workspace = true
 serde.workspace = true

@@ -8,7 +8,6 @@ members = [
     "crates/madhyamas-cli",
     "crates/madhyamas-mcp",
     "crates/madhyamas-plugin-sdk",
-    "licensing-server",
 ]
 
 [workspace.package]
@@ -116,6 +115,13 @@ ed25519-dalek = { version = "2", default-features = false, features = [
     "std",
     "rand_core",
 ] }
+
+# Shared licensing primitives (LicenseClaims, canonical JSON, Ed25519
+# sign/verify) — the same crate the ShristiLabs licensing server signs with,
+# so both sides verify byte-identical claims. Lives in the private
+# ShristiLabs/licensing repo; pin to licensing-core tags. For local
+# development against a sibling checkout, see .cargo/config.toml.example.
+licensing-core = { git = "https://github.com/ShristiLabs/licensing.git", tag = "licensing-core-v0.1.0", subdirectory = "crates/licensing-core" }
 
 # Argon2id password hashing for enterprise user management (Phase 4a).
 # `password-hash` is the companion PHC-string crate; argon2 0.5 re-exports it

@@ -63,12 +63,34 @@ spec:
 
 On startup, Madhyamas verifies the license:
 
-1. **Signature verification** — Ed25519 signature is checked against the embedded public key
+1. **Signature verification** — Ed25519 signature is checked against the embedded public key (the `madhyamas` product's key; licenses are issued per product by the [ShristiLabs licensing platform](https://github.com/ShristiLabs/licensing))
 2. **Expiry check** — License must not be expired
 3. **Instance ID check** — If the license specifies an instance ID, it must match `--instance-id`
-4. **Feature check** — Enabled features are loaded from the license
+4. **Product check** — The license's `product_id` claim must be `madhyamas` (licenses issued for other ShristiLabs products are rejected)
+5. **Feature check** — Enabled features are loaded from the license
 
 If verification fails, Madhyamas starts in **unlicensed mode** with a warning. All features continue to work, but a banner is displayed in the web UI.
+
+### License file format
+
+```json
+{
+  "license_id": "lic_abc123",
+  "product_id": "madhyamas",
+  "customer": "Acme Corp",
+  "plan": "enterprise",
+  "seats": 50,
+  "instance_id": "inst_xyz789",
+  "issued_at": "2026-01-01T00:00:00Z",
+  "expires_at": "2027-01-01T00:00:00Z",
+  "features": ["auth", "rbac", "audit", "oidc", "mfa"],
+  "signature": "base64_ed25519_signature_of_canonical_json"
+}
+```
+
+The required `product_id` field (claims format v2, 2026-08) scopes the
+license to a product. Licenses issued before this field existed (v1) fail
+with a parse error — re-download the license from the portal.
 
 ## License Details
 

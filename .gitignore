@@ -50,6 +50,10 @@ signing-pub.pem
 .env.enterprise
 .env.enterprise.*
 
+# Licensing server: Ed25519 signing keys and local compose secrets
+licensing-server/keys/
+licensing-server/.env
+
 # Logs
 logs/
 *.log
@@ -101,3 +105,4 @@ skills-lock.json
 
 # Graphify output (local only)
 graphify-out/
+.cargo/config.toml

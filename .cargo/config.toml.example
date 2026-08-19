@@ -1,0 +1,24 @@
+# Example local development overrides for working with the private
+# ShristiLabs/licensing dependency.
+#
+# Copy to .cargo/config.toml (UNCOMMITTED — the real file is gitignored)
+# when you have the licensing repo checked out as a sibling directory.
+#
+# Do NOT commit the real .cargo/config.toml: CI resolves the pinned git
+# dependency (github.com/ShristiLabs/licensing, tag licensing-core-vX.Y.Z)
+# with its own credentials and has no sibling checkout, so a committed
+# patch would break it.
+#
+# - [patch] points licensing-core at the sibling checkout so local changes
+#   apply immediately without pushing a new tag.
+# - git-fetch-with-cli + insteadOf make cargo fetch private repos over SSH
+#   (your GitHub key) instead of unauthenticated HTTPS.
+
+[net]
+git-fetch-with-cli = true
+
+[url."ssh://git@github.com/"]
+insteadOf = "https://github.com/"
+
+[patch."https://github.com/ShristiLabs/licensing.git"]
+licensing-core = { path = "../licensing/crates/licensing-core" }

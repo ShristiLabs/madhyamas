@@ -1394,7 +1394,12 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         let license: Option<madhyamas_enterprise::License> =
             if let Some(ref license_path) = args.license_file {
                 let mut verifier = madhyamas_enterprise::LicenseVerifier::from_env()
-                    .map_err(|e| anyhow::anyhow!("license verifier init failed: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("license verifier init failed: {e}"))?
+                    // Claims format v2: licenses are scoped per product —
+                    // only licenses issued for the madhyamas product are
+                    // accepted here (per-product keypairs provide the
+                    // cryptographic check; this is defense in depth).
+                    .with_expected_product_id("madhyamas");
                 // Phase 9.14: instance ID replay prevention. When
                 // --instance-id is provided, the license's instance_id must
                 // match.

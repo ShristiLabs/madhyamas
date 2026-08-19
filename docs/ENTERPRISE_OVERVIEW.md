@@ -26,7 +26,7 @@ licensing server infrastructure.
 | Document | Scope | Lines |
 |---|---|---|
 | **This document** | Two-tier model, crate architecture, database strategy overview, licensing overview, current state, what's missing, roadmap, risk analysis | ~1200 |
-| [ENTERPRISE_LICENSING_SERVER.md](ENTERPRISE_LICENSING_SERVER.md) | Full SaaS licensing server: account management, Stripe payments, license issuance/revocation, support tickets, admin dashboard, email notifications | ~1660 |
+| [ENTERPRISE_LICENSING_SERVER.md](ENTERPRISE_LICENSING_SERVER.md) | Pointer: the licensing server moved to the private ShristiLabs/licensing repo (multi-product platform) | stub |
 | [ENTERPRISE_STORAGE_TRAITS.md](ENTERPRISE_STORAGE_TRAITS.md) | Shared storage trait design: sync/async obstacle, trait definitions, dual SQLite/PostgreSQL backends, rusqlite → sqlx migration plan | ~720 |
 | [ENTERPRISE_AUTH_RBAC.md](ENTERPRISE_AUTH_RBAC.md) | Proxy-side authentication, authorization (RBAC), and external identity provider integration (OIDC, header, LDAP, SAML) | ~320 |
 | [ENTERPRISE_WEB_UI.md](ENTERPRISE_WEB_UI.md) | Enterprise web UI: same-folder runtime-gated approach, tier detection, auth UI, admin panels, build/embedding | ~680 |

@@ -136,6 +136,17 @@ cargo fmt --all && cargo clippy --all-targets --all-features
 cd web && npm run build
 ```
 
+### Private git dependency (`licensing-core`)
+
+`madhyamas-enterprise` depends on `licensing-core` from the private
+[ShristiLabs/licensing](https://github.com/ShristiLabs/licensing) repo
+(pinned to a `licensing-core-vX.Y.Z` tag). Local development with a sibling
+checkout: copy `.cargo/config.toml.example` to `.cargo/config.toml`
+(gitignored) to redirect the dependency to `../licensing/crates/licensing-core`
+and fetch private repos over SSH. CI needs read credentials for the private
+repo. Bump the tag pin in the root `Cargo.toml` to pick up licensing-core
+changes.
+
 ## Configuration
 
 **CLI Flags**: `--proxy-port`, `--api-port`, `--host`, `--public-ip`, `--verbose`, `--no-https`, `--enable-socks`, `--socks-port`, `--socks-username`, `--socks-password`, `--upstream-proxy-enabled`, `--upstream-proxy`, `--upstream-protocol`, `--upstream-auth`, `--upstream-no-proxy`, `--allowed-ip` (repeatable)
@@ -190,7 +201,7 @@ Each feature has a dedicated doc page. Read the relevant one before working on t
 | Storage backend guide | [docs/STORAGE_BACKEND_GUIDE.md](docs/STORAGE_BACKEND_GUIDE.md) | Storage trait reference, implementation checklist for new backends, schema design, testing, migration, Mermaid ER diagrams |
 | Enterprise testing | [docs/ENTERPRISE_TESTING.md](docs/ENTERPRISE_TESTING.md) | Enterprise testing guide: unit, integration, multi-instance, Playwright E2E, CI/CD, Mermaid diagrams |
 | Enterprise analysis (overview) | [docs/ENTERPRISE_OVERVIEW.md](docs/ENTERPRISE_OVERVIEW.md) | Two-tier model, crate architecture, database strategy, licensing overview, roadmap (historical — written pre-implementation) |
-| Enterprise licensing server | [docs/ENTERPRISE_LICENSING_SERVER.md](docs/ENTERPRISE_LICENSING_SERVER.md) | SaaS licensing: accounts, Stripe payments, license issuance/revocation, support tickets, admin dashboard |
+| Enterprise licensing server | [docs/ENTERPRISE_LICENSING_SERVER.md](docs/ENTERPRISE_LICENSING_SERVER.md) | Pointer: the licensing server now lives in the private ShristiLabs/licensing repo (multi-product platform); shared `licensing-core` crate keeps signing/verification compatible |
 | Enterprise storage traits | [docs/ENTERPRISE_STORAGE_TRAITS.md](docs/ENTERPRISE_STORAGE_TRAITS.md) | Shared async storage traits, rusqlite → sqlx migration, SQLite + PostgreSQL backends |
 | Enterprise auth/RBAC/IdP | [docs/ENTERPRISE_AUTH_RBAC.md](docs/ENTERPRISE_AUTH_RBAC.md) | Authentication modes, RBAC model, OIDC/header/LDAP/SAML integration |
 | Enterprise web UI | [docs/ENTERPRISE_WEB_UI.md](docs/ENTERPRISE_WEB_UI.md) | Same-folder runtime-gated approach, tier detection, auth UI, admin panels, build/embedding |

@@ -62,7 +62,7 @@ graph TD
 | `auth` | `src/auth.rs` | `AuthManager`, JWT (HS256) issue/validate, API key validation, `Scope` |
 | `rbac` | `src/rbac.rs` | `RbacManager`, role-to-permission matrix, `ResourceType`/`Permission` |
 | `audit` | `src/audit.rs` | `AuditLogger`, in-memory ring buffer, SHA-256 hash chain, store-backed persistence |
-| `license` | `src/license.rs` | `LicenseVerifier`, Ed25519 signature verification, canonical JSON |
+| `license` | `src/license.rs` | Re-exports the shared `licensing-core` crate (`LicenseVerifier`, Ed25519 verification, canonical JSON, claims format v2 with `product_id`) — the same crate the ShristiLabs licensing server signs with |
 | `credentials` | `src/credentials.rs` | Argon2id `hash_password`/`verify_password`, complexity policy |
 | `user` | `src/user.rs` | `User`, `UserRole`, `UserStatus` domain types |
 | `redis_state` | `src/redis_state.rs` | `RedisState`, pub/sub, instance registration, seat tracking, cluster metrics |
