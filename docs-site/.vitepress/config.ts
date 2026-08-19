@@ -36,6 +36,7 @@ export default defineConfig({
 
     nav: [
       { text: "Guides", link: "/getting-started" },
+      { text: "Use Cases", link: "/use-cases" },
       { text: "Features", link: "/traffic-inspection" },
       { text: "Enterprise", link: "/enterprise/" },
       { text: "Reference", link: "/cli" },
@@ -49,6 +50,7 @@ export default defineConfig({
         items: [
           { text: "Overview", link: "/" },
           { text: "Installation & Setup", link: "/getting-started" },
+          { text: "Use Cases", link: "/use-cases" },
           { text: "HTTPS & Certificates", link: "/https-certificates" },
           { text: "Mobile Setup", link: "/mobile-setup" },
           { text: "Configuration", link: "/configuration" },

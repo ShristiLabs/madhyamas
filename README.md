@@ -30,6 +30,31 @@ Point your browser or device proxy at `localhost:8888`, then open
 For mobile devices, certificate installation, and advanced configuration, see
 the [Getting Started Guide](https://shristilabs.github.io/madhyamas/getting-started/).
 
+## Use Cases
+
+Madhyamas is used across the entire development lifecycle — from building
+frontends to debugging production issues. Here are the most common scenarios:
+
+| Use Case | What You Can Do |
+|----------|----------------|
+| [API Development](https://shristilabs.github.io/madhyamas/use-cases#api-development-debugging) | Inspect API calls, debug CORS, view JSON responses with JSONPath queries |
+| [Mobile App Debugging](https://shristilabs.github.io/madhyamas/use-cases#mobile-app-debugging) | Debug iOS/Android network traffic, bypass cert pinning |
+| [Mock APIs](https://shristilabs.github.io/madhyamas/use-cases#mock-apis) | Build frontends before backends are ready, record real traffic as mocks, test error handling |
+| [Performance Testing](https://shristilabs.github.io/madhyamas/use-cases#performance-testing) | Simulate slow networks, batch replay for load testing, waterfall analysis |
+| [Bug Reproduction](https://shristilabs.github.io/madhyamas/use-cases#bug-reproduction-regression-testing) | Capture, export, and replay exact failing requests; regression test after deploys |
+| [Security Analysis](https://shristilabs.github.io/madhyamas/use-cases#security-analysis) | Inspect auth tokens, block ads/trackers, remove security headers for testing |
+| [Automation & Scripting](https://shristilabs.github.io/madhyamas/use-cases#automation-scripting) | JS hooks to log, modify, block, or mock traffic programmatically |
+| [AI-Assisted Debugging](https://shristilabs.github.io/madhyamas/use-cases#ai-assisted-debugging) | Connect Claude/Windsurf/Cursor via MCP to inspect and manipulate traffic |
+| [Team & Enterprise](https://shristilabs.github.io/madhyamas/use-cases#team-enterprise-scenarios) | Shared proxy with auth, audit trails, multi-instance clustering, CI/CD API keys |
+| [Advanced Networking](https://shristilabs.github.io/madhyamas/use-cases#advanced-networking) | Corporate proxy chaining, gRPC inspection, WebSocket debugging, SOCKS5 tunneling |
+| [Session Collaboration](https://shristilabs.github.io/madhyamas/use-cases#session-management-collaboration) | Share HAR exports, compare staging vs production, organize traffic into sessions |
+| [Data Archival](https://shristilabs.github.io/madhyamas/use-cases#data-archival-compliance) | Auto-save sessions, mirror API responses to disk, compliance audit exports |
+| [Migrating from Charles/Fiddler](https://shristilabs.github.io/madhyamas/use-cases#migrating-from-other-tools) | Import HAR files, map Charles features to Madhyamas equivalents |
+
+Each use case includes step-by-step walkthroughs with copy-paste commands. See
+the full [Use Cases Guide](https://shristilabs.github.io/madhyamas/use-cases/)
+for detailed examples.
+
 ## Features
 
 ### Traffic Capture & Inspection
@@ -160,6 +185,7 @@ Full documentation is hosted at
 | Section | Description |
 |---------|-------------|
 | [Getting Started](https://shristilabs.github.io/madhyamas/getting-started/) | Installation, configuration, mobile setup |
+| [Use Cases](https://shristilabs.github.io/madhyamas/use-cases/) | Real-world scenarios with step-by-step examples |
 | [Traffic Inspection](https://shristilabs.github.io/madhyamas/traffic-inspection/) | Viewing, filtering, exporting traffic |
 | [Breakpoints](https://shristilabs.github.io/madhyamas/breakpoints/) | Pausing and modifying requests |
 | [Mocks](https://shristilabs.github.io/madhyamas/mocks/) | Creating mock API responses |
