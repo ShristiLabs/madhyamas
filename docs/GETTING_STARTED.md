@@ -82,8 +82,8 @@ madhyamas --help       # See all commands
 #### Downloading Snapshot Builds
 
 1. Go to [GitHub Actions](https://github.com/ShristiLabs/madhyamas/actions/workflows/ci.yml)
-2. Click on the latest successful workflow run
-3. Download the artifact for your platform (e.g., `madhyamas-x86_64-unknown-linux-gnu`)
+2. Click on the latest successful workflow run on `main`
+3. Download the artifact for your platform and tier (e.g., `madhyamas-oss-x86_64-unknown-linux-gnu` for the OSS build, `madhyamas-enterprise-aarch64-apple-darwin` for the enterprise build)
 4. Extract and install using the instructions above
 
 ## Quick Start

@@ -34,13 +34,17 @@ enabled (including `enterprise`, which is in the default feature set).
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
-| `ci.yml` | Push/PR to main/develop | Build frontend, Rust checks (fmt, clippy, test), Docker build test, cross-compile for 8 targets, docs check |
+| `ci.yml` | Push to main/develop; called per-PR by `ci-pr.yml` | Build frontend, Rust checks (dedicated fmt job, clippy, tests), security audit, Docker build test (push only), cross-compile binaries, docs checks split out |
+| `ci-pr.yml` | PR to main/develop | Dispatches `ci.yml` per PR — normal `pull_request` for humans, `pull_request_target` (actor-gated) for Dependabot so repo secrets are available |
+| `docs.yml` | Push/PR touching `docs/**`, `crates/**`, `web/**` | Docs link/source-path checks and module coverage (split from ci.yml so docs edits don't trigger the heavy matrix) |
 | `release.yml` | Tag `v*` or manual dispatch | Build binaries for all platforms, MSI, Snap, RPM, create GitHub Release, publish to Homebrew/Chocolatey/Snap/Docker Hub/crates.io |
 | `release-dispatch.yml` | Manual dispatch | Bump version, update CHANGELOG, create tag (triggers release.yml) |
-| `codeql.yml` | Push/PR | GitHub CodeQL security analysis |
-| `deploy-docs.yml` | Push to main | Deploy VitePress docs to GitHub Pages |
-| `skills.yml` | Push to main | Build and publish AI skill package |
-| `plugins-release.yml` | Tag `plugins-v*` | Build and publish WASM plugins |
+| `codeql.yml` | Push/PR + weekly | GitHub CodeQL security analysis (has licensing repo access; skips Dependabot PRs) |
+| `deploy-docs.yml` | Push to main touching `docs-site/**` | Deploy VitePress docs to GitHub Pages (canonical Pages deployment) |
+| `skills.yml` | Push/PR touching `skills/**` | Build and validate AI skill package |
+| `plugins-release.yml` | Tag `<plugin>-v*` | Build and publish WASM plugins (skips cleanly when the dispatch workflow owns the tag) |
+| `plugins-release-dispatch.yml` | Manual dispatch | Prepare + tag a plugin release end-to-end |
+| `plugins-snapshot.yml` | Push touching plugins | Rolling SNAPSHOT plugin builds |
 
 ### Current build command
 
@@ -1080,107 +1084,43 @@ token; see `.cargo/config.toml.example` for the local-development setup).
 
 ### Licensing server workflow
 
-```yaml
-# madhyamas-license-server/.github/workflows/ci.yml
+The shipped pipeline (in the `ShristiLabs/licensing` repo, see its
+`DEPLOYMENT.md` for the authoritative details):
 
-name: CI
+- **`ci.yml`** — on PRs and pushes to `main`: dedicated fmt job, strict
+  clippy, unit tests; the server's HTTP-level integration tests run
+  against an ephemeral `postgres:16` service container (they are
+  `#[ignore]`d locally and self-initialize the schema); portal
+  typecheck + build; a Docker image build smoke test on main pushes.
+  Toolchain pinned to the same Rust version as the Dockerfile.
+- **`release.yml`** — on `v*` tags or manual dispatch: tests, then
+  publish `ghcr.io/shristilabs/licensing-server` (version + `latest`)
+  using `GITHUB_TOKEN`. **Deployment is manual** —
+  `kubectl apply -f deploy/kubernetes/` against the published tag
+  (production secrets, including per-product Ed25519 signing keys, are
+  hand-managed in the k8s manifests, so CD is deliberately not
+  automated).
+- **`licensing-core-release.yml`** — on `licensing-core-v*` tags: run
+  the licensing-core suite (the golden-fixture test enforces claims
+  format bumps) and cut a GitHub Release — the anchor this repo's
+  Cargo.toml pin bump references.
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-
-env:
-  CARGO_TERM_COLOR: always
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: licensedb_test
-          POSTGRES_USER: license
-          POSTGRES_PASSWORD: testpass
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-    env:
-      DATABASE_URL: postgres://license:testpass@localhost:5432/licensedb_test
-      REDIS_URL: redis://localhost:6379
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      # Rust checks
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --workspace
-
-      # Frontend checks
-      - run: cd web && npm ci
-      - run: cd web && npm run typecheck
-      - run: cd web && npm run lint
-      - run: cd web && npm run build
-
-  build-and-deploy:
-    needs: test
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-      - uses: aws-actions/amazon-ecr-login@v2
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: docker/Dockerfile
-          push: true
-          tags: |
-            ${{ secrets.ECR_REGISTRY }}/madhyamas-license-server:latest
-            ${{ secrets.ECR_REGISTRY }}/madhyamas-license-server:${{ github.sha }}
-      - name: Deploy to ECS
-        run: |
-          aws ecs update-service \
-            --cluster madhyamas \
-            --service license-server \
-            --force-new-deployment
-```
+The licensing repo's own CI needs no custom secrets (licensing-core is
+a path dependency there). This repo's CI authenticates to it with the
+`LICENSING_TOKEN` fine-grained PAT (the org blocks deploy keys
+org-wide; see `.github/actions/configure-licensing-repo`).
 
 ### Key differences from the proxy CI/CD
 
 | Aspect | Proxy CI/CD (this repo) | License server CI/CD (separate repo) |
 |---|---|---|
-| Triggers | Push/PR to main/develop, tags `v*` | Push/PR to main |
-| Services | None (SQLite, no external deps) | PostgreSQL + Redis (test services) |
-| Build matrix | 8 targets × 2 tiers | 1 target (linux/amd64 only) |
-| Artifacts | Binaries + Docker images + packages | Docker image only |
-| Publishing | GitHub Releases, Homebrew, Chocolatey, Snap, crates.io, Docker | ECR + ECS deploy |
-| Secrets | CRATES_TOKEN, HOMEBREW_TAP_TOKEN, etc. | AWS credentials, Stripe key, SES key |
-| Database migrations | None (SQLite, schema in code) | `sqlx::migrate!` runs at startup |
+| Triggers | Push/PR to main/develop, tags `v*` | Push/PR to main, tags `v*` and `licensing-core-v*` |
+| Services | None (SQLite, no external deps) | PostgreSQL 16 (integration tests) |
+| Build matrix | 8 targets × 2 tiers | No cross matrix; container image only |
+| Artifacts | Binaries + Docker images + packages | Docker image (GHCR) + GitHub Releases for licensing-core tags |
+| Publishing | GitHub Releases, Homebrew, Chocolatey, Snap, crates.io, Docker | GHCR only; deploy is manual `kubectl apply` |
+| Secrets | CRATES_TOKEN, HOMEBREW_TAP_TOKEN, etc. | Runtime secrets in k8s manifests (admin key, JWT, per-product signing keys); CI uses only `GITHUB_TOKEN` |
+| Database migrations | None (SQLite, schema in code) | Schema created at startup via runtime SQL (`db::init_schema`), no migration files |
 
 ---
 
@@ -1202,32 +1142,38 @@ work for both tiers:
 
 ### 8.2 Licensing server repository secrets (separate repo)
 
-| Secret | Purpose |
-|---|---|
-| `AWS_ACCESS_KEY_ID` | ECR push, ECS deploy, SES email |
-| `AWS_SECRET_ACCESS_KEY` | ECR push, ECS deploy, SES email |
-| `ECR_REGISTRY` | ECR registry URL |
-| `STRIPE_SECRET_KEY` | Stripe API (live key in prod, test key in CI) |
-| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signature verification |
-| `ED25519_LICENSE_PRIVATE_KEY` | License signing key (from Secrets Manager) |
-| `SES_SMTP_PASSWORD` | Email sending |
-| `JWT_SECRET` | Portal auth JWT signing |
+The licensing server runs on Kubernetes (not AWS ECS — the earlier
+ECR/ECS design was not shipped). Its CI uses only the automatic
+`GITHUB_TOKEN`; production secrets live in
+`deploy/kubernetes/secret.yaml` (applied manually with the manifests)
+and are consumed at runtime:
 
-**CI vs production secrets:** The CI pipeline uses test keys (Stripe
-test mode, throw-away JWT secret, no real license signing). Production
-secrets are injected at runtime via AWS Secrets Manager / ECS task
-definition, not via GitHub Actions secrets.
+| Runtime secret (k8s) | Purpose |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection URL |
+| `ADMIN_KEY` | Admin API key (`X-Admin-Key`) |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Bootstrap admin user (first run only) |
+| `JWT_SECRET` | Portal auth JWT signing |
+| `ED25519_PRIVATE_KEY__{CODE}` | Per-product license signing keys (base64), e.g. `ED25519_PRIVATE_KEY__MADHYAMAS` — alternatively mounted as `keys/{code}.key` files |
+| `STRIPE_API_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe billing (billing endpoints return 503 when unset) |
+
+Development mode (`RUST_ENV=development`) falls back to a built-in dev
+keypair and default admin credentials with a warning — never enabled
+in production. The **real** `madhyamas` signing key is kept out of git
+(gitignored `licensing/keys/`).
 
 ### 8.3 Ed25519 license signing key
 
 The license signing private key is the most critical secret. It is
-**never** in GitHub Actions secrets. It is stored in AWS Secrets
-Manager and injected into the ECS task at runtime:
+**never** in GitHub Actions secrets. It lives in the licensing
+repo's `deploy/kubernetes/secret.yaml` (applied manually) or a
+secrets manager of your choice, and is injected into the pod at
+runtime:
 
 ```mermaid
 graph TD
-    SM["AWS Secrets Manager<br/>(Ed25519 private key)"]
-    TASK["ECS Task Definition<br/>(references secret ARN)"]
+    SM["Kubernetes secret<br/>(per-product Ed25519 private keys)"]
+    TASK["Deployment env<br/>(ED25519_PRIVATE_KEY__CODE or keys/*.key)"]
     CONTAINER["License server container<br/>(reads key from env at startup)"]
     SIGNER["License Signer module<br/>(uses key to sign licenses)"]
 
@@ -1236,9 +1182,11 @@ graph TD
     CONTAINER --> SIGNER
 ```
 
-CI tests use a **throw-away test key** (generated in CI, not the
-production key). The test key's public key is embedded in test
-builds of the proxy binary for integration testing.
+Development and CI use the **built-in dev keypair** (enabled via
+`RUST_ENV=development`, or `licensing_core::dev_public_key_b64()` in
+tests) — never the production key. The production public key is what
+product binaries (like the proxy) embed via
+`MADHYAMAS_LICENSE_PUBLIC_KEY` for offline verification.
 
 ---
 
@@ -1415,27 +1363,39 @@ artifacts as shipped in `.github/workflows/ci.yml`,
 
 The `rust-checks` job in `ci.yml` runs a `tier: [enterprise, oss]`
 matrix dimension across `os: [ubuntu-latest, macos-latest,
-windows-latest]` and `rust: [stable]` (plus `beta` on Ubuntu). Each
-tier runs format check, clippy, build, and tests:
+windows-latest]` and `rust: [stable]` (plus `beta` on Ubuntu, which is
+**clippy-only** — early warning of future toolchain breakage without
+paying for a full test compile). Each tier runs clippy and tests (no
+standalone `cargo build` steps — clippy `--all-targets` type-checks
+everything and nextest builds all binaries):
 
-| Tier | Clippy | Build | Tests |
-|---|---|---|---|
-| `enterprise` | `cargo clippy --all-targets --all-features -- -D warnings` | `cargo build -p madhyamas` | `cargo nextest run --all-features` |
-| `oss` | `cargo clippy --all-targets --no-default-features -- -D warnings` | `cargo build --no-default-features -p madhyamas` | `cargo nextest run --no-default-features` |
+| Tier | Clippy | Tests |
+|---|---|---|
+| `enterprise` | `cargo clippy --all-targets --all-features -- -D warnings` | `cargo nextest run --all-features` |
+| `oss` | `cargo clippy --all-targets --no-default-features -- -D warnings` | `cargo nextest run --no-default-features` |
 
-The frontend build (`build-frontend` job) is shared — one `npm run
-build` produces `web/dist/` that both tiers download as an artifact.
+Formatting runs in its own cheap `rust-fmt` job — it is
+platform-independent, so it runs once instead of per matrix leg. The
+frontend build (`build-frontend` job) is shared — one `npm run build`
+produces `web/dist/` that both tiers download as an artifact. A
+`concurrency` group cancels superseded runs on rapid pushes.
 
 The `build-binaries` cross-compile job also carries the `tier`
 dimension, producing per-target, per-tier artifacts named
 `madhyamas-{tier}-{sha}-{target}.tar.gz` (CI) or
-`madhyamas-{tier}-v{ver}-{target}.tar.gz` (release).
+`madhyamas-{tier}-v{ver}-{target}.tar.gz` (release). The target list
+depends on the event: pushes to main/develop build the full 8-target
+matrix (16 jobs), while PRs build only the Linux cross targets not
+covered natively by `rust-checks` (aarch64, ARMv7, RISC-V × both
+tiers = 6 jobs) — the matrix is generated by the
+`prepare-binary-matrix` job. The `docker-build` smoke test runs on
+push/dispatch only, not on PRs.
 
 ### 12.2 Security audit and license compliance
 
-The `security-audit` job runs `cargo audit` for both the default
-feature set and `--all-features` (enterprise). It also enforces a
-**license compliance** check: the OSS build
+The `security-audit` job runs `cargo audit` once (it reads
+`Cargo.lock`, so a single run covers all feature tiers). It also
+enforces a **license compliance** check: the OSS build
 (`--no-default-features`) must not pull in the BSL-1.1-licensed
 `madhyamas-enterprise` crate. The check runs:
 
@@ -1534,6 +1494,53 @@ then:
 Enterprise binaries are **not** published to crates.io, Homebrew,
 Chocolatey, or the Snap Store — they are distributed via GitHub Release
 downloads and the GHCR Docker image only.
+
+### 12.7 PR dispatch, Dependabot, and workflow layout
+
+`ci.yml` has no `pull_request` trigger of its own — the `ci-pr.yml`
+dispatcher calls it (as a `workflow_call` reusable workflow) with the
+PR head SHA and inherited secrets. The reason is Dependabot: GitHub
+**withholds repository secrets** from `pull_request` runs triggered by
+`dependabot[bot]`, and every cargo job needs `LICENSING_TOKEN` to
+fetch the private `licensing-core` git dependency. Without the
+dispatcher, all Rust checks on Dependabot PRs fail and the auto-merge
+workflow can never satisfy its checks. The dispatcher runs exactly one
+job per PR:
+
+- **Humans** → `pull_request` context (standard security posture).
+- **`dependabot[bot]`** → `pull_request_target` context, strictly
+  actor-gated. This is the only PR context that receives secrets.
+  Dependabot PRs only modify manifests/lockfiles/workflow version
+  pins, and `pull_request_target` uses the base branch's workflow
+  definitions, so the privileged context only runs trusted workflow
+  code.
+
+Related workflow facts:
+
+- **Dependabot** sends weekly cargo/npm updates plus monthly GitHub
+  Actions updates; the `dependabot.yml` (workflows dir) auto-merge
+  workflow approves and auto-merges **patch/minor** bumps once checks
+  pass. Major bumps require manual review — e.g. the eslint-plugin
+  and TypeScript major bumps that legitimately failed CI.
+- **CodeQL** (`codeql.yml`) configures licensing repo access (the
+  Rust autobuild otherwise cannot compile the workspace and extracts
+  almost nothing) and skips Dependabot PRs — dependency bumps are
+  still analyzed post-merge and on the weekly schedule.
+- **Docs checks** live in `docs.yml`, triggered by `docs/**`,
+  `crates/**`, and `web/**` (crates/web included because
+  `check-docs-coverage.sh` scans `crates/madhyamas-core/src` and
+  `check-docs.sh` validates source paths referenced from docs).
+- **Plugin releases**: `plugins-release.yml` first checks whether the
+  tag belongs to the dispatch workflow (commit-subject marker
+  `release: <plugin> v<version>`) or a release already exists, and
+  skips cleanly — previously the tag push re-triggered it into a
+  racing duplicate run and double SNAPSHOT bumps.
+- **Skills** (`skills.yml`): the per-target install tests download the
+  build job's artifact instead of rebuilding.
+- **GitHub Pages**: `deploy-docs.yml` (VitePress `docs-site/`) is the
+  one canonical Pages deployment. A former `pages.yml` workflow that
+  deployed the static `site/` directory was removed — the two
+  overwrote each other's deployment.
 
 ---
 

@@ -31,24 +31,16 @@ open site/index.html
 
 ## Deploy
 
-### GitHub Pages (automatic)
-
-A workflow at `.github/workflows/pages.yml` deploys this directory to GitHub Pages
-on every push to `main` that changes `site/**`. It can also be triggered manually
-from the Actions tab ("Deploy site to GitHub Pages" → Run workflow).
-
-One-time setup in the repo:
-
-1. Go to **Settings → Pages → Build and deployment → Source**
-2. Select **GitHub Actions** (not "Deploy from a branch")
-3. Push to `main` (or run the workflow manually) — the site goes live at
-   `https://shristilabs.github.io/madhyamas/`
-
-The `site/.nojekyll` file tells Pages to serve the files verbatim without
-running Jekyll. All asset paths in `index.html` are relative, so the site
-works correctly under the project subpath without a base URL.
+> **Retired from CI (2026-08):** this directory is **no longer deployed to
+> GitHub Pages**. The `pages.yml` workflow that deployed it was removed —
+> it conflicted with the canonical VitePress deployment (`docs-site/` via
+> `deploy-docs.yml`): the two workflows overwrote each other's Pages
+> deployment. The directory is kept for reference; it can be deleted or
+> self-hosted at any time.
 
 ### Other static hosts
+
+The site is dependency-free static files — it still works anywhere:
 
 - **Netlify / Vercel / Cloudflare Pages**: set the publish directory to `site/`.
 - **Any web server**: copy the contents of `site/` to your web root.

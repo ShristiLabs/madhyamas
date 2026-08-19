@@ -388,7 +388,8 @@ cargo test --all-features -- --ignored
 ./startup-local.sh  # then run manual checks (see §5)
 
 # Web UI tests
-cd web && npm test -- --passWithNoTests
+# (none yet — web/package.json defines no `test` script; CI runs
+#  typecheck + lint + build only)
 
 # Screenshot capture (requires running enterprise stack)
 node scripts/capture-enterprise-screenshots.mjs
