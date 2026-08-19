@@ -1,5 +1,10 @@
 //! Madhyamas API - REST and WebSocket API for the web UI
 
+// Beta clippy (2026-08 rollout) fires `double_must_use` on #[async_trait]
+// trait signatures (macro-generated boxed future is `must_use`, and so is
+// the returned `Result`). Silenced until the lint behavior stabilizes.
+#![allow(clippy::double_must_use, clippy::manual_clamp)]
+
 pub mod auth;
 pub mod embedded_assets;
 pub mod error;
