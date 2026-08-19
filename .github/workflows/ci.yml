@@ -101,6 +101,10 @@ jobs:
             tier: oss
     steps:
       - uses: actions/checkout@v4
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -163,6 +167,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -214,6 +222,10 @@ jobs:
         tier: [oss, enterprise]
     steps:
       - uses: actions/checkout@v4
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -239,6 +251,7 @@ jobs:
           tags: madhyamas:test-enterprise
           build-args: |
             BUILD_TIER=enterprise
+          ssh: default=${{ env.SSH_AUTH_SOCK }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -295,6 +308,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

@@ -147,6 +147,23 @@ and fetch private repos over SSH. CI needs read credentials for the private
 repo. Bump the tag pin in the root `Cargo.toml` to pick up licensing-core
 changes.
 
+**Gotcha — Cargo.lock flip-flop:** building with the local `[patch]` active
+rewrites `Cargo.lock` to a path-source variant for `licensing-core`. Never
+commit that variant, and **restore the lock before Docker/CI builds**
+(`git checkout -- Cargo.lock`) — the Dockerfile fails fast with a clear
+message if handed a path-source lock, since `--locked` would otherwise
+reject it.
+
+**Docker builds (enterprise tier):** fetch the private dependency over SSH
+via a forwarded agent — the compose files pass `build.ssh`, so build with
+your SSH agent holding a GitHub key (`ssh-add -l`). Plain `docker build`
+needs `--ssh default=$SSH_AUTH_SOCK`.
+
+**CI:** generate a deploy key with read access to ShristiLabs/licensing and
+add it as the `LICENSING_DEPLOY_KEY` secret in repo settings. The
+`configure-licensing-repo` composite action wires cargo fetches and Docker
+builds from it; enterprise jobs fail with a warning until it is set.
+
 ## Configuration
 
 **CLI Flags**: `--proxy-port`, `--api-port`, `--host`, `--public-ip`, `--verbose`, `--no-https`, `--enable-socks`, `--socks-port`, `--socks-username`, `--socks-password`, `--upstream-proxy-enabled`, `--upstream-proxy`, `--upstream-protocol`, `--upstream-auth`, `--upstream-no-proxy`, `--allowed-ip` (repeatable)

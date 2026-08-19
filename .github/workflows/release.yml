@@ -64,6 +64,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -150,6 +154,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -241,6 +249,10 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
 
       - name: Download Windows artifact (OSS)
         uses: actions/download-artifact@v4
@@ -297,6 +309,10 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
 
       - name: Extract version
         id: version
@@ -333,6 +349,10 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
 
       - name: Install build dependencies
         run: |
@@ -800,6 +820,10 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -862,6 +886,9 @@ jobs:
           push: true
           build-args: |
             BUILD_TIER=${{ matrix.tier }}
+          # Enterprise tier fetches the private licensing-core git dep —
+          # forward the agent set up by configure-licensing-repo.
+          ssh: default=${{ env.SSH_AUTH_SOCK }}
           tags: |
             ghcr.io/${{ steps.version.outputs.IMAGE_NAME }}:latest
             ghcr.io/${{ steps.version.outputs.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
@@ -947,6 +974,10 @@ jobs:
         tier: [oss, enterprise]
     steps:
       - uses: actions/checkout@v4
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

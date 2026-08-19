@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Forward the local SSH agent so the builder can fetch the private
+      # licensing-core git dependency (enterprise tier).
+      ssh:
+        - default
     image: madhyamas:latest
     container_name: madhyamas
     ports:
@@ -45,6 +49,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Forward the local SSH agent so the builder can fetch the private
+      # licensing-core git dependency (enterprise tier).
+      ssh:
+        - default
     image: madhyamas:latest
     container_name: madhyamas-host
     network_mode: host
@@ -80,6 +88,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Forward the local SSH agent so the builder can fetch the private
+      # licensing-core git dependency (enterprise tier).
+      ssh:
+        - default
     image: madhyamas:latest
     container_name: madhyamas-mcp
     environment:

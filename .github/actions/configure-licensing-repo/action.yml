@@ -1,0 +1,40 @@
+name: 'Configure private licensing repo access'
+description: >-
+  Enables fetching the private ShristiLabs/licensing dependency
+  (licensing-core, consumed by madhyamas-enterprise) over SSH using the
+  LICENSING_DEPLOY_KEY repository secret: configures git for cargo fetches
+  and starts an ssh-agent (SSH_AUTH_SOCK) that Docker builds can forward.
+  No-op with a warning when the secret is absent — enterprise-tier builds
+  will then fail on the cargo fetch.
+
+inputs:
+  deploy-key:
+    description: 'Private key (PEM) with read access to ShristiLabs/licensing. Pass secrets.LICENSING_DEPLOY_KEY.'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Configure git SSH and agent for the private licensing repo
+      shell: bash
+      env:
+        KEY: ${{ inputs.deploy-key }}
+      run: |
+        if [ -z "$KEY" ]; then
+          echo "::warning::LICENSING_DEPLOY_KEY secret is not set — enterprise-tier builds will fail to fetch licensing-core from the private ShristiLabs/licensing repo. Generate a deploy key with read access to that repo and add it as the LICENSING_DEPLOY_KEY secret."
+          exit 0
+        fi
+        # Persistent ssh-agent so later steps (and docker buildx --ssh) can
+        # use the key; export the socket for subsequent steps.
+        eval "$(ssh-agent -s)"
+        printf '%s\n' "$KEY" > ~/.ssh/licensing_deploy_key
+        chmod 600 ~/.ssh/licensing_deploy_key
+        ssh-add ~/.ssh/licensing_deploy_key
+        mkdir -p ~/.ssh
+        ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+        git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
+        echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
+        echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+        ssh -T git@github.com >/dev/null 2>&1 || true
+        echo "Private licensing repo access configured (agent ready for cargo and docker builds)."

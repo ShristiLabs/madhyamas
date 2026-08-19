@@ -68,6 +68,10 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      # Forward the local SSH agent so the builder can fetch the private
+      # licensing-core git dependency.
+      ssh:
+        - default
       args:
         BUILD_TIER: enterprise
     image: madhyamas-enterprise:latest
@@ -106,6 +110,10 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      # Forward the local SSH agent so the builder can fetch the private
+      # licensing-core git dependency.
+      ssh:
+        - default
       args:
         BUILD_TIER: enterprise
     image: madhyamas-enterprise:latest

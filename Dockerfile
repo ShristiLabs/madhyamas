@@ -1,5 +1,14 @@
+# syntax=docker/dockerfile:1
 # Madhyamas Docker Image
 # Multi-stage build — single unified binary with embedded web UI
+#
+# NOTE: enterprise builds fetch the private licensing-core git dependency
+# (github.com/ShristiLabs/licensing) over SSH via the forwarded agent
+# (--mount=type=ssh). Build with your SSH agent available:
+#   docker compose build ...            (compose files pass build.ssh)
+#   docker build --ssh default=$SSH_AUTH_SOCK ...
+# The agent must hold a key with read access to that repo
+# (check: ssh -T git@github.com).
 
 # Frontend build stage
 FROM node:20-alpine AS frontend-builder
@@ -21,12 +30,27 @@ FROM rust:alpine AS builder
 
 ARG BUILD_TIER=enterprise
 
-RUN apk add --no-cache musl-dev openssl-dev openssl openssl-libs-static pkgconf build-base
+RUN apk add --no-cache musl-dev openssl-dev openssl openssl-libs-static pkgconf build-base git openssh-client
+
+# Fetch the private licensing-core git dependency over SSH (enterprise
+# tier): rewrite https remotes to ssh and pin GitHub's host key.
+RUN git config --global url."ssh://git@github.com/".insteadOf "https://github.com/" \
+    && ssh-keyscan -t ed25519 github.com >> /etc/ssh/ssh_known_hosts
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 WORKDIR /app
 
 # Copy workspace files
 COPY Cargo.toml Cargo.lock ./
+
+# Fail fast with a clear message if Cargo.lock was copied in its local-dev
+# [patch] state (licensing-core resolved as a path, no git source). That
+# happens when the tree was built with .cargo/config.toml active — restore
+# the committed lock first: git checkout -- Cargo.lock
+RUN grep -A2 'name = "licensing-core"' Cargo.lock | grep -q 'source = "git+' || \
+    { echo "ERROR: Cargo.lock's licensing-core entry has no git source (local [patch] flip-flop)."; \
+      echo "Run: git checkout -- Cargo.lock  and rebuild."; exit 1; }
+
 COPY crates/madhyamas/Cargo.toml ./crates/madhyamas/
 COPY crates/madhyamas-core/Cargo.toml ./crates/madhyamas-core/
 COPY crates/madhyamas-api/Cargo.toml ./crates/madhyamas-api/
@@ -34,10 +58,9 @@ COPY crates/madhyamas-cli/Cargo.toml ./crates/madhyamas-cli/
 COPY crates/madhyamas-mcp/Cargo.toml ./crates/madhyamas-mcp/
 COPY crates/madhyamas-plugin-sdk/Cargo.toml ./crates/madhyamas-plugin-sdk/
 COPY crates/madhyamas-enterprise/Cargo.toml ./crates/madhyamas-enterprise/
-COPY licensing-server/Cargo.toml ./licensing-server/
 
 # Create dummy files to build dependencies
-RUN mkdir -p crates/madhyamas/src crates/madhyamas-core/src crates/madhyamas-api/src crates/madhyamas-cli/src crates/madhyamas-mcp/src crates/madhyamas-plugin-sdk/src crates/madhyamas-enterprise/src licensing-server/src
+RUN mkdir -p crates/madhyamas/src crates/madhyamas-core/src crates/madhyamas-api/src crates/madhyamas-cli/src crates/madhyamas-mcp/src crates/madhyamas-plugin-sdk/src crates/madhyamas-enterprise/src
 RUN echo "fn main() {}" > crates/madhyamas/src/main.rs
 RUN echo "fn main() {}" > crates/madhyamas-core/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-api/src/lib.rs
@@ -47,17 +70,16 @@ RUN echo "pub fn dummy() {}" > crates/madhyamas-mcp/src/lib.rs
 RUN echo "fn main() {}" > crates/madhyamas-mcp/src/main.rs
 RUN echo "pub fn dummy() {}" > crates/madhyamas-plugin-sdk/src/lib.rs
 RUN echo "pub fn dummy() {}" > crates/madhyamas-enterprise/src/lib.rs
-RUN echo "pub fn dummy() {}" > licensing-server/src/lib.rs
-RUN echo "fn main() {}" > licensing-server/src/main.rs
 
 # Copy web dist for rust-embed (needed at compile time)
 COPY --from=frontend-builder /app/web/dist ./web/dist
 
 # Build dependencies (only the madhyamas package, not all crates)
-# Tier-aware: oss disables default features (drops enterprise crate).
+# Tier-aware: oss disables default features (drops the enterprise crate and
+# its private licensing-core dependency).
 # --features embedded-assets embeds the web UI (web/dist) into the binary
 # via rust-embed so the runtime image doesn't need web/dist on disk.
-RUN if [ "$BUILD_TIER" = "oss" ]; then \
+RUN --mount=type=ssh if [ "$BUILD_TIER" = "oss" ]; then \
       cargo build --release --no-default-features --features embedded-assets -p madhyamas --locked; \
     else \
       cargo build --release --features embedded-assets -p madhyamas --locked; \
@@ -78,7 +100,7 @@ RUN find crates -name "*.rs" -exec touch {} \;
 
 # Build the unified binary (includes proxy + web UI + MCP + CLI)
 # Tier-aware: oss disables default features (drops enterprise crate)
-RUN if [ "$BUILD_TIER" = "oss" ]; then \
+RUN --mount=type=ssh if [ "$BUILD_TIER" = "oss" ]; then \
       cargo build --release --no-default-features --features embedded-assets -p madhyamas --locked; \
     else \
       cargo build --release --features embedded-assets -p madhyamas --locked; \

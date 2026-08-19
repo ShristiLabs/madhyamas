@@ -121,7 +121,7 @@ ed25519-dalek = { version = "2", default-features = false, features = [
 # so both sides verify byte-identical claims. Lives in the private
 # ShristiLabs/licensing repo; pin to licensing-core tags. For local
 # development against a sibling checkout, see .cargo/config.toml.example.
-licensing-core = { git = "https://github.com/ShristiLabs/licensing.git", tag = "licensing-core-v0.1.0", subdirectory = "crates/licensing-core" }
+licensing-core = { git = "https://github.com/ShristiLabs/licensing.git", tag = "licensing-core-v0.1.0" }
 
 # Argon2id password hashing for enterprise user management (Phase 4a).
 # `password-hash` is the companion PHC-string crate; argon2 0.5 re-exports it
