@@ -154,15 +154,18 @@ commit that variant, and **restore the lock before Docker/CI builds**
 message if handed a path-source lock, since `--locked` would otherwise
 reject it.
 
-**Docker builds (enterprise tier):** fetch the private dependency over SSH
-via a forwarded agent — the compose files pass `build.ssh`, so build with
-your SSH agent holding a GitHub key (`ssh-add -l`). Plain `docker build`
-needs `--ssh default=$SSH_AUTH_SOCK`.
+**Docker builds:** fetching the private dependency needs a read token —
+the compose files pass a `licensing_token` BuildKit secret sourced from
+the `LICENSING_TOKEN` environment variable (put it in the gitignored
+`.env`, same fine-grained PAT as CI). Plain `docker build` needs
+`--secret id=licensing_token,env=LICENSING_TOKEN`. Workspace resolution
+fetches the dep in **every** tier, so OSS builds need it too.
 
-**CI:** generate a deploy key with read access to ShristiLabs/licensing and
-add it as the `LICENSING_DEPLOY_KEY` secret in repo settings. The
-`configure-licensing-repo` composite action wires cargo fetches and Docker
-builds from it; enterprise jobs fail with a warning until it is set.
+**CI:** set the `LICENSING_TOKEN` secret (fine-grained PAT, Contents:
+read-only, repository access limited to ShristiLabs/licensing; the org
+must allow fine-grained PATs). The `configure-licensing-repo` composite
+action wires cargo fetches and Docker build secrets from it and fails
+early with a clear message if the token can't read the repo.
 
 ## Configuration
 

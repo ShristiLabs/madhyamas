@@ -1,40 +1,38 @@
 name: 'Configure private licensing repo access'
 description: >-
   Enables fetching the private ShristiLabs/licensing dependency
-  (licensing-core, consumed by madhyamas-enterprise) over SSH using the
-  LICENSING_DEPLOY_KEY repository secret: configures git for cargo fetches
-  and starts an ssh-agent (SSH_AUTH_SOCK) that Docker builds can forward.
-  No-op with a warning when the secret is absent — enterprise-tier builds
-  will then fail on the cargo fetch.
+  (licensing-core, consumed by madhyamas-enterprise) over HTTPS using the
+  LICENSING_TOKEN repository secret — a fine-grained PAT with
+  Contents:read on ShristiLabs/licensing. Workspace resolution needs it in
+  every tier. No-op with a warning when the secret is absent (cargo jobs
+  will then fail on fetch).
 
 inputs:
-  deploy-key:
-    description: 'Private key (PEM) with read access to ShristiLabs/licensing. Pass secrets.LICENSING_DEPLOY_KEY.'
+  token:
+    description: 'Fine-grained PAT with Contents:read on ShristiLabs/licensing. Pass secrets.LICENSING_TOKEN.'
     required: false
     default: ''
 
 runs:
   using: composite
   steps:
-    - name: Configure git SSH and agent for the private licensing repo
+    - name: Configure git HTTPS auth for the private licensing repo
       shell: bash
       env:
-        KEY: ${{ inputs.deploy-key }}
+        TOKEN: ${{ inputs.token }}
       run: |
-        if [ -z "$KEY" ]; then
-          echo "::warning::LICENSING_DEPLOY_KEY secret is not set — enterprise-tier builds will fail to fetch licensing-core from the private ShristiLabs/licensing repo. Generate a deploy key with read access to that repo and add it as the LICENSING_DEPLOY_KEY secret."
+        if [ -z "$TOKEN" ]; then
+          echo "::warning::LICENSING_TOKEN secret is not set — jobs will fail to fetch licensing-core from the private ShristiLabs/licensing repo. Create a fine-grained PAT (Contents: read-only, repository access limited to ShristiLabs/licensing) and add it as the LICENSING_TOKEN secret."
           exit 0
         fi
-        # Persistent ssh-agent so later steps (and docker buildx --ssh) can
-        # use the key; export the socket for subsequent steps.
-        eval "$(ssh-agent -s)"
-        printf '%s\n' "$KEY" > ~/.ssh/licensing_deploy_key
-        chmod 600 ~/.ssh/licensing_deploy_key
-        ssh-add ~/.ssh/licensing_deploy_key
-        mkdir -p ~/.ssh
-        ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
-        git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
+        # Token lives in the ephemeral runner's git config only.
+        git config --global \
+          url."https://x-access-token:${TOKEN}@github.com/".insteadOf \
+          "https://github.com/"
         echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
-        echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
-        ssh -T git@github.com >/dev/null 2>&1 || true
-        echo "Private licensing repo access configured (agent ready for cargo and docker builds)."
+        # Sanity check the token can read the private repo.
+        if ! git ls-remote --exit-code https://github.com/ShristiLabs/licensing.git HEAD >/dev/null 2>&1; then
+          echo "::error::LICENSING_TOKEN cannot read ShristiLabs/licensing (bad token, expired, or org has not enabled fine-grained PAT access)."
+          exit 1
+        fi
+        echo "Private licensing repo access configured."

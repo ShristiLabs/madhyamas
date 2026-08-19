@@ -67,7 +67,7 @@ jobs:
       - name: Configure private licensing repo access
         uses: ./.github/actions/configure-licensing-repo
         with:
-          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
+          token: ${{ secrets.LICENSING_TOKEN }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -157,7 +157,7 @@ jobs:
       - name: Configure private licensing repo access
         uses: ./.github/actions/configure-licensing-repo
         with:
-          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
+          token: ${{ secrets.LICENSING_TOKEN }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -252,7 +252,7 @@ jobs:
       - name: Configure private licensing repo access
         uses: ./.github/actions/configure-licensing-repo
         with:
-          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
+          token: ${{ secrets.LICENSING_TOKEN }}
 
       - name: Download Windows artifact (OSS)
         uses: actions/download-artifact@v4
@@ -312,7 +312,7 @@ jobs:
       - name: Configure private licensing repo access
         uses: ./.github/actions/configure-licensing-repo
         with:
-          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
+          token: ${{ secrets.LICENSING_TOKEN }}
 
       - name: Extract version
         id: version
@@ -352,7 +352,7 @@ jobs:
       - name: Configure private licensing repo access
         uses: ./.github/actions/configure-licensing-repo
         with:
-          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
+          token: ${{ secrets.LICENSING_TOKEN }}
 
       - name: Install build dependencies
         run: |
@@ -823,7 +823,7 @@ jobs:
       - name: Configure private licensing repo access
         uses: ./.github/actions/configure-licensing-repo
         with:
-          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
+          token: ${{ secrets.LICENSING_TOKEN }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -886,9 +886,9 @@ jobs:
           push: true
           build-args: |
             BUILD_TIER=${{ matrix.tier }}
-          # Enterprise tier fetches the private licensing-core git dep —
-          # forward the agent set up by configure-licensing-repo.
-          ssh: default=${{ env.SSH_AUTH_SOCK }}
+          # Fetch the private licensing-core git dep with the read token.
+          secrets: |
+            licensing_token=${{ secrets.LICENSING_TOKEN }}
           tags: |
             ghcr.io/${{ steps.version.outputs.IMAGE_NAME }}:latest
             ghcr.io/${{ steps.version.outputs.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
@@ -905,6 +905,8 @@ jobs:
           push: true
           build-args: |
             BUILD_TIER=oss
+          secrets: |
+            licensing_token=${{ secrets.LICENSING_TOKEN }}
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.version.outputs.DH_IMAGE_NAME }}:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.version.outputs.DH_IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
@@ -977,7 +979,7 @@ jobs:
       - name: Configure private licensing repo access
         uses: ./.github/actions/configure-licensing-repo
         with:
-          deploy-key: ${{ secrets.LICENSING_DEPLOY_KEY }}
+          token: ${{ secrets.LICENSING_TOKEN }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

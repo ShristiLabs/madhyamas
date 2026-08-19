@@ -2,13 +2,14 @@
 # Madhyamas Docker Image
 # Multi-stage build — single unified binary with embedded web UI
 #
-# NOTE: enterprise builds fetch the private licensing-core git dependency
-# (github.com/ShristiLabs/licensing) over SSH via the forwarded agent
-# (--mount=type=ssh). Build with your SSH agent available:
-#   docker compose build ...            (compose files pass build.ssh)
-#   docker build --ssh default=$SSH_AUTH_SOCK ...
-# The agent must hold a key with read access to that repo
-# (check: ssh -T git@github.com).
+# NOTE: builds fetch the private licensing-core git dependency
+# (github.com/ShristiLabs/licensing) — workspace resolution needs it in
+# every tier. Provide a read token via a BuildKit secret:
+#   docker compose build ...            (compose files pass the secret;
+#                                        set LICENSING_TOKEN in .env)
+#   docker build --secret id=licensing_token,env=LICENSING_TOKEN ...
+# The token is a fine-grained PAT with Contents:read on ShristiLabs/licensing
+# (never baked into the image; used only inside the mounted RUN).
 
 # Frontend build stage
 FROM node:20-alpine AS frontend-builder
@@ -30,12 +31,10 @@ FROM rust:alpine AS builder
 
 ARG BUILD_TIER=enterprise
 
-RUN apk add --no-cache musl-dev openssl-dev openssl openssl-libs-static pkgconf build-base git openssh-client
+RUN apk add --no-cache musl-dev openssl-dev openssl openssl-libs-static pkgconf build-base git
 
-# Fetch the private licensing-core git dependency over SSH (enterprise
-# tier): rewrite https remotes to ssh and pin GitHub's host key.
-RUN git config --global url."ssh://git@github.com/".insteadOf "https://github.com/" \
-    && ssh-keyscan -t ed25519 github.com >> /etc/ssh/ssh_known_hosts
+# Fetch the private licensing-core git dependency with the build's
+# read-only token (BuildKit secret; not persisted in any layer).
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 WORKDIR /app
@@ -74,12 +73,19 @@ RUN echo "pub fn dummy() {}" > crates/madhyamas-enterprise/src/lib.rs
 # Copy web dist for rust-embed (needed at compile time)
 COPY --from=frontend-builder /app/web/dist ./web/dist
 
-# Build dependencies (only the madhyamas package, not all crates)
-# Tier-aware: oss disables default features (drops the enterprise crate and
-# its private licensing-core dependency).
+# Build dependencies (only the madhyamas package, not all crates).
+# The private licensing-core git dep is fetched with a read-only token
+# supplied as the licensing_token BuildKit secret. The token is passed via
+# GIT_CONFIG_* env vars scoped to this RUN only — never written to the
+# image's ~/.gitconfig or any layer.
+# Tier-aware: oss disables default features (drops the enterprise crate).
 # --features embedded-assets embeds the web UI (web/dist) into the binary
 # via rust-embed so the runtime image doesn't need web/dist on disk.
-RUN --mount=type=ssh if [ "$BUILD_TIER" = "oss" ]; then \
+RUN --mount=type=secret,id=licensing_token,required=true \
+    export GIT_CONFIG_COUNT=1 \
+           GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/licensing_token)@github.com/.insteadOf" \
+           GIT_CONFIG_VALUE_0="https://github.com/" && \
+    if [ "$BUILD_TIER" = "oss" ]; then \
       cargo build --release --no-default-features --features embedded-assets -p madhyamas --locked; \
     else \
       cargo build --release --features embedded-assets -p madhyamas --locked; \
@@ -99,8 +105,13 @@ COPY crates/madhyamas-core/tests ./crates/madhyamas-core/tests
 RUN find crates -name "*.rs" -exec touch {} \;
 
 # Build the unified binary (includes proxy + web UI + MCP + CLI)
-# Tier-aware: oss disables default features (drops enterprise crate)
-RUN --mount=type=ssh if [ "$BUILD_TIER" = "oss" ]; then \
+# Tier-aware: oss disables default features (drops enterprise crate).
+# Secret mounted again in case cargo needs to re-resolve the git dep.
+RUN --mount=type=secret,id=licensing_token,required=true \
+    export GIT_CONFIG_COUNT=1 \
+           GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/licensing_token)@github.com/.insteadOf" \
+           GIT_CONFIG_VALUE_0="https://github.com/" && \
+    if [ "$BUILD_TIER" = "oss" ]; then \
       cargo build --release --no-default-features --features embedded-assets -p madhyamas --locked; \
     else \
       cargo build --release --features embedded-assets -p madhyamas --locked; \

@@ -68,10 +68,10 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-      # Forward the local SSH agent so the builder can fetch the private
-      # licensing-core git dependency.
-      ssh:
-        - default
+      # Read token for fetching the private licensing-core git dependency
+      # (set LICENSING_TOKEN in .env at the repo root or the environment).
+      secrets:
+        - licensing_token
       args:
         BUILD_TIER: enterprise
     image: madhyamas-enterprise:latest
@@ -110,10 +110,10 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-      # Forward the local SSH agent so the builder can fetch the private
-      # licensing-core git dependency.
-      ssh:
-        - default
+      # Read token for fetching the private licensing-core git dependency
+      # (set LICENSING_TOKEN in .env at the repo root or the environment).
+      secrets:
+        - licensing_token
       args:
         BUILD_TIER: enterprise
     image: madhyamas-enterprise:latest
@@ -165,3 +165,7 @@ services:
 volumes:
   pg_data:
   ca_certs:
+
+secrets:
+  licensing_token:
+    environment: LICENSING_TOKEN

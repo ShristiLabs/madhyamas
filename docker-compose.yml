@@ -3,10 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      # Forward the local SSH agent so the builder can fetch the private
-      # licensing-core git dependency (enterprise tier).
-      ssh:
-        - default
+      # Read token for fetching the private licensing-core git dependency
+      # (set LICENSING_TOKEN in .env or the environment).
+      secrets:
+        - licensing_token
     image: madhyamas:latest
     container_name: madhyamas
     ports:
@@ -49,10 +49,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      # Forward the local SSH agent so the builder can fetch the private
-      # licensing-core git dependency (enterprise tier).
-      ssh:
-        - default
+      # Read token for fetching the private licensing-core git dependency
+      # (set LICENSING_TOKEN in .env or the environment).
+      secrets:
+        - licensing_token
     image: madhyamas:latest
     container_name: madhyamas-host
     network_mode: host
@@ -88,10 +88,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      # Forward the local SSH agent so the builder can fetch the private
-      # licensing-core git dependency (enterprise tier).
-      ssh:
-        - default
+      # Read token for fetching the private licensing-core git dependency
+      # (set LICENSING_TOKEN in .env or the environment).
+      secrets:
+        - licensing_token
     image: madhyamas:latest
     container_name: madhyamas-mcp
     environment:
@@ -138,3 +138,7 @@ volumes:
 networks:
   madhyamas_net:
     driver: bridge
+
+secrets:
+  licensing_token:
+    environment: LICENSING_TOKEN
