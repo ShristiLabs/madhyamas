@@ -1,0 +1,39 @@
+name: Docs
+
+# Split from ci.yml so documentation edits check docs (broken links, stale
+# source paths, module coverage) without triggering the full Rust/Docker/
+# binary matrix.
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      # Docs edits (the point of the split: no heavy matrix for these)
+      - "docs/**"
+      # check-docs.sh verifies source paths referenced FROM docs, and
+      # check-docs-coverage.sh scans crates/madhyamas-core/src — so source
+      # changes must still run this cheap job.
+      - "crates/**"
+      - "web/**"
+      - "scripts/check-docs*.sh"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "docs/**"
+      - "crates/**"
+      - "web/**"
+      - "scripts/check-docs*.sh"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+jobs:
+  docs-check:
+    name: Docs check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check internal links and source path references
+        run: bash scripts/check-docs.sh
+      - name: Check module documentation coverage
+        run: bash scripts/check-docs-coverage.sh

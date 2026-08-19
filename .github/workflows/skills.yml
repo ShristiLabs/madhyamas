@@ -105,11 +105,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Make scripts executable
-        run: chmod +x skills/madhyamas/scripts/*.sh
-
-      - name: Build skills
-        run: bash skills/madhyamas/scripts/build.sh
+      # Reuse the `build` job's artifact instead of rebuilding per target —
+      # install.sh reads from the repo-root dist/ directory, which the
+      # artifact (uploaded from dist/) recreates here.
+      - name: Download built skills
+        uses: actions/download-artifact@v4
+        with:
+          name: madhyamas-skills
+          path: dist
 
       - name: Test install to ${{ matrix.target }}
         run: |

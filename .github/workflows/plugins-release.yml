@@ -18,11 +18,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    name: Release plugin
+  # =============================================================================
+  # Decide whether this tag still needs a release built. Tags pushed by the
+  # Plugin Release Dispatch workflow are fully handled there (build, release,
+  # registry, SNAPSHOT bump) — the tag push re-triggers this workflow, and
+  # without a skip it would race the dispatch run: duplicate release-create
+  # failures and double SNAPSHOT bumps. The marker is deterministic: the
+  # dispatch workflow tags the commit it creates, whose subject is exactly
+  # "release: <plugin> v<version>".
+  # =============================================================================
+  check:
+    name: Check release status
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      skip: ${{ steps.decide.outputs.skip }}
+      plugin: ${{ steps.parse.outputs.plugin }}
+      version: ${{ steps.parse.outputs.version }}
+      tag: ${{ steps.parse.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,55 +60,85 @@ jobs:
           echo "tag=${plugin_name}-v${version}" >> $GITHUB_OUTPUT
           echo "Parsed: plugin=${plugin_name}, version=${version}, tag=${plugin_name}-v${version}"
 
-      - name: Validate plugin exists
+      - name: Decide skip or proceed
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ ! -d "plugins/${{ steps.parse.outputs.plugin }}" ]]; then
-            echo "ERROR: Plugin directory not found: plugins/${{ steps.parse.outputs.plugin }}" >&2
+          plugin="${{ steps.parse.outputs.plugin }}"
+          version="${{ steps.parse.outputs.version }}"
+          tag="${{ steps.parse.outputs.tag }}"
+
+          # 1. Dispatch-owned tag? (commit subject marker — race-free)
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            tag_commit=$(git rev-list -n 1 "$tag")
+            subject=$(git log -1 --format=%s "$tag_commit")
+            if [[ "$subject" == "release: ${plugin} v${version}" ]]; then
+              echo "Tag $tag points at the dispatch workflow's release commit ('${subject}')."
+              echo "The dispatch workflow builds, releases, and bumps SNAPSHOT itself — skipping."
+              echo "skip=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          # 2. Release already exists (e.g. re-tagged manually)?
+          if gh release view "$tag" --repo "${{ github.repository }}" &>/dev/null; then
+            echo "Release ${tag} already exists — nothing to do."
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 3. Validate plugin directory.
+          if [[ ! -d "plugins/${plugin}" ]]; then
+            echo "ERROR: Plugin directory not found: plugins/${plugin}" >&2
             exit 1
           fi
-          if [[ ! -f "plugins/${{ steps.parse.outputs.plugin }}/Cargo.toml" ]]; then
+          if [[ ! -f "plugins/${plugin}/Cargo.toml" ]]; then
             echo "ERROR: Plugin Cargo.toml not found" >&2
             exit 1
           fi
 
-      - name: Verify version matches (no SNAPSHOT)
-        run: |
-          cargo_version=$(grep '^version' plugins/${{ steps.parse.outputs.plugin }}/Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
-          manifest_version=$(grep '^version' plugins/${{ steps.parse.outputs.plugin }}/madhyamas-plugin.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+          # 4. Verify manifest versions match the tag (no SNAPSHOT).
+          cargo_version=$(grep '^version' "plugins/${plugin}/Cargo.toml" | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+          manifest_version=$(grep '^version' "plugins/${plugin}/madhyamas-plugin.toml" | head -1 | sed 's/.*= *"\(.*\)"/\1/')
 
           echo "Cargo.toml version: ${cargo_version}"
           echo "Manifest version: ${manifest_version}"
-          echo "Expected version: ${{ steps.parse.outputs.version }}"
+          echo "Expected version: ${version}"
 
           if [[ "$cargo_version" == *"SNAPSHOT"* ]]; then
             echo "ERROR: Cargo.toml version is a SNAPSHOT (${cargo_version}). Remove -SNAPSHOT suffix before releasing." >&2
-            echo "  Edit plugins/${{ steps.parse.outputs.plugin }}/Cargo.toml and madhyamas-plugin.toml" >&2
-            echo "  Change version from '${cargo_version}' to '${{ steps.parse.outputs.version }}'" >&2
+            echo "  Edit plugins/${plugin}/Cargo.toml and madhyamas-plugin.toml" >&2
+            echo "  Change version from '${cargo_version}' to '${version}'" >&2
             exit 1
           fi
-
-          if [[ "$cargo_version" != "${{ steps.parse.outputs.version }}" ]]; then
-            echo "ERROR: Cargo.toml version (${cargo_version}) does not match tag version (${{ steps.parse.outputs.version }})" >&2
+          if [[ "$cargo_version" != "$version" ]]; then
+            echo "ERROR: Cargo.toml version (${cargo_version}) does not match tag version (${version})" >&2
             exit 1
           fi
-
-          if [[ "$manifest_version" != "${{ steps.parse.outputs.version }}" ]]; then
-            echo "ERROR: Manifest version (${manifest_version}) does not match tag version (${{ steps.parse.outputs.version }})" >&2
+          if [[ "$manifest_version" != "$version" ]]; then
+            echo "ERROR: Manifest version (${manifest_version}) does not match tag version (${version})" >&2
             exit 1
           fi
 
           echo "Version verification passed."
+          echo "skip=false" >> $GITHUB_OUTPUT
 
-      - name: Check if release already exists
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          tag="${{ steps.parse.outputs.tag }}"
-          if gh release view "$tag" --repo "${{ github.repository }}" &>/dev/null; then
-            echo "Release ${tag} already exists (likely created by the dispatch workflow). Skipping."
-            exit 0
-          fi
-          echo "Release ${tag} does not exist yet. Proceeding."
+  # =============================================================================
+  # Build + release (only when the check job did not skip)
+  # =============================================================================
+  release:
+    name: Release plugin
+    needs: check
+    if: needs.check.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -104,12 +146,12 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Build plugin
-        run: ./scripts/build-plugin.sh ${{ steps.parse.outputs.plugin }}
+        run: ./scripts/build-plugin.sh ${{ needs.check.outputs.plugin }}
 
       - name: Compute checksum
         id: checksum
         run: |
-          zip_file="plugins/${{ steps.parse.outputs.plugin }}-${{ steps.parse.outputs.version }}.zip"
+          zip_file="plugins/${{ needs.check.outputs.plugin }}-${{ needs.check.outputs.version }}.zip"
           echo "zip=${zip_file}" >> $GITHUB_OUTPUT
           echo "sha256=$(sha256sum ${zip_file} | awk '{print $1}')" >> $GITHUB_OUTPUT
 
@@ -117,9 +159,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ steps.parse.outputs.tag }}" \
-            --title "${{ steps.parse.outputs.plugin }} v${{ steps.parse.outputs.version }}" \
-            --notes "Release ${{ steps.parse.outputs.plugin }} v${{ steps.parse.outputs.version }}
+          gh release create "${{ needs.check.outputs.tag }}" \
+            --title "${{ needs.check.outputs.plugin }} v${{ needs.check.outputs.version }}" \
+            --notes "Release ${{ needs.check.outputs.plugin }} v${{ needs.check.outputs.version }}
 
           Built from commit ${{ github.sha }}
 
@@ -129,8 +171,8 @@ jobs:
 
       - name: Update registry.json
         run: |
-          REGISTRY_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.parse.outputs.tag }}"
-          python3 - "${{ steps.parse.outputs.plugin }}" "${{ steps.parse.outputs.version }}" "${{ steps.checksum.outputs.sha256 }}" "$REGISTRY_URL" plugins/registry.json <<'PYEOF'
+          REGISTRY_URL="https://github.com/${{ github.repository }}/releases/download/${{ needs.check.outputs.tag }}"
+          python3 - "${{ needs.check.outputs.plugin }}" "${{ needs.check.outputs.version }}" "${{ steps.checksum.outputs.sha256 }}" "$REGISTRY_URL" plugins/registry.json <<'PYEOF'
           import json, sys, datetime
 
           plugin_name = sys.argv[1]
@@ -151,7 +193,7 @@ jobs:
                   entry["manifest"]["version"] = version
                   entry["download_url"] = download_url
                   entry["checksum"] = f"sha256:{checksum}"
-                  entry["updated_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+                  entry["updated_at"] = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
                   found = True
                   break
 
@@ -173,7 +215,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "registry.json unchanged, skipping commit"
           else
-            git commit -m "chore: update registry.json for ${{ steps.parse.outputs.plugin }} v${{ steps.parse.outputs.version }}
+            git commit -m "chore: update registry.json for ${{ needs.check.outputs.plugin }} v${{ needs.check.outputs.version }}
 
           Auto-generated by the Plugin Release workflow.
 
@@ -191,8 +233,8 @@ jobs:
 
       - name: Bump to next SNAPSHOT version
         run: |
-          plugin_dir="plugins/${{ steps.parse.outputs.plugin }}"
-          current="${{ steps.parse.outputs.version }}"
+          plugin_dir="plugins/${{ needs.check.outputs.plugin }}"
+          current="${{ needs.check.outputs.version }}"
 
           # Parse version and bump patch
           IFS='.' read -r major minor patch <<< "$current"
@@ -211,16 +253,16 @@ jobs:
 
       - name: Commit SNAPSHOT bump
         run: |
-          plugin_dir="plugins/${{ steps.parse.outputs.plugin }}"
+          plugin_dir="plugins/${{ needs.check.outputs.plugin }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "${plugin_dir}/Cargo.toml" "${plugin_dir}/madhyamas-plugin.toml"
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "chore: bump ${{ steps.parse.outputs.plugin }} to next SNAPSHOT
+            git commit -m "chore: bump ${{ needs.check.outputs.plugin }} to next SNAPSHOT
 
-          Auto-bumped after releasing v${{ steps.parse.outputs.version }}.
+          Auto-bumped after releasing v${{ needs.check.outputs.version }}.
 
           Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
             # Retry push with rebase in case another release ran in parallel

@@ -35,10 +35,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Without repo access, Rust autobuild cannot fetch the private
+      # licensing-core dependency and the analysis extracts almost nothing.
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          token: ${{ secrets.LICENSING_TOKEN }}
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
+
+      - name: Rust cache
+        if: matrix.language == 'rust'
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: codeql-${{ matrix.language }}
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v4
