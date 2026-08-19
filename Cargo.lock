@@ -2522,6 +2522,7 @@ dependencies = [
 [[package]]
 name = "licensing-core"
 version = "0.1.0"
+source = "git+https://github.com/ShristiLabs/licensing.git?tag=licensing-core-v0.1.0#44d718c155b4f9b34f0b680f6b81090993594d6b"
 dependencies = [
  "base64",
  "chrono",
