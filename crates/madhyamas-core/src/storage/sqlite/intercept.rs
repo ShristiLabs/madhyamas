@@ -177,6 +177,7 @@ impl SqliteInterceptStore {
             .execute(&pool)
             .await?;
         sqlx::query(SCHEMA_INDEXES).execute(&pool).await?;
+        migrate_mock_rules(&pool).await?;
         Ok(Self { pool })
     }
 
@@ -188,6 +189,37 @@ impl SqliteInterceptStore {
 
 fn parse_timestamp(ts: i64) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::from_timestamp(ts, 0).unwrap_or_else(Utc::now)
+}
+
+/// Columns added to `mock_rules` after the original 11-column schema, with
+/// the defaults used when migrating an existing database. `CREATE TABLE IF
+/// NOT EXISTS` is a no-op on old databases, so missing columns must be
+/// added explicitly or every SELECT referencing them fails.
+const MOCK_RULES_ADDED_COLUMNS: &[(&str, &str)] = &[
+    ("description", "TEXT NOT NULL DEFAULT ''"),
+    ("tags", "TEXT NOT NULL DEFAULT '[]'"),
+    ("collection_id", "TEXT NOT NULL DEFAULT ''"),
+];
+
+/// Lightweight `mock_rules` migration: `PRAGMA table_info` to inspect the
+/// existing columns, then `ALTER TABLE ... ADD COLUMN` for any of the
+/// 11-to-12-schema-transition columns that are missing. Fresh databases
+/// already have every column, so this is a no-op for them.
+async fn migrate_mock_rules(pool: &SqlitePool) -> Result<()> {
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('mock_rules')")
+        .fetch_all(pool)
+        .await?;
+    let existing: Vec<&str> = rows.iter().map(|(name,)| name.as_str()).collect();
+    for (column, definition) in MOCK_RULES_ADDED_COLUMNS {
+        if !existing.contains(column) {
+            sqlx::query(&format!(
+                "ALTER TABLE mock_rules ADD COLUMN {column} {definition}"
+            ))
+            .execute(pool)
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -599,5 +631,144 @@ impl InterceptStoreBackend for SqliteInterceptStore {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intercept::{MatchCondition, MockResponse};
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    /// Single-connection in-memory pool (shared in-memory DB across the
+    /// pool's single connection).
+    async fn memory_pool() -> SqlitePool {
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite")
+    }
+
+    fn sample_rule() -> MockRule {
+        MockRule::new(
+            "legacy".to_string(),
+            MatchCondition::UrlPattern {
+                pattern: "example.com/api".to_string(),
+            },
+            MockResponse {
+                status_code: 200,
+                ..MockResponse::default()
+            },
+        )
+    }
+
+    /// Create an `mock_rules` table in the old (11-column, pre-`description`)
+    /// shape and seed one rule, simulating a database created by a previous
+    /// Madhyamas version.
+    async fn create_old_schema_with_rule(pool: &SqlitePool) {
+        let condition = serde_json::to_string(&sample_rule().condition).unwrap();
+        let response_config = serde_json::to_string(&sample_rule().response_config).unwrap();
+        sqlx::query(
+            "CREATE TABLE mock_rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                condition TEXT NOT NULL,
+                response_config TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                priority INTEGER NOT NULL DEFAULT 100,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                hit_count INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO mock_rules \
+             (id, name, condition, response_config, enabled, priority, created_at, updated_at, hit_count) \
+             VALUES ('rule-1', 'legacy', ?, ?, 1, 100, 1700000000, 1700000000, 3)",
+        )
+        .bind(&condition)
+        .bind(&response_config)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Regression test for the old-schema → migrate → load path
+    /// (ShristiLabs/madhyamas#89): a database created with the pre-`description`
+    /// 11-column `mock_rules` schema must be migrated on store init and load
+    /// its persisted rules without the "no such column: description" error.
+
+    #[tokio::test]
+    async fn migrates_old_mock_rules_schema_and_loads_rules() {
+        let pool = memory_pool().await;
+        create_old_schema_with_rule(&pool).await;
+
+        // Store init must migrate missing columns instead of failing later
+        // SELECTs (previously: "no such column: description").
+        let store = SqliteInterceptStore::new(pool).await.unwrap();
+        let rules = store.load_mock_rules().await.unwrap();
+
+        assert_eq!(rules.len(), 1);
+        let rule = &rules[0];
+        assert_eq!(rule.id, "rule-1");
+        assert_eq!(rule.name, "legacy");
+        // Migrated columns get their documented defaults.
+        assert_eq!(rule.description, None);
+        assert!(rule.tags.is_empty());
+        assert_eq!(rule.collection_id, None);
+        // Pre-existing data is preserved.
+        assert_eq!(rule.hit_count, 3);
+        assert_eq!(rule.priority, 100);
+
+        // The new columns physically exist with the right defaults.
+        let (description, tags, collection_id): (String, String, String) = sqlx::query_as(
+            "SELECT description, tags, collection_id FROM mock_rules WHERE id = 'rule-1'",
+        )
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(description, "");
+        assert_eq!(tags, "[]");
+        assert_eq!(collection_id, "");
+    }
+
+    /// Fresh databases are unaffected: the 12-column schema is created and
+    /// the migration is a no-op.
+    #[tokio::test]
+    async fn fresh_database_roundtrips_mock_rules() {
+        let store = SqliteInterceptStore::new(memory_pool().await)
+            .await
+            .unwrap();
+
+        let mut rule = sample_rule();
+        rule.description = Some("docs".to_string());
+        rule.tags = vec!["api".to_string()];
+        rule.collection_id = Some("coll-1".to_string());
+        store.save_mock_rule(&rule).await.unwrap();
+
+        let loaded = store.load_mock_rules().await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, rule.id);
+        assert_eq!(loaded[0].description.as_deref(), Some("docs"));
+        assert_eq!(loaded[0].tags, vec!["api".to_string()]);
+        assert_eq!(loaded[0].collection_id.as_deref(), Some("coll-1"));
+    }
+
+    /// Running store init twice (restart against a migrated DB) is a no-op
+    /// and rules keep loading.
+    #[tokio::test]
+    async fn migration_is_idempotent_across_restarts() {
+        let pool = memory_pool().await;
+        create_old_schema_with_rule(&pool).await;
+
+        let store = SqliteInterceptStore::new(pool.clone()).await.unwrap();
+        assert_eq!(store.load_mock_rules().await.unwrap().len(), 1);
+        // Second init against the migrated database must be a no-op.
+        let store = SqliteInterceptStore::new(pool).await.unwrap();
+        assert_eq!(store.load_mock_rules().await.unwrap().len(), 1);
     }
 }

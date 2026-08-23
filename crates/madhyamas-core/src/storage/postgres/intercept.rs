@@ -189,6 +189,7 @@ impl PostgresInterceptStore {
         for stmt in SCHEMA_INDEX_STMTS {
             sqlx::query(stmt).execute(&mut *tx).await?;
         }
+        migrate_mock_rules(&mut tx).await?;
         tx.commit().await?;
         Ok(Self { pool })
     }
@@ -197,6 +198,31 @@ impl PostgresInterceptStore {
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
+}
+
+/// Columns added to `mock_rules` after the original 11-column schema, with
+/// the defaults used when migrating an existing database. `CREATE TABLE IF
+/// NOT EXISTS` is a no-op on old databases, so missing columns must be
+/// added explicitly or every SELECT referencing them fails. The advisory
+/// lock taken in `new` serializes concurrent store initializations.
+const MOCK_RULES_ADDED_COLUMNS: &[(&str, &str)] = &[
+    ("description", "TEXT NOT NULL DEFAULT ''"),
+    ("tags", "TEXT NOT NULL DEFAULT '[]'"),
+    ("collection_id", "TEXT NOT NULL DEFAULT ''"),
+];
+
+/// Lightweight `mock_rules` migration for existing installs: `ADD COLUMN IF
+/// NOT EXISTS` for each column from the 11-to-12-schema transition. Fresh
+/// databases already have every column, so this is a no-op for them.
+async fn migrate_mock_rules(tx: &mut sqlx::PgTransaction<'_>) -> Result<()> {
+    for (column, definition) in MOCK_RULES_ADDED_COLUMNS {
+        sqlx::query(&format!(
+            "ALTER TABLE mock_rules ADD COLUMN IF NOT EXISTS {column} {definition}"
+        ))
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }
 
 fn parse_timestamp(ts: i64) -> chrono::DateTime<chrono::Utc> {
