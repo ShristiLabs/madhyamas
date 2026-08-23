@@ -84,6 +84,56 @@ to `rotation` mode and `json_format` take effect on the next restart (the
 tracing subscriber layer is installed once at startup). All changes are
 persisted to `~/.madhyamas/config.json` and survive restarts.
 
+## Proxied-traffic debug logging
+
+Besides the engine's own diagnostics, Madhyamas can log each proxied
+request/response as structured events into the same main rotated log / stdout
+(no separate debug file). Events use the dedicated `tracing` target
+`madhyamas::debug_log` and are gated in code by the runtime setting, so
+toggling takes effect without a restart (new connections pick up the config
+snapshot from the shared proxy config). This is the proxy's diagnostic
+logging — distinct from the traffic capture shown in the web UI.
+
+Configured via the `debug_logging` section of the proxy config, the
+`debug_logging` object in `PATCH /api/logs`, or the web UI settings dialog
+(Debug Logging tab):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Master switch (runtime-toggleable, no restart). |
+| `level` | string | `"summary"` | Verbosity: `summary`, `headers`, or `full`. |
+| `host_filter` | string[] | `null` | Host patterns to log (empty/omitted = all hosts). |
+| `redact_headers` | string[] | `["Authorization", "Cookie", "Set-Cookie"]` | Headers replaced with `[REDACTED]` (case-insensitive). |
+| `redact_bodies` | bool | `false` | Never log body content (size placeholder only). |
+
+Verbosity levels:
+
+- `summary` — one event per request/response with method, host, path,
+  status, duration, and source (`upstream`, `mocked`, `blocked`, `script`,
+  `breakpoint response`, `error`).
+- `headers` — summary fields plus all headers (sensitive headers redacted).
+- `full` — headers plus bodies, size-capped at the traffic-capture
+  `max_body_size`. Compressed bodies (gzip, deflate, br, zstd) are
+  decompressed first; non-text binaries (images, protobuf, ...) are replaced
+  with a `[binary body: N bytes, content-type ...]` placeholder.
+
+Host filter patterns reuse the traffic-capture matcher: exact hosts, suffix
+domains (`example.com` matches `api.example.com`), wildcard subdomains
+(`*.example.com`), and globs (`*api*`).
+
+Example:
+
+```bash
+curl -X PATCH http://localhost:3001/api/logs \
+  -H 'Content-Type: application/json' \
+  -d '{"debug_logging": {"enabled": true, "level": "headers", "host_filter": ["api.example.com"]}}'
+```
+
+`GET /api/logs` includes the current `debug_logging` section in its status
+response. Implementation lives in `madhyamas-core/src/debug_log.rs`, with
+hook points in `madhyamas-core/src/proxy/pipeline.rs` (request entry,
+upstream response, short-circuit responses, and upstream errors).
+
 ## How it works
 
 - A custom `RotatingFileWriter` (in `madhyamas-core/src/log_rotation.rs`)

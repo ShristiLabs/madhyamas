@@ -10,6 +10,7 @@
 pub mod access_control;
 pub mod auto_save;
 pub mod config;
+pub mod debug_log;
 pub mod error;
 pub mod extension;
 #[cfg(feature = "grpc")]
@@ -39,7 +40,8 @@ pub use auto_save::AutoSaveManager;
 
 // Re-exports from config
 pub use config::{
-    AutoSaveConfig, LogConfig, LogRotation, MirrorConfig, ProxyConfig, UpstreamProxyConfig,
+    AutoSaveConfig, DebugLogConfig, DebugLogLevel, LogConfig, LogRotation, MirrorConfig,
+    ProxyConfig, UpstreamProxyConfig,
 };
 
 // Re-exports from log_rotation

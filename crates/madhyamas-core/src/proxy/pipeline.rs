@@ -254,6 +254,14 @@ impl<'a> Pipeline<'a> {
             std::time::Duration::from_millis(response.duration_ms),
         );
 
+        crate::debug_log::log_response(
+            &self.config.debug_logging,
+            self.config.max_body_size,
+            request_data,
+            response,
+            log_tag,
+        );
+
         info!(
             "{} {} -> {} ({})",
             request_data.method, request_data.url, response.status_code, log_tag
@@ -292,6 +300,15 @@ impl<'a> Pipeline<'a> {
                 .sum();
             metrics.record_request(body_bytes + header_bytes);
         }
+
+        // Emit a proxied-traffic debug event (target `madhyamas::debug_log`)
+        // when debug logging is enabled in the runtime config. This is the
+        // proxy's own diagnostic logging, distinct from traffic capture.
+        crate::debug_log::log_request(
+            &self.config.debug_logging,
+            self.config.max_body_size,
+            request_data,
+        );
 
         // Enforce memory limits: if the memory manager reports pressure,
         // log a warning so operators know traffic retention is constrained.
@@ -647,6 +664,14 @@ impl<'a> Pipeline<'a> {
                     request_data.method, request_data.url, response.status_code, duration_ms
                 );
 
+                crate::debug_log::log_response(
+                    &self.config.debug_logging,
+                    self.config.max_body_size,
+                    request_data,
+                    &response,
+                    "upstream",
+                );
+
                 // Record the response in metrics (bytes + latency).
                 self.record_response_metrics(
                     &response,
@@ -690,6 +715,13 @@ impl<'a> Pipeline<'a> {
                     self.traffic_store
                         .store_response(&entry.id, &error_response)
                         .await?;
+                    crate::debug_log::log_response(
+                        &self.config.debug_logging,
+                        self.config.max_body_size,
+                        request_data,
+                        &error_response,
+                        "error",
+                    );
                 }
             }
         }

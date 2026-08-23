@@ -217,6 +217,18 @@ pub struct ProxyConfig {
     /// [`docs/LOGGING.md`](../../docs/LOGGING.md) for the end-user guide.
     #[serde(default)]
     pub log_config: LogConfig,
+    /// Debug logging configuration for proxied traffic.
+    ///
+    /// When enabled, the proxy emits structured tracing events (target
+    /// `madhyamas::debug_log`) for each proxied request/response into the
+    /// main rotated log/stdout, with configurable verbosity, host filters,
+    /// and sensitive-header redaction. This is the proxy's own diagnostic
+    /// logging — distinct from the traffic capture shown in the web UI.
+    ///
+    /// See [`DebugLogConfig`] for field details and
+    /// [`docs/LOGGING.md`](../../docs/LOGGING.md) for the end-user guide.
+    #[serde(default)]
+    pub debug_logging: DebugLogConfig,
 }
 
 /// Upstream (external) proxy chaining configuration.
@@ -581,6 +593,132 @@ impl Default for LogConfig {
     }
 }
 
+/// Verbosity level for proxied-traffic debug logging.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DebugLogLevel {
+    /// One line per request/response: method, host, path, status, timing.
+    #[default]
+    Summary,
+    /// Summary plus all request/response headers (sensitive headers
+    /// redacted per [`DebugLogConfig::redact_headers`]).
+    Headers,
+    /// Headers plus bodies, size-capped at the traffic-capture
+    /// `max_body_size`. Compressed bodies are decompressed before logging;
+    /// non-text binaries are replaced with a size/content-type placeholder.
+    Full,
+}
+
+impl DebugLogLevel {
+    /// Parse a level from its serde string form (`summary`/`headers`/`full`).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "summary" => Some(Self::Summary),
+            "headers" => Some(Self::Headers),
+            "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+
+    /// The serde string form of this level.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Summary => "summary",
+            Self::Headers => "headers",
+            Self::Full => "full",
+        }
+    }
+}
+
+/// Default value provider for [`DebugLogConfig::redact_headers`].
+fn default_debug_log_redact_headers() -> Vec<String> {
+    vec![
+        "Authorization".to_string(),
+        "Cookie".to_string(),
+        "Set-Cookie".to_string(),
+    ]
+}
+
+/// Debug logging configuration for proxied traffic.
+///
+/// When `enabled`, the proxy emits structured `tracing` events (target
+/// `madhyamas::debug_log`) for each proxied request and response into the
+/// existing main rotated log / stdout — no separate debug log file. Events
+/// are gated in code by the runtime value of this setting, so toggling via
+/// `PATCH /api/logs` takes effect without a restart (new connections pick
+/// up the config snapshot from the shared `Arc<RwLock<ProxyConfig>>`).
+///
+/// Verbosity is controlled by [`DebugLogLevel`]. Host filters reuse the
+/// traffic-capture pattern matcher ([`crate::traffic::host_matches_pattern`]):
+/// exact hosts, suffix domains (`example.com` matches `api.example.com`),
+/// wildcard subdomains (`*.example.com`), and globs (`*api*`). An empty or
+/// `None` filter logs all hosts.
+///
+/// Sensitive headers are redacted by default (Authorization, Cookie,
+/// Set-Cookie); the list is configurable and matched case-insensitively.
+/// `redact_bodies` replaces logged bodies with a size placeholder.
+///
+/// See [`docs/LOGGING.md`](../../docs/LOGGING.md) for the end-user guide.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DebugLogConfig {
+    /// Master switch. When `false` (the default), no per-request debug
+    /// events are emitted.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Verbosity level. Default: [`DebugLogLevel::Summary`].
+    #[serde(default)]
+    pub level: DebugLogLevel,
+
+    /// Optional list of host patterns to log. When `None` or empty, all
+    /// hosts are logged.
+    #[serde(default)]
+    pub host_filter: Option<Vec<String>>,
+
+    /// Header names whose values are replaced with `[REDACTED]` before
+    /// logging. Matched case-insensitively. Default: Authorization, Cookie,
+    /// Set-Cookie.
+    #[serde(default = "default_debug_log_redact_headers")]
+    pub redact_headers: Vec<String>,
+
+    /// When `true`, bodies are never logged at `full` verbosity — a size
+    /// placeholder is emitted instead. Default: `false`.
+    #[serde(default)]
+    pub redact_bodies: bool,
+}
+
+impl Default for DebugLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            level: DebugLogLevel::Summary,
+            host_filter: None,
+            redact_headers: default_debug_log_redact_headers(),
+            redact_bodies: false,
+        }
+    }
+}
+
+impl DebugLogConfig {
+    /// Whether debug events should be emitted for the given host.
+    ///
+    /// Returns `false` when disabled. An empty or `None` host filter logs
+    /// every host; otherwise at least one pattern must match (see
+    /// [`crate::traffic::host_matches_pattern`] for matching semantics).
+    pub fn should_log(&self, host: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        match self.host_filter.as_ref() {
+            None => true,
+            Some(patterns) if patterns.is_empty() => true,
+            Some(patterns) => patterns
+                .iter()
+                .any(|p| crate::traffic::host_matches_pattern(host, p)),
+        }
+    }
+}
+
 impl UpstreamProxyConfig {
     /// Build the reqwest-compatible proxy URL string.
     ///
@@ -770,6 +908,7 @@ impl Default for ProxyConfig {
             auto_save: AutoSaveConfig::default(),
             mirror: MirrorConfig::default(),
             log_config: LogConfig::default(),
+            debug_logging: DebugLogConfig::default(),
         }
     }
 }
@@ -1036,6 +1175,160 @@ mod tests {
             auth_password: None,
             no_proxy_hosts: Vec::new(),
         }
+    }
+
+    // ── DebugLogConfig / DebugLogLevel ───────────────────────────────────────
+
+    #[test]
+    fn debug_log_config_defaults() {
+        let c = DebugLogConfig::default();
+        assert!(!c.enabled);
+        assert_eq!(c.level, DebugLogLevel::Summary);
+        assert_eq!(c.host_filter, None);
+        assert_eq!(
+            c.redact_headers,
+            vec![
+                "Authorization".to_string(),
+                "Cookie".to_string(),
+                "Set-Cookie".to_string()
+            ]
+        );
+        assert!(!c.redact_bodies);
+    }
+
+    #[test]
+    fn debug_log_level_parse_valid_values() {
+        assert_eq!(
+            DebugLogLevel::parse("summary"),
+            Some(DebugLogLevel::Summary)
+        );
+        assert_eq!(
+            DebugLogLevel::parse("headers"),
+            Some(DebugLogLevel::Headers)
+        );
+        assert_eq!(DebugLogLevel::parse("full"), Some(DebugLogLevel::Full));
+        assert_eq!(DebugLogLevel::parse("  FULL "), Some(DebugLogLevel::Full));
+        assert_eq!(DebugLogLevel::parse("verbose"), None);
+        assert_eq!(DebugLogLevel::parse(""), None);
+    }
+
+    #[test]
+    fn debug_log_level_str_roundtrip() {
+        for level in [
+            DebugLogLevel::Summary,
+            DebugLogLevel::Headers,
+            DebugLogLevel::Full,
+        ] {
+            assert_eq!(DebugLogLevel::parse(level.as_str()), Some(level));
+        }
+        assert_eq!(DebugLogLevel::Summary.as_str(), "summary");
+        assert_eq!(DebugLogLevel::Headers.as_str(), "headers");
+        assert_eq!(DebugLogLevel::Full.as_str(), "full");
+    }
+
+    #[test]
+    fn debug_log_config_serde_roundtrip() {
+        let c = DebugLogConfig {
+            enabled: true,
+            level: DebugLogLevel::Full,
+            host_filter: Some(vec!["*.example.com".to_string()]),
+            redact_headers: vec!["X-Secret".to_string()],
+            redact_bodies: true,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back: DebugLogConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, c);
+        // Level serializes lowercase.
+        assert!(json.contains("\"level\":\"full\""));
+    }
+
+    #[test]
+    fn debug_log_config_deserializes_defaults_when_empty_object() {
+        let c: DebugLogConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(c, DebugLogConfig::default());
+    }
+
+    #[test]
+    fn debug_log_config_should_log_disabled() {
+        let c = DebugLogConfig {
+            host_filter: None,
+            ..DebugLogConfig::default()
+        };
+        assert!(!c.should_log("example.com"));
+    }
+
+    #[test]
+    fn debug_log_config_should_log_no_filter_matches_all() {
+        let c = DebugLogConfig {
+            enabled: true,
+            ..DebugLogConfig::default()
+        };
+        assert!(c.should_log("anything.example.com"));
+        let c = DebugLogConfig {
+            enabled: true,
+            host_filter: Some(Vec::new()),
+            ..DebugLogConfig::default()
+        };
+        assert!(c.should_log("anything.example.com"));
+    }
+
+    #[test]
+    fn debug_log_config_should_log_filter_matching() {
+        let c = DebugLogConfig {
+            enabled: true,
+            host_filter: Some(vec![
+                "api.example.com".to_string(), // exact
+                "*.internal.corp".to_string(), // wildcard subdomain
+                "service*".to_string(),        // glob
+            ]),
+            ..DebugLogConfig::default()
+        };
+        assert!(c.should_log("api.example.com"));
+        assert!(c.should_log("host.internal.corp"));
+        assert!(c.should_log("service-1.prod"));
+        // Suffix match on a non-wildcard entry.
+        assert!(c.should_log("v2.api.example.com"));
+        assert!(!c.should_log("other.example.com"));
+        assert!(!c.should_log("external.com"));
+    }
+
+    #[test]
+    fn debug_log_config_should_log_case_and_trailing_dot_insensitive() {
+        let c = DebugLogConfig {
+            enabled: true,
+            host_filter: Some(vec!["API.Example.COM.".to_string()]),
+            ..DebugLogConfig::default()
+        };
+        assert!(c.should_log("api.example.com"));
+    }
+
+    #[test]
+    fn proxy_config_old_json_without_debug_logging_uses_defaults() {
+        // Serialize the default config, strip the debug_logging section
+        // (simulating an old config file), and confirm deserialization
+        // falls back to defaults.
+        let mut v: serde_json::Value = serde_json::to_value(ProxyConfig::default()).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("debug_logging");
+        let cfg: ProxyConfig = serde_json::from_value(v).unwrap();
+        assert_eq!(cfg.debug_logging, DebugLogConfig::default());
+    }
+
+    #[test]
+    fn proxy_config_debug_logging_roundtrip() {
+        let cfg = ProxyConfig {
+            debug_logging: DebugLogConfig {
+                enabled: true,
+                level: DebugLogLevel::Headers,
+                host_filter: Some(vec!["example.com".to_string()]),
+                redact_headers: vec!["Authorization".to_string()],
+                redact_bodies: true,
+            },
+            ..ProxyConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: ProxyConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.debug_logging, cfg.debug_logging);
     }
 
     #[test]

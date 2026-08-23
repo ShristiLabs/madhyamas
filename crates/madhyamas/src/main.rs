@@ -890,6 +890,13 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             .as_ref()
             .map(|s| s.log_config.clone())
             .unwrap_or_default(),
+        // Proxied-traffic debug logging: preserve the saved config (if any)
+        // so runtime API changes persist across restarts. Disabled by
+        // default.
+        debug_logging: saved
+            .as_ref()
+            .map(|s| s.debug_logging.clone())
+            .unwrap_or_default(),
     };
 
     if saved.is_some() {

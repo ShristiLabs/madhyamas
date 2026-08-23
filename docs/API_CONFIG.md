@@ -49,11 +49,15 @@ See [MIRROR.md](MIRROR.md) for the feature guide.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/logs` | Get log status and configuration |
-| PATCH | `/logs` | Update log configuration |
+| GET | `/logs` | Get log status and configuration (includes the `debug_logging` section) |
+| PATCH | `/logs` | Update log configuration and/or the `debug_logging` section |
 | POST | `/logs/rotate` | Trigger immediate log rotation |
 
-See [LOGGING.md](LOGGING.md) for the log rotation feature.
+See [LOGGING.md](LOGGING.md) for the log rotation and proxied-traffic debug
+logging features. The `PATCH /logs` `debug_logging` object accepts partial
+updates (`enabled`, `level` of `summary|headers|full`, `host_filter`,
+`redact_headers`, `redact_bodies`) and takes effect immediately without a
+restart.
 
 ## Persistence
 

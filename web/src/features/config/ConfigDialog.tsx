@@ -26,6 +26,7 @@ import {
   Server,
   Network,
   Camera,
+  FileText,
   Palette,
   ShieldOff,
   Plus,
@@ -1255,6 +1256,202 @@ function SslPassthroughTab() {
   );
 }
 
+// ─── Debug Logging Tab ────────────────────────────────────────────────────────
+
+interface DebugLogApiConfig {
+  enabled: boolean;
+  level: "summary" | "headers" | "full";
+  host_filter: string[] | null;
+  redact_headers: string[];
+  redact_bodies: boolean;
+}
+
+interface DebugLogConfigState {
+  enabled: boolean;
+  level: "summary" | "headers" | "full";
+  host_filter: string;
+  redact_headers: string;
+  redact_bodies: boolean;
+}
+
+const DEFAULT_DEBUG_LOG: DebugLogConfigState = {
+  enabled: false,
+  level: "summary",
+  host_filter: "",
+  redact_headers: "Authorization, Cookie, Set-Cookie",
+  redact_bodies: false,
+};
+
+function DebugLogTab() {
+  const { toast } = useToast();
+  const [cfg, setCfg] = useState<DebugLogConfigState>(DEFAULT_DEBUG_LOG);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    apiGet<{ debug_logging?: DebugLogApiConfig }>("/logs")
+      .then((data) => {
+        const d = data.debug_logging;
+        if (d) {
+          setCfg({
+            enabled: d.enabled ?? false,
+            level: (d.level as "summary" | "headers" | "full") ?? "summary",
+            host_filter: (d.host_filter ?? []).join("\n"),
+            redact_headers: (d.redact_headers ?? []).join(", "),
+            redact_bodies: d.redact_bodies ?? false,
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = useCallback(async () => {
+    setSaving(true);
+    try {
+      const hostFilter = cfg.host_filter
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const redactHeaders = cfg.redact_headers
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      await apiPatch("/logs", {
+        debug_logging: {
+          enabled: cfg.enabled,
+          level: cfg.level,
+          host_filter: hostFilter,
+          redact_headers: redactHeaders,
+          redact_bodies: cfg.redact_bodies,
+        },
+      });
+      toast({ description: "Debug logging settings saved." });
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? `Failed to save debug logging (HTTP ${err.status}): ${err.body.slice(0, 200)}`
+          : err instanceof Error
+            ? `Failed to save debug logging: ${err.message}`
+            : "Failed to save debug logging settings.";
+      toast({ description: msg, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }, [cfg, toast]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-48 text-muted-foreground">
+        Loading…
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <Section title="Debug Logging">
+        <p className="text-sm text-muted-foreground">
+          Write per-request diagnostic events for proxied traffic into the
+          proxy's main log (files or stdout). This is separate from the
+          traffic capture shown in the web UI. Changes apply immediately —
+          no restart needed.
+        </p>
+        <Row
+          label="Enable Debug Logging"
+          description="Emit structured events on the madhyamas::debug_log target for each proxied request and response."
+        >
+          <Switch
+            checked={cfg.enabled}
+            onCheckedChange={(v) => setCfg((p) => ({ ...p, enabled: v }))}
+          />
+        </Row>
+        <Row
+          label="Verbosity"
+          description="Summary: method/URL/status/timing. Headers: adds all headers. Full: adds bodies (size-capped by the capture max body size)."
+        >
+          <Select
+            value={cfg.level}
+            onValueChange={(v: "summary" | "headers" | "full") =>
+              setCfg((p) => ({ ...p, level: v }))
+            }
+          >
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="summary">Summary</SelectItem>
+              <SelectItem value="headers">Headers</SelectItem>
+              <SelectItem value="full">Full Bodies</SelectItem>
+            </SelectContent>
+          </Select>
+        </Row>
+      </Section>
+
+      {cfg.enabled && (
+        <>
+          <Section title="Filters">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Host Filter</Label>
+              <p className="text-xs text-muted-foreground">
+                Only log traffic for these hosts. One pattern per line.
+                Supports exact hosts, suffix domains (example.com matches
+                api.example.com), wildcards (*.example.com), and globs
+                (*api*). Leave empty to log all hosts.
+              </p>
+              <textarea
+                value={cfg.host_filter}
+                onChange={(e) =>
+                  setCfg((p) => ({ ...p, host_filter: e.target.value }))
+                }
+                rows={3}
+                placeholder={"api.example.com\n*.internal.corp"}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono resize-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </div>
+          </Section>
+
+          <Section title="Redaction">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Redacted Headers</Label>
+              <p className="text-xs text-muted-foreground">
+                Comma-separated header names whose values are replaced with
+                [REDACTED] before logging (case-insensitive).
+              </p>
+              <Input
+                value={cfg.redact_headers}
+                onChange={(e) =>
+                  setCfg((p) => ({ ...p, redact_headers: e.target.value }))
+                }
+                placeholder="Authorization, Cookie, Set-Cookie"
+                className="w-full font-mono"
+              />
+            </div>
+            <Row
+              label="Redact Bodies"
+              description="Never log body content — emit a size placeholder only, even at Full verbosity."
+            >
+              <Switch
+                checked={cfg.redact_bodies}
+                onCheckedChange={(v) =>
+                  setCfg((p) => ({ ...p, redact_bodies: v }))
+                }
+              />
+            </Row>
+          </Section>
+        </>
+      )}
+
+      <div className="flex justify-end pt-2">
+        <Button onClick={save} disabled={saving}>
+          <Save className="h-4 w-4 mr-2" />
+          {saving ? "Saving…" : "Save Changes"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main dialog ───────────────────────────────────────────────────────────────
 
 interface ConfigDialogProps {
@@ -1300,6 +1497,10 @@ export function ConfigDialog({ trigger }: ConfigDialogProps) {
               <HardDriveDownload className="h-3.5 w-3.5" />
               Auto Save
             </TabsTrigger>
+            <TabsTrigger value="debuglog" className="flex items-center gap-1.5">
+              <FileText className="h-3.5 w-3.5" />
+              Debug Logging
+            </TabsTrigger>
             <TabsTrigger
               value="appearance"
               className="flex items-center gap-1.5"
@@ -1323,6 +1524,9 @@ export function ConfigDialog({ trigger }: ConfigDialogProps) {
             </TabsContent>
             <TabsContent value="autosave" className="mt-0">
               <AutoSaveTab />
+            </TabsContent>
+            <TabsContent value="debuglog" className="mt-0">
+              <DebugLogTab />
             </TabsContent>
             <TabsContent value="appearance" className="mt-0">
               <AppearanceTab />

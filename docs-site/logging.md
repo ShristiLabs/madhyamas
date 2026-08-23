@@ -98,6 +98,30 @@ For targeted verbosity (e.g. only the proxy engine):
 RUST_LOG=madhyamas_core::proxy=debug,info madhyamas serve
 ```
 
+## Proxied-Traffic Debug Logging
+
+Madhyamas can also write per-request diagnostic events for the traffic flowing through the proxy — method, host, path, status, timing, and (optionally) headers and bodies — into the same main log. This is separate from the traffic list in the web UI: it is plain structured logging, meant for `tail`/`grep`, `docker logs`, or shipping to a log aggregator.
+
+Toggle it in the web UI (**Settings -> Debug Logging**) or via the API:
+
+```bash
+curl -X PATCH http://localhost:3001/api/logs \
+  -H 'Content-Type: application/json' \
+  -d '{"debug_logging": {"enabled": true, "level": "headers", "host_filter": ["api.example.com"]}}'
+```
+
+Settings (all applied immediately, no restart):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `false` | Master switch. |
+| `level` | `summary` | `summary` (one line per request/response), `headers` (adds all headers), `full` (adds bodies). |
+| `host_filter` | all hosts | One pattern per line; supports `example.com`, `*.example.com`, and `*api*` globs. |
+| `redact_headers` | `Authorization, Cookie, Set-Cookie` | Headers replaced with `[REDACTED]` before logging. |
+| `redact_bodies` | `false` | Never log body content — size placeholder only. |
+
+At `full` verbosity, bodies are capped at the capture **Max Body Size** setting, compressed bodies are decompressed first, and non-text binaries (images, protobuf, ...) are logged as a size/content-type placeholder.
+
 ## How It Works
 
 - A custom `RotatingFileWriter` (in `madhyamas-core/src/log_rotation.rs`) implements `std::io::Write` and is wrapped as a `tracing_subscriber` `MakeWriter` so it can be used as a `fmt` layer alongside the stdout layer.

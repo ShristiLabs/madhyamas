@@ -1987,7 +1987,27 @@ pub async fn get_log_status(State(state): State<Arc<AppState>>) -> impl IntoResp
         )
             .into_response();
     };
-    Json(handle.status_json()).into_response()
+    let mut status = handle.status_json();
+    if let Some(obj) = status.as_object_mut() {
+        if let Some(pc) = state.proxy_config.as_ref() {
+            obj.insert(
+                "debug_logging".to_string(),
+                debug_logging_json(&pc.read().debug_logging),
+            );
+        }
+    }
+    Json(status).into_response()
+}
+
+/// Serialize the debug logging section for API responses.
+fn debug_logging_json(cfg: &madhyamas_core::DebugLogConfig) -> serde_json::Value {
+    serde_json::json!({
+        "enabled": cfg.enabled,
+        "level": cfg.level.as_str(),
+        "host_filter": cfg.host_filter,
+        "redact_headers": cfg.redact_headers,
+        "redact_bodies": cfg.redact_bodies,
+    })
 }
 
 /// Trigger an immediate (on-demand) log file rotation.
@@ -2036,6 +2056,24 @@ pub struct PatchLogConfigRequest {
     pub max_files: Option<usize>,
     pub max_file_size_mb: Option<u64>,
     pub json_format: Option<bool>,
+    /// Proxied-traffic debug logging settings (runtime-toggleable, no
+    /// restart required). Applied to the shared proxy config and persisted.
+    pub debug_logging: Option<PatchDebugLogConfigRequest>,
+}
+
+/// Partial update payload for the `debug_logging` section of
+/// `PATCH /api/logs`.
+#[derive(Debug, Deserialize)]
+pub struct PatchDebugLogConfigRequest {
+    pub enabled: Option<bool>,
+    /// Verbosity: `"summary"`, `"headers"`, or `"full"`.
+    pub level: Option<String>,
+    /// Host patterns to log (empty/omitted = all hosts).
+    pub host_filter: Option<Vec<String>>,
+    /// Header names to redact (case-insensitive).
+    pub redact_headers: Option<Vec<String>>,
+    /// When `true`, bodies are never logged (size placeholder only).
+    pub redact_bodies: Option<bool>,
 }
 
 /// Update the log rotation configuration at runtime.
@@ -2087,6 +2125,43 @@ pub async fn update_log_config(
         }
     }
 
+    // Compute the proxied-traffic debug logging section (runtime-toggleable,
+    // no restart required) BEFORE applying anything, so an invalid payload
+    // leaves the live state untouched.
+    let mut debug_cfg = state
+        .proxy_config
+        .as_ref()
+        .map(|pc| pc.read().debug_logging.clone())
+        .unwrap_or_default();
+    if let Some(req_debug) = req.debug_logging {
+        if let Some(v) = req_debug.enabled {
+            debug_cfg.enabled = v;
+        }
+        if let Some(ref level) = req_debug.level {
+            match madhyamas_core::DebugLogLevel::parse(level) {
+                Some(l) => debug_cfg.level = l,
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": format!("invalid debug_logging.level: `{}` (expected summary, headers, or full)", level),
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+        if let Some(v) = req_debug.host_filter {
+            debug_cfg.host_filter = if v.is_empty() { None } else { Some(v) };
+        }
+        if let Some(v) = req_debug.redact_headers {
+            debug_cfg.redact_headers = v;
+        }
+        if let Some(v) = req_debug.redact_bodies {
+            debug_cfg.redact_bodies = v;
+        }
+    }
+
     // Apply to the live handle.
     handle.update_config(cfg.clone());
 
@@ -2095,6 +2170,7 @@ pub async fn update_log_config(
         let snapshot = {
             let mut config = pc.write();
             config.log_config = cfg.clone();
+            config.debug_logging = debug_cfg.clone();
             config.clone()
         };
         if let Err(e) = snapshot.save() {
@@ -2108,7 +2184,8 @@ pub async fn update_log_config(
         "max_files": cfg.max_files,
         "max_file_size_mb": cfg.max_file_size_mb,
         "json_format": cfg.json_format,
-        "message": "Log configuration updated (rotation mode/json_format changes take effect on next restart; size/max_files take effect immediately)",
+        "debug_logging": debug_logging_json(&debug_cfg),
+        "message": "Log configuration updated (rotation mode/json_format changes take effect on next restart; size/max_files and debug_logging take effect immediately)",
     });
     (StatusCode::OK, Json(resp)).into_response()
 }
@@ -2141,5 +2218,211 @@ fn parse_rotation(val: &serde_json::Value) -> Result<madhyamas_core::LogRotation
             Ok(madhyamas_core::LogRotation::SizeMB { size_mb })
         }
         other => Err(format!("unknown rotation mode: {}", other)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use madhyamas_core::log_rotation::RotatingFileWriter;
+    use madhyamas_core::{DebugLogConfig, DebugLogLevel, LogConfig, ProxyConfig};
+
+    async fn make_state() -> AppState {
+        let store = madhyamas_core::TrafficStore::new(":memory:")
+            .await
+            .expect("in-memory store");
+        let dir = std::env::temp_dir().join(format!(
+            "madhyamas-log-tests-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let writer = RotatingFileWriter::new(&dir, LogConfig::default()).unwrap();
+        AppState::new(store).with_log_handle(madhyamas_core::LogHandle::new(writer))
+    }
+
+    /// Invoke a handler and return (status, JSON body).
+    async fn respond(
+        resp: axum::response::Response,
+    ) -> (axum::http::StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn update_log_config_applies_full_debug_logging_section() {
+        let state = Arc::new(make_state().await);
+        let req: PatchLogConfigRequest = serde_json::from_str(
+            r#"{"debug_logging": {
+                "enabled": true,
+                "level": "full",
+                "host_filter": ["*.example.com"],
+                "redact_headers": ["X-Secret"],
+                "redact_bodies": true
+            }}"#,
+        )
+        .unwrap();
+
+        let (status, body) = respond(
+            update_log_config(State(state), Json(req))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        let d = &body["debug_logging"];
+        assert_eq!(d["enabled"], true);
+        assert_eq!(d["level"], "full");
+        assert_eq!(d["host_filter"], serde_json::json!(["*.example.com"]));
+        assert_eq!(d["redact_headers"], serde_json::json!(["X-Secret"]));
+        assert_eq!(d["redact_bodies"], true);
+    }
+
+    #[tokio::test]
+    async fn update_log_config_partial_debug_logging_keeps_defaults() {
+        let state = Arc::new(make_state().await);
+        let req: PatchLogConfigRequest =
+            serde_json::from_str(r#"{"debug_logging": {"enabled": true}}"#).unwrap();
+
+        let (status, body) = respond(
+            update_log_config(State(state), Json(req))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        let d = &body["debug_logging"];
+        // Untouched fields keep the defaults.
+        assert_eq!(d["level"], "summary");
+        assert_eq!(d["host_filter"], serde_json::Value::Null);
+        assert_eq!(
+            d["redact_headers"],
+            serde_json::json!(["Authorization", "Cookie", "Set-Cookie"])
+        );
+        assert_eq!(d["redact_bodies"], false);
+    }
+
+    #[tokio::test]
+    async fn update_log_config_rejects_invalid_debug_level() {
+        let state = Arc::new(make_state().await);
+        let req: PatchLogConfigRequest =
+            serde_json::from_str(r#"{"debug_logging": {"enabled": true, "level": "verbose"}}"#)
+                .unwrap();
+
+        let (status, body) = respond(
+            update_log_config(State(state), Json(req))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("verbose"));
+    }
+
+    #[tokio::test]
+    async fn update_log_config_normalizes_empty_host_filter_to_null() {
+        let state = Arc::new(make_state().await);
+        let req: PatchLogConfigRequest =
+            serde_json::from_str(r#"{"debug_logging": {"enabled": true, "host_filter": []}}"#)
+                .unwrap();
+
+        let (status, body) = respond(
+            update_log_config(State(state), Json(req))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(
+            body["debug_logging"]["host_filter"],
+            serde_json::Value::Null
+        );
+    }
+
+    #[tokio::test]
+    async fn update_log_config_without_debug_logging_section_is_noop() {
+        let state = Arc::new(make_state().await);
+        let req: PatchLogConfigRequest = serde_json::from_str(r#"{"max_files": 3}"#).unwrap();
+
+        let (status, body) = respond(
+            update_log_config(State(state), Json(req))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(body["debug_logging"]["enabled"], false);
+    }
+
+    #[tokio::test]
+    async fn get_log_status_includes_debug_logging_section() {
+        let store = madhyamas_core::TrafficStore::new(":memory:")
+            .await
+            .expect("in-memory store");
+        let dir = std::env::temp_dir().join(format!(
+            "madhyamas-log-tests-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let writer = RotatingFileWriter::new(&dir, LogConfig::default()).unwrap();
+        let cfg = ProxyConfig {
+            debug_logging: DebugLogConfig {
+                enabled: true,
+                level: DebugLogLevel::Headers,
+                host_filter: Some(vec!["api.example.com".to_string()]),
+                redact_headers: vec!["Authorization".to_string()],
+                redact_bodies: true,
+            },
+            ..ProxyConfig::default()
+        };
+        let state = Arc::new(
+            AppState::new(store)
+                .with_log_handle(madhyamas_core::LogHandle::new(writer))
+                .with_proxy_config(Arc::new(parking_lot::RwLock::new(cfg))),
+        );
+
+        let (status, body) = respond(get_log_status(State(state)).await.into_response()).await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(body["debug_logging"]["enabled"], true);
+        assert_eq!(body["debug_logging"]["level"], "headers");
+        assert_eq!(
+            body["debug_logging"]["host_filter"],
+            serde_json::json!(["api.example.com"])
+        );
+        assert_eq!(body["debug_logging"]["redact_bodies"], true);
+    }
+
+    #[test]
+    fn patch_debug_log_request_deserializes_partial_payloads() {
+        let req: PatchDebugLogConfigRequest =
+            serde_json::from_str(r#"{"level": "headers"}"#).unwrap();
+        assert_eq!(req.level.as_deref(), Some("headers"));
+        assert_eq!(req.enabled, None);
+        assert_eq!(req.host_filter, None);
+        assert_eq!(req.redact_headers, None);
+        assert_eq!(req.redact_bodies, None);
+    }
+
+    #[test]
+    fn debug_logging_json_serializes_all_fields() {
+        let cfg = DebugLogConfig {
+            enabled: true,
+            level: DebugLogLevel::Full,
+            host_filter: Some(vec!["a.com".to_string()]),
+            redact_headers: vec!["Authorization".to_string()],
+            redact_bodies: true,
+        };
+        let v = debug_logging_json(&cfg);
+        assert_eq!(v["enabled"], true);
+        assert_eq!(v["level"], "full");
+        assert_eq!(v["host_filter"], serde_json::json!(["a.com"]));
+        assert_eq!(v["redact_headers"], serde_json::json!(["Authorization"]));
+        assert_eq!(v["redact_bodies"], true);
     }
 }
