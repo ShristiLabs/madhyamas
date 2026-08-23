@@ -2056,6 +2056,12 @@ pub struct PatchLogConfigRequest {
     pub max_files: Option<usize>,
     pub max_file_size_mb: Option<u64>,
     pub json_format: Option<bool>,
+    /// Async file-log writer settings. `async_mode` is runtime-toggleable;
+    /// `async_writing` and `async_buffer_size` take effect on restart and
+    /// are persisted.
+    pub async_mode: Option<String>,
+    pub async_writing: Option<bool>,
+    pub async_buffer_size: Option<usize>,
     /// Proxied-traffic debug logging settings (runtime-toggleable, no
     /// restart required). Applied to the shared proxy config and persisted.
     pub debug_logging: Option<PatchDebugLogConfigRequest>,
@@ -2111,6 +2117,26 @@ pub async fn update_log_config(
     }
     if let Some(v) = req.json_format {
         cfg.json_format = v;
+    }
+    if let Some(ref mode) = req.async_mode {
+        match madhyamas_core::AsyncLogMode::parse(mode) {
+            Some(m) => cfg.async_mode = m,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("invalid async_mode: `{}` (expected lossless or lossy)", mode),
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+    if let Some(v) = req.async_writing {
+        cfg.async_writing = v;
+    }
+    if let Some(v) = req.async_buffer_size {
+        cfg.async_buffer_size = v.max(1);
     }
     if let Some(rotation_val) = req.rotation {
         match parse_rotation(&rotation_val) {
@@ -2184,8 +2210,11 @@ pub async fn update_log_config(
         "max_files": cfg.max_files,
         "max_file_size_mb": cfg.max_file_size_mb,
         "json_format": cfg.json_format,
+        "async_writing": cfg.async_writing,
+        "async_mode": cfg.async_mode.as_str(),
+        "async_buffer_size": cfg.async_buffer_size,
         "debug_logging": debug_logging_json(&debug_cfg),
-        "message": "Log configuration updated (rotation mode/json_format changes take effect on next restart; size/max_files and debug_logging take effect immediately)",
+        "message": "Log configuration updated (rotation mode/json_format/async_writing/async_buffer_size take effect on next restart; size/max_files, async_mode, and debug_logging take effect immediately)",
     });
     (StatusCode::OK, Json(resp)).into_response()
 }

@@ -483,6 +483,52 @@ fn default_log_rotation() -> LogRotation {
     LogRotation::Daily
 }
 
+/// Default value provider for [`LogConfig::async_buffer_size`].
+fn default_log_async_buffer_size() -> usize {
+    8192
+}
+
+/// Overflow policy for the asynchronous log writer.
+///
+/// When the bounded buffer between the tracing layer and the dedicated
+/// writer thread is full:
+///
+/// - [`AsyncLogMode::Lossless`] (the default): producers block until space
+///   frees up (backpressure). No events are ever lost; request threads are
+///   decoupled from disk I/O latency spikes but may briefly park if the
+///   writer thread falls behind for longer than the buffer depth.
+/// - [`AsyncLogMode::Lossy`]: the event is dropped and a dropped-event
+///   counter is incremented (visible in `GET /api/logs`). Sustains peak
+///   throughput at the cost of data loss during writer stalls.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AsyncLogMode {
+    /// Block producers when the buffer is full (default; no data loss).
+    #[default]
+    Lossless,
+    /// Drop events when the buffer is full (counted in status).
+    Lossy,
+}
+
+impl AsyncLogMode {
+    /// Parse a mode from its serde string form (`lossless`/`lossy`).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "lossless" => Some(Self::Lossless),
+            "lossy" => Some(Self::Lossy),
+            _ => None,
+        }
+    }
+
+    /// The serde string form of this mode.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Lossless => "lossless",
+            Self::Lossy => "lossy",
+        }
+    }
+}
+
 /// Log file rotation strategy.
 ///
 /// Controls when the current log file is rotated (renamed with a timestamp
@@ -579,6 +625,23 @@ pub struct LogConfig {
     /// human-readable text format. Default: `false`.
     #[serde(default)]
     pub json_format: bool,
+
+    /// Decouple file log writes from the emitting thread via a dedicated
+    /// background writer thread fed by a bounded buffer. Default: `true`.
+    /// Changes take effect on the next restart.
+    #[serde(default = "default_true")]
+    pub async_writing: bool,
+
+    /// Overflow policy when the async buffer is full. `lossless` (default)
+    /// blocks producers; `lossy` drops events and counts them. Runtime-
+    /// toggleable via `PATCH /api/logs`.
+    #[serde(default)]
+    pub async_mode: AsyncLogMode,
+
+    /// Capacity of the bounded async log buffer (number of buffered events).
+    /// Default: 8192. Changes take effect on the next restart.
+    #[serde(default = "default_log_async_buffer_size")]
+    pub async_buffer_size: usize,
 }
 
 impl Default for LogConfig {
@@ -589,6 +652,9 @@ impl Default for LogConfig {
             max_files: default_log_max_files(),
             max_file_size_mb: default_log_max_file_size_mb(),
             json_format: false,
+            async_writing: true,
+            async_mode: AsyncLogMode::Lossless,
+            async_buffer_size: default_log_async_buffer_size(),
         }
     }
 }

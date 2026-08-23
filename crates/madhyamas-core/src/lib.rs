@@ -8,6 +8,7 @@
 #![allow(clippy::double_must_use, clippy::manual_clamp)]
 
 pub mod access_control;
+pub mod async_log;
 pub mod auto_save;
 pub mod config;
 pub mod debug_log;
@@ -40,11 +41,12 @@ pub use auto_save::AutoSaveManager;
 
 // Re-exports from config
 pub use config::{
-    AutoSaveConfig, DebugLogConfig, DebugLogLevel, LogConfig, LogRotation, MirrorConfig,
-    ProxyConfig, UpstreamProxyConfig,
+    AsyncLogMode, AutoSaveConfig, DebugLogConfig, DebugLogLevel, LogConfig, LogRotation,
+    MirrorConfig, ProxyConfig, UpstreamProxyConfig,
 };
 
 // Re-exports from log_rotation
+pub use async_log::{AsyncFileWriter, AsyncWriterStatus, WriterGuard};
 pub use log_rotation::{ArchivedLog, LogHandle, RotatingFileWriter};
 
 // Re-exports from mirror

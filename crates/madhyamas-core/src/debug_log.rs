@@ -26,6 +26,19 @@ pub const DEBUG_LOG_TARGET: &str = "madhyamas::debug_log";
 /// Placeholder substituted for redacted header values.
 const REDACTED: &str = "[REDACTED]";
 
+/// Per-request correlation context attached to every debug-log event.
+///
+/// All events emitted while a request is being processed carry the same
+/// `request_id`, and every request on the same client connection carries
+/// the same `connection_id` — this is the stable correlation contract of
+/// the structured log schema (see `docs/LOGGING.md`). `rule_hit` names the
+/// intercept rule (e.g. a mock) that matched the request, when known.
+pub struct LogCorrelation<'a> {
+    pub request_id: &'a str,
+    pub connection_id: &'a str,
+    pub rule_hit: Option<&'a str>,
+}
+
 /// Render a header map for logging, replacing redacted header values.
 ///
 /// Matching against the configured redaction list is case-insensitive.
@@ -141,7 +154,12 @@ pub fn format_body(
 }
 
 /// Log an incoming proxied request at the configured verbosity.
-pub fn log_request(cfg: &DebugLogConfig, max_body_size: usize, request: &RequestData) {
+pub fn log_request(
+    cfg: &DebugLogConfig,
+    max_body_size: usize,
+    request: &RequestData,
+    corr: &LogCorrelation<'_>,
+) {
     if !cfg.should_log(&request.host) {
         return;
     }
@@ -151,9 +169,12 @@ pub fn log_request(cfg: &DebugLogConfig, max_body_size: usize, request: &Request
             tracing::info!(
                 target: DEBUG_LOG_TARGET,
                 direction = "request",
+                request_id = %corr.request_id,
+                connection_id = %corr.connection_id,
                 method = %method,
                 host = %request.host,
                 path = %request.path,
+                rule_hit = corr.rule_hit,
                 "proxied request"
             );
         }
@@ -176,9 +197,12 @@ pub fn log_request(cfg: &DebugLogConfig, max_body_size: usize, request: &Request
             tracing::info!(
                 target: DEBUG_LOG_TARGET,
                 direction = "request",
+                request_id = %corr.request_id,
+                connection_id = %corr.connection_id,
                 method = %method,
                 host = %request.host,
                 path = %request.path,
+                rule_hit = corr.rule_hit,
                 headers = %headers,
                 body = %body,
                 "proxied request"
@@ -197,6 +221,7 @@ pub fn log_response(
     request: &RequestData,
     response: &ResponseData,
     source: &str,
+    corr: &LogCorrelation<'_>,
 ) {
     if !cfg.should_log(&request.host) {
         return;
@@ -207,12 +232,15 @@ pub fn log_response(
             tracing::info!(
                 target: DEBUG_LOG_TARGET,
                 direction = "response",
+                request_id = %corr.request_id,
+                connection_id = %corr.connection_id,
                 method = %method,
                 host = %request.host,
                 path = %request.path,
                 status = response.status_code,
                 duration_ms = response.duration_ms,
                 source = source,
+                rule_hit = corr.rule_hit,
                 "proxied response"
             );
         }
@@ -238,12 +266,15 @@ pub fn log_response(
             tracing::info!(
                 target: DEBUG_LOG_TARGET,
                 direction = "response",
+                request_id = %corr.request_id,
+                connection_id = %corr.connection_id,
                 method = %method,
                 host = %request.host,
                 path = %request.path,
                 status = response.status_code,
                 duration_ms = response.duration_ms,
                 source = source,
+                rule_hit = corr.rule_hit,
                 headers = %headers,
                 body = %body,
                 "proxied response"
@@ -468,6 +499,14 @@ mod tests {
         String::from_utf8_lossy(&out).to_string()
     }
 
+    fn corr<'a>() -> LogCorrelation<'a> {
+        LogCorrelation {
+            request_id: "req-1",
+            connection_id: "conn-1",
+            rule_hit: None,
+        }
+    }
+
     fn enabled_cfg(level: DebugLogLevel) -> DebugLogConfig {
         DebugLogConfig {
             enabled: true,
@@ -481,7 +520,7 @@ mod tests {
     #[test]
     fn test_log_request_disabled_emits_nothing() {
         let cfg = DebugLogConfig::default(); // enabled: false
-        let out = capture_events(|| log_request(&cfg, 1024, &make_request()));
+        let out = capture_events(|| log_request(&cfg, 1024, &make_request(), &corr()));
         assert!(!out.contains("madhyamas::debug_log"));
         assert!(!out.contains("proxied request"));
     }
@@ -490,14 +529,14 @@ mod tests {
     fn test_log_request_host_filter_mismatch_emits_nothing() {
         let mut cfg = enabled_cfg(DebugLogLevel::Summary);
         cfg.host_filter = Some(vec!["other.example.com".to_string()]);
-        let out = capture_events(|| log_request(&cfg, 1024, &make_request()));
+        let out = capture_events(|| log_request(&cfg, 1024, &make_request(), &corr()));
         assert!(!out.contains("proxied request"));
     }
 
     #[test]
     fn test_log_request_summary_level() {
         let cfg = enabled_cfg(DebugLogLevel::Summary);
-        let out = capture_events(|| log_request(&cfg, 1024, &make_request()));
+        let out = capture_events(|| log_request(&cfg, 1024, &make_request(), &corr()));
         assert!(out.contains("madhyamas::debug_log"));
         assert!(out.contains("proxied request"));
         assert!(out.contains("api.example.com"));
@@ -512,7 +551,7 @@ mod tests {
     #[test]
     fn test_log_request_headers_level_redacts_sensitive_headers() {
         let cfg = enabled_cfg(DebugLogLevel::Headers);
-        let out = capture_events(|| log_request(&cfg, 1024, &make_request()));
+        let out = capture_events(|| log_request(&cfg, 1024, &make_request(), &corr()));
         assert!(out.contains("Authorization: [REDACTED]"));
         assert!(out.contains("X-Trace-Id: abc123"));
         // Headers level must not include body content.
@@ -522,7 +561,7 @@ mod tests {
     #[test]
     fn test_log_request_full_level_includes_body() {
         let cfg = enabled_cfg(DebugLogLevel::Full);
-        let out = capture_events(|| log_request(&cfg, 1024, &make_request()));
+        let out = capture_events(|| log_request(&cfg, 1024, &make_request(), &corr()));
         assert!(out.contains("Authorization: [REDACTED]"));
         assert!(out.contains("{\"name\":\"test\"}"));
     }
@@ -531,7 +570,7 @@ mod tests {
     fn test_log_request_full_level_with_redact_bodies_omits_body() {
         let mut cfg = enabled_cfg(DebugLogLevel::Full);
         cfg.redact_bodies = true;
-        let out = capture_events(|| log_request(&cfg, 1024, &make_request()));
+        let out = capture_events(|| log_request(&cfg, 1024, &make_request(), &corr()));
         assert!(!out.contains("\"name\":\"test\""));
         assert!(out.contains("[body omitted: 15 bytes]"));
     }
@@ -540,7 +579,14 @@ mod tests {
     fn test_log_response_disabled_emits_nothing() {
         let cfg = DebugLogConfig::default();
         let out = capture_events(|| {
-            log_response(&cfg, 1024, &make_request(), &make_response(), "upstream")
+            log_response(
+                &cfg,
+                1024,
+                &make_request(),
+                &make_response(),
+                "upstream",
+                &corr(),
+            )
         });
         assert!(!out.contains("proxied response"));
     }
@@ -549,7 +595,14 @@ mod tests {
     fn test_log_response_summary_level() {
         let cfg = enabled_cfg(DebugLogLevel::Summary);
         let out = capture_events(|| {
-            log_response(&cfg, 1024, &make_request(), &make_response(), "upstream")
+            log_response(
+                &cfg,
+                1024,
+                &make_request(),
+                &make_response(),
+                "upstream",
+                &corr(),
+            )
         });
         assert!(out.contains("proxied response"));
         assert!(out.contains("status=200"));
@@ -562,11 +615,179 @@ mod tests {
     fn test_log_response_headers_level_redacts_set_cookie() {
         let cfg = enabled_cfg(DebugLogLevel::Headers);
         let out = capture_events(|| {
-            log_response(&cfg, 1024, &make_request(), &make_response(), "mocked")
+            log_response(
+                &cfg,
+                1024,
+                &make_request(),
+                &make_response(),
+                "mocked",
+                &corr(),
+            )
         });
         assert!(out.contains("Set-Cookie: [REDACTED]"));
         assert!(!out.contains("session=secret"));
         assert!(out.contains("source=\"mocked\""));
+    }
+
+    /// Capture events as JSON lines using the same formatter shape the
+    /// file layer uses (`json().flatten_event(true).with_target(true)`).
+    fn capture_events_json<F: FnOnce()>(f: F) -> Vec<serde_json::Value> {
+        let buf = SharedBuf(Arc::new(Mutex::new(Vec::new())));
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .flatten_event(true)
+            .with_ansi(false)
+            .with_target(true)
+            .with_writer(move || writer.clone())
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        let out = buf.0.lock().unwrap().clone();
+        String::from_utf8_lossy(&out)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).expect("valid JSON line"))
+            .collect()
+    }
+
+    #[test]
+    fn test_structured_schema_conformance() {
+        let cfg = enabled_cfg(DebugLogLevel::Summary);
+        let events = capture_events_json(|| {
+            log_request(&cfg, 1024, &make_request(), &corr());
+            log_response(
+                &cfg,
+                1024,
+                &make_request(),
+                &make_response(),
+                "upstream",
+                &corr(),
+            );
+        });
+        assert_eq!(events.len(), 2);
+
+        let req = &events[0];
+        for field in [
+            "timestamp",
+            "level",
+            "target",
+            "request_id",
+            "connection_id",
+            "method",
+            "host",
+            "path",
+        ] {
+            assert!(
+                req.get(field).is_some(),
+                "request event missing schema field `{}`: {:?}",
+                field,
+                req
+            );
+        }
+        assert_eq!(req["target"], "madhyamas::debug_log");
+        assert_eq!(req["request_id"], "req-1");
+        assert_eq!(req["connection_id"], "conn-1");
+        assert_eq!(req["method"], "POST");
+        assert_eq!(req["host"], "api.example.com");
+        assert_eq!(req["path"], "/v1/users");
+
+        let resp = &events[1];
+        for field in ["status", "duration_ms", "source"] {
+            assert!(
+                resp.get(field).is_some(),
+                "response event missing schema field `{}`: {:?}",
+                field,
+                resp
+            );
+        }
+        assert_eq!(resp["status"], 200);
+        assert_eq!(resp["duration_ms"], 42);
+    }
+
+    #[test]
+    fn test_structured_events_share_request_id_for_correlation() {
+        let cfg = enabled_cfg(DebugLogLevel::Summary);
+        let events = capture_events_json(|| {
+            log_request(&cfg, 1024, &make_request(), &corr());
+            log_response(
+                &cfg,
+                1024,
+                &make_request(),
+                &make_response(),
+                "upstream",
+                &corr(),
+            );
+        });
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events[0]["request_id"], events[1]["request_id"],
+            "all events for a request must share request_id"
+        );
+        assert_eq!(
+            events[0]["connection_id"], events[1]["connection_id"],
+            "all events for a request must share connection_id"
+        );
+    }
+
+    #[test]
+    fn test_structured_rule_hit_recorded_when_rule_matched() {
+        let cfg = enabled_cfg(DebugLogLevel::Summary);
+        let corr_with_hit = LogCorrelation {
+            request_id: "req-9",
+            connection_id: "conn-9",
+            rule_hit: Some("users-mock"),
+        };
+        let events = capture_events_json(|| {
+            log_response(
+                &cfg,
+                1024,
+                &make_request(),
+                &make_response(),
+                "mocked",
+                &corr_with_hit,
+            );
+        });
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["rule_hit"], "users-mock");
+    }
+
+    #[test]
+    fn test_span_carries_request_and_connection_ids() {
+        // The pipeline wraps request processing in a `proxy_request` span
+        // carrying request_id/connection_id; every event inside the span is
+        // correlated through the span list even for events that do not set
+        // the fields explicitly.
+        let buf = SharedBuf(Arc::new(Mutex::new(Vec::new())));
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .flatten_event(true)
+            .with_ansi(false)
+            .with_target(true)
+            .with_current_span(true)
+            .with_span_list(true)
+            .with_writer(move || writer.clone())
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!(
+                "proxy_request",
+                request_id = "span-req-1",
+                connection_id = "span-conn-1"
+            );
+            // Same shape the pipeline uses: enter the span, record the
+            // request id, then emit an event.
+            let _g = span.enter();
+            tracing::info!(target: "madhyamas::debug_log", "inner event");
+        });
+        let out = buf.0.lock().unwrap().clone();
+        let line: serde_json::Value =
+            serde_json::from_str(String::from_utf8_lossy(&out).trim()).unwrap();
+        let spans = line["spans"].as_array().expect("span list present");
+        let req_span = spans.iter().find(|s| s["name"] == "proxy_request").unwrap();
+        assert_eq!(req_span["request_id"], "span-req-1");
+        assert_eq!(req_span["connection_id"], "span-conn-1");
     }
 
     #[test]
@@ -574,7 +795,14 @@ mod tests {
         let mut cfg = enabled_cfg(DebugLogLevel::Full);
         cfg.host_filter = Some(vec!["*.example.com".to_string()]);
         let out = capture_events(|| {
-            log_response(&cfg, 1024, &make_request(), &make_response(), "upstream")
+            log_response(
+                &cfg,
+                1024,
+                &make_request(),
+                &make_response(),
+                "upstream",
+                &corr(),
+            )
         });
         assert!(out.contains("{\"ok\":true}"));
     }

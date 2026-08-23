@@ -38,6 +38,18 @@ pub struct LogsConfigArgs {
     #[arg(long)]
     pub json_format: Option<bool>,
 
+    /// Async writer overflow policy: lossless (default) or lossy
+    #[arg(long)]
+    pub async_mode: Option<String>,
+
+    /// Enable/disable asynchronous log writing (restart required)
+    #[arg(long)]
+    pub async_writing: Option<bool>,
+
+    /// Async log buffer capacity in events (restart required)
+    #[arg(long)]
+    pub async_buffer_size: Option<usize>,
+
     /// Output as JSON
     #[arg(long)]
     pub json: bool,
@@ -116,11 +128,27 @@ impl LogsCommands {
                 if let Some(v) = args.json_format {
                     payload.insert("json_format".to_string(), serde_json::Value::Bool(v));
                 }
+                if let Some(ref mode) = args.async_mode {
+                    let mode = mode.trim().to_lowercase();
+                    if mode != "lossless" && mode != "lossy" {
+                        anyhow::bail!("invalid async mode: {} (expected lossless|lossy)", mode);
+                    }
+                    payload.insert("async_mode".to_string(), serde_json::Value::String(mode));
+                }
+                if let Some(v) = args.async_writing {
+                    payload.insert("async_writing".to_string(), serde_json::Value::Bool(v));
+                }
+                if let Some(v) = args.async_buffer_size {
+                    payload.insert(
+                        "async_buffer_size".to_string(),
+                        serde_json::Value::Number(serde_json::Number::from(v)),
+                    );
+                }
 
                 if payload.is_empty() {
                     println!("No log changes specified.");
                     println!(
-                        "Use --enabled, --rotation, --max-files, --max-file-size-mb, or --json-format"
+                        "Use --enabled, --rotation, --max-files, --max-file-size-mb, --json-format, --async-mode, --async-writing, or --async-buffer-size"
                     );
                     return Ok(());
                 }

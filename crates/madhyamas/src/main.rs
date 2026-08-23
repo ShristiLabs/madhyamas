@@ -98,6 +98,22 @@ struct Args {
     #[arg(long, env = "MADHYAMAS_LOG_PATH", global = true)]
     log_path: Option<String>,
 
+    /// Disable asynchronous log writing (write log events synchronously on
+    /// the emitting thread; see --log-async-mode).
+    #[arg(long, env = "MADHYAMAS_LOG_SYNC", global = true)]
+    log_sync: bool,
+
+    /// Overflow policy for the async log buffer: `lossless` (default;
+    /// block producers when the buffer is full) or `lossy` (drop events
+    /// and count them, visible via GET /api/logs).
+    #[arg(long, env = "MADHYAMAS_LOG_ASYNC_MODE", global = true)]
+    log_async_mode: Option<String>,
+
+    /// Capacity (number of buffered events) of the async log buffer.
+    /// Default: 8192.
+    #[arg(long, env = "MADHYAMAS_LOG_BUFFER_SIZE", global = true)]
+    log_buffer_size: Option<usize>,
+
     /// Enable verbose logging
     #[arg(short, long, env = "MADHYAMAS_VERBOSE", global = true)]
     verbose: bool,
@@ -498,10 +514,26 @@ async fn main() -> Result<()> {
                     .map(|s| s.log_path.clone())
                     .unwrap_or(defaults.log_path.clone())
             });
-            let log_config = saved
+            let mut log_config = saved
                 .as_ref()
                 .map(|s| s.log_config.clone())
                 .unwrap_or_default();
+            // CLI flags override the saved async-log settings.
+            if args.log_sync {
+                log_config.async_writing = false;
+            }
+            if let Some(mode) = &args.log_async_mode {
+                match madhyamas_core::AsyncLogMode::parse(mode) {
+                    Some(m) => log_config.async_mode = m,
+                    None => eprintln!(
+                        "Warning: invalid --log-async-mode `{}` (expected lossless or lossy); using saved config",
+                        mode
+                    ),
+                }
+            }
+            if let Some(n) = args.log_buffer_size {
+                log_config.async_buffer_size = n.max(1);
+            }
             let log_handle = init_logging(log_path, log_config, args.verbose);
 
             run_proxy_server(args, log_handle).await
@@ -1361,7 +1393,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         .with_session_manager(session_manager)
         .with_autosave_manager(autosave_manager)
         .with_mirror_writer(mirror_writer)
-        .with_log_handle(log_handle)
+        .with_log_handle(log_handle.clone())
         .with_mock_manager(mock_manager)
         .with_rewrite_manager(rewrite_manager)
         .with_breakpoint_manager(breakpoint_manager)
@@ -1996,6 +2028,10 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     drop(proxy_engine);
 
     info!("Madhyamas stopped. Goodbye!");
+    // Drain and flush all buffered async log events (no-op in sync mode).
+    // The LogHandle (and its WriterGuard) is dropped when this function
+    // returns, which performs a final flush as well.
+    log_handle.flush();
     Ok(())
 }
 
@@ -2056,13 +2092,16 @@ fn init_logging(
                 // be dropped.
                 let current = writer.current_path();
                 eprintln!(
-                    "Log file: {} (rotation: {}, max_files: {}, max_size: {} MB)",
+                    "Log file: {} (rotation: {}, max_files: {}, max_size: {} MB, async: {}, mode: {}, buffer: {})",
                     current.display(),
                     log_config.rotation.label(),
                     log_config.max_files,
                     log_config
                         .rotation
                         .effective_size_cap_mb(log_config.max_file_size_mb),
+                    if log_config.async_writing { "on" } else { "off" },
+                    log_config.async_mode.as_str(),
+                    log_config.async_buffer_size,
                 );
 
                 // Spawn the background rotation/prune task. Holds a clone of
@@ -2087,24 +2126,64 @@ fn init_logging(
 
                 // The file layer must never emit ANSI escapes: log files are
                 // read by editors, grep, and log ingestion tools.
-                let file_layer = if log_config.json_format {
-                    fmt::layer()
-                        .json()
-                        .with_ansi(false)
-                        .with_target(true)
-                        .with_writer(writer.clone())
-                        .with_filter(filter.clone())
-                        .boxed()
+                //
+                // When async writing is enabled (default), the file layer
+                // enqueues into a bounded buffer drained by a dedicated
+                // writer thread — no mutex-guarded file I/O on request
+                // threads. The WriterGuard held by the LogHandle flushes
+                // buffered events on graceful shutdown. stdout stays
+                // synchronous.
+                //
+                // The JSON layer flattens event fields to the top level so
+                // the output conforms to the documented stable schema
+                // (timestamp, level, target, request_id, connection_id,
+                // method, host, path, status, duration_ms, ...).
+                if log_config.async_writing {
+                    let (async_writer, guard) = madhyamas_core::AsyncFileWriter::new(
+                        writer.clone(),
+                        log_config.async_buffer_size,
+                        log_config.async_mode,
+                    );
+                    let file_layer = if log_config.json_format {
+                        fmt::layer()
+                            .json()
+                            .flatten_event(true)
+                            .with_ansi(false)
+                            .with_target(true)
+                            .with_writer(async_writer.clone())
+                            .with_filter(filter.clone())
+                            .boxed()
+                    } else {
+                        fmt::layer()
+                            .with_ansi(false)
+                            .with_target(false)
+                            .with_writer(async_writer.clone())
+                            .with_filter(filter.clone())
+                            .boxed()
+                    };
+                    layers.push(file_layer);
+                    handle = Some(LogHandle::with_async(writer, async_writer, guard));
                 } else {
-                    fmt::layer()
-                        .with_ansi(false)
-                        .with_target(false)
-                        .with_writer(writer.clone())
-                        .with_filter(filter.clone())
-                        .boxed()
-                };
-                layers.push(file_layer);
-                handle = Some(LogHandle::new(writer));
+                    let file_layer = if log_config.json_format {
+                        fmt::layer()
+                            .json()
+                            .flatten_event(true)
+                            .with_ansi(false)
+                            .with_target(true)
+                            .with_writer(writer.clone())
+                            .with_filter(filter.clone())
+                            .boxed()
+                    } else {
+                        fmt::layer()
+                            .with_ansi(false)
+                            .with_target(false)
+                            .with_writer(writer.clone())
+                            .with_filter(filter.clone())
+                            .boxed()
+                    };
+                    layers.push(file_layer);
+                    handle = Some(LogHandle::new(writer));
+                }
             }
             Err(e) => {
                 eprintln!(

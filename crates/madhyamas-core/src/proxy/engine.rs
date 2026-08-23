@@ -1099,6 +1099,9 @@ impl ProxyEngine {
     ) -> crate::Result<()> {
         let mut buf = vec![0u8; 65536];
         let pipeline = self.pipeline();
+        // One correlation id per client connection: every request on this
+        // keep-alive connection carries the same connection_id in logs.
+        let connection_id = uuid::Uuid::new_v4().to_string();
 
         loop {
             // Read the next HTTP request from the TLS stream
@@ -1150,7 +1153,7 @@ impl ProxyEngine {
             // Process the request through the shared pipeline (rewrites,
             // hooks, mocks, breakpoints, upstream forwarding, recording).
             let outcome = pipeline
-                .process_request(&mut request_data, tls_stream)
+                .process_request_with_conn(&mut request_data, tls_stream, &connection_id)
                 .await?;
 
             // A breakpoint abort terminates the keep-alive loop
@@ -1333,9 +1336,11 @@ impl ProxyEngine {
         }
 
         // Process the request through the shared pipeline (rewrites, hooks,
-        // mocks, breakpoints, upstream forwarding, recording).
+        // mocks, breakpoints, upstream forwarding, recording). Non
+        // keep-alive path: one connection id for this single request.
+        let connection_id = uuid::Uuid::new_v4().to_string();
         pipeline
-            .process_request(&mut request_data, &mut client_socket)
+            .process_request_with_conn(&mut request_data, &mut client_socket, &connection_id)
             .await?;
 
         Ok(())

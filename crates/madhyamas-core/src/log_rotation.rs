@@ -259,15 +259,48 @@ impl<'a> MakeWriter<'a> for RotatingFileWriter {
 #[derive(Clone)]
 pub struct LogHandle {
     writer: RotatingFileWriter,
+    /// Non-blocking producer side of the async log writer (when async file
+    /// logging is enabled). Clones share the same bounded buffer and
+    /// dedicated writer thread.
+    async_writer: Option<crate::async_log::AsyncFileWriter>,
+    /// Guards the writer thread's lifetime; dropping the last handle
+    /// flushes all buffered events.
+    guard: Option<Arc<crate::async_log::WriterGuard>>,
 }
 
 impl LogHandle {
-    /// Wrap a writer in a handle.
+    /// Wrap a writer in a handle (synchronous file logging).
     pub fn new(writer: RotatingFileWriter) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            async_writer: None,
+            guard: None,
+        }
     }
 
-    /// The underlying writer (for building the `MakeWriter` layer).
+    /// Wrap a writer and its non-blocking layer in a handle. The guard must
+    /// be the one returned alongside `async_writer` by
+    /// [`AsyncFileWriter::new`](crate::async_log::AsyncFileWriter::new).
+    pub fn with_async(
+        writer: RotatingFileWriter,
+        async_writer: crate::async_log::AsyncFileWriter,
+        guard: crate::async_log::WriterGuard,
+    ) -> Self {
+        Self {
+            writer,
+            async_writer: Some(async_writer),
+            guard: Some(Arc::new(guard)),
+        }
+    }
+
+    /// The async producer-side writer (for building the `MakeWriter`
+    /// layer). `None` when async file logging is disabled.
+    pub fn async_writer(&self) -> Option<&crate::async_log::AsyncFileWriter> {
+        self.async_writer.as_ref()
+    }
+
+    /// The underlying synchronous writer (for building the `MakeWriter`
+    /// layer when async logging is disabled).
     pub fn writer(&self) -> &RotatingFileWriter {
         &self.writer
     }
@@ -282,8 +315,27 @@ impl LogHandle {
         Ok(archive)
     }
 
-    /// Update the rotation config at runtime.
+    /// Drain and flush all buffered log events (async mode). No-op in
+    /// synchronous mode. Called on the graceful-shutdown path so no log
+    /// line is lost; the final flush also happens when the last handle
+    /// clone is dropped.
+    pub fn flush(&self) {
+        if let Some(guard) = &self.guard {
+            guard.flush();
+        } else {
+            let mut w = self.writer.clone();
+            let _ = w.flush();
+        }
+    }
+
+    /// Update the rotation config at runtime. The async overflow policy
+    /// (`async_mode`) takes effect immediately; `async_writing` and
+    /// `async_buffer_size` take effect on the next restart (the writer
+    /// thread is created once at startup).
     pub fn update_config(&self, config: LogConfig) {
+        if let Some(async_writer) = &self.async_writer {
+            async_writer.set_mode(config.async_mode);
+        }
         self.writer.update_config(config);
     }
 
@@ -311,12 +363,27 @@ impl LogHandle {
             })
             .collect();
 
+        let async_json = match &self.async_writer {
+            Some(w) => serde_json::to_value(w.status()).unwrap_or(serde_json::Value::Null),
+            None => json!({
+                "enabled": false,
+                "mode": cfg.async_mode.as_str(),
+                "buffer_size": cfg.async_buffer_size,
+                "buffer_depth": 0,
+                "high_water": 0,
+                "dropped_events": 0,
+                "written_events": 0,
+            }),
+        };
+
         json!({
             "enabled": cfg.enabled,
             "rotation": cfg.rotation.label(),
             "max_files": cfg.max_files,
             "max_file_size_mb": cfg.max_file_size_mb,
             "json_format": cfg.json_format,
+            "async_writing": cfg.async_writing,
+            "async": async_json,
             "log_dir": self.writer.log_dir().to_string_lossy(),
             "current_file": {
                 "path": current_path.to_string_lossy(),
@@ -489,6 +556,7 @@ mod tests {
             max_files: 5,
             max_file_size_mb: 1,
             json_format: false,
+            ..LogConfig::default()
         };
         let writer = RotatingFileWriter::new(dir, cfg).unwrap();
         // Write > 1 MB to trigger size-based rotation.

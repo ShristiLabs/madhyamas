@@ -36,6 +36,7 @@ use crate::Error;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::broadcast;
+use tracing::Instrument;
 use tracing::{debug, info, warn};
 
 /// Outcome of processing a single request through the pipeline.
@@ -228,7 +229,7 @@ impl<'a> Pipeline<'a> {
         response: &ResponseData,
         client_stream: &mut W,
         log_tag: &str,
-        request_id: Option<&str>,
+        corr: &crate::debug_log::LogCorrelation<'_>,
         script_intercepted: bool,
     ) -> crate::Result<RequestOutcome>
     where
@@ -236,9 +237,7 @@ impl<'a> Pipeline<'a> {
     {
         let session_id = self.traffic_store.current_session_id();
         let mut entry = TrafficEntry::new(&session_id, request_data.clone());
-        if let Some(id) = request_id {
-            entry.id = id.to_string();
-        }
+        entry.id = corr.request_id.to_string();
         entry.script_intercepted = script_intercepted;
         self.traffic_store.store_request(&entry).await?;
         self.traffic_store
@@ -260,6 +259,7 @@ impl<'a> Pipeline<'a> {
             request_data,
             response,
             log_tag,
+            corr,
         );
 
         info!(
@@ -285,6 +285,60 @@ impl<'a> Pipeline<'a> {
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
+        // Fallback correlation: a standalone request without a known
+        // connection gets its own connection id.
+        let connection_id = uuid::Uuid::new_v4().to_string();
+        self.process_request_with_conn(request_data, client_stream, &connection_id)
+            .await
+    }
+
+    /// Process a single request with explicit connection correlation.
+    ///
+    /// All `tracing` events emitted while processing this request run
+    /// inside a `proxy_request` span carrying `request_id` and
+    /// `connection_id`, so every log line for the request is correlated
+    /// automatically (in addition to the explicit fields on the
+    /// `madhyamas::debug_log` events).
+    pub async fn process_request_with_conn<W>(
+        &self,
+        request_data: &mut RequestData,
+        client_stream: &mut W,
+        connection_id: &str,
+    ) -> crate::Result<RequestOutcome>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let span = tracing::info_span!(
+            "proxy_request",
+            request_id = tracing::field::Empty,
+            connection_id = %connection_id
+        );
+        self.process_request_inner(request_data, client_stream, connection_id)
+            .instrument(span)
+            .await
+    }
+
+    /// Request-processing implementation, always run inside the
+    /// `proxy_request` span created by [`Self::process_request_with_conn`].
+    async fn process_request_inner<W>(
+        &self,
+        request_data: &mut RequestData,
+        client_stream: &mut W,
+        connection_id: &str,
+    ) -> crate::Result<RequestOutcome>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        // Stable per-request id, generated before any branch so every
+        // debug-log event (including block-list short-circuits) correlates.
+        let request_id = uuid::Uuid::new_v4().to_string();
+        tracing::Span::current().record("request_id", &request_id);
+        let corr = crate::debug_log::LogCorrelation {
+            request_id: &request_id,
+            connection_id,
+            rule_hit: None,
+        };
+
         // Record the incoming request in metrics (bytes = headers + body).
         if let Some(metrics) = self.metrics_collector {
             let body_bytes = request_data
@@ -308,6 +362,7 @@ impl<'a> Pipeline<'a> {
             &self.config.debug_logging,
             self.config.max_body_size,
             request_data,
+            &corr,
         );
 
         // Enforce memory limits: if the memory manager reports pressure,
@@ -348,19 +403,18 @@ impl<'a> Pipeline<'a> {
                         &response,
                         client_stream,
                         "blocked",
-                        None,
+                        &corr,
                         false,
                     )
                     .await;
             }
         }
 
-        // Generate a stable request ID and session ID early so script
-        // executions can be linked to the traffic entry that will be
-        // created later.  Also check whether any scripts would fire on
-        // this request so we can set the `script_intercepted` flag.
+        // Generate the session ID early so script executions can be linked
+        // to the traffic entry that will be created later.  Also check
+        // whether any scripts would fire on this request so we can set the
+        // `script_intercepted` flag.
         let session_id = self.traffic_store.current_session_id();
-        let request_id = uuid::Uuid::new_v4().to_string();
         #[cfg(feature = "scripting")]
         let script_intercepted = self.scripts_would_run("on_request", request_data)
             || self.scripts_would_run("on_response", request_data);
@@ -421,7 +475,7 @@ impl<'a> Pipeline<'a> {
                             &response,
                             client_stream,
                             "script",
-                            Some(&request_id),
+                            &corr,
                             true,
                         )
                         .await;
@@ -452,13 +506,18 @@ impl<'a> Pipeline<'a> {
                 // correct protocol label.
                 response.http_version = request_data.http_version.clone();
 
+                let mock_corr = crate::debug_log::LogCorrelation {
+                    request_id: corr.request_id,
+                    connection_id: corr.connection_id,
+                    rule_hit: Some(mock.name.as_str()),
+                };
                 return self
                     .short_circuit_response(
                         request_data,
                         &response,
                         client_stream,
                         "mocked",
-                        Some(&request_id),
+                        &mock_corr,
                         script_intercepted,
                     )
                     .await;
@@ -519,7 +578,7 @@ impl<'a> Pipeline<'a> {
                                 &response,
                                 client_stream,
                                 "breakpoint response",
-                                Some(&request_id),
+                                &corr,
                                 script_intercepted,
                             )
                             .await;
@@ -670,6 +729,7 @@ impl<'a> Pipeline<'a> {
                     request_data,
                     &response,
                     "upstream",
+                    &corr,
                 );
 
                 // Record the response in metrics (bytes + latency).
@@ -721,6 +781,7 @@ impl<'a> Pipeline<'a> {
                         request_data,
                         &error_response,
                         "error",
+                        &corr,
                     );
                 }
             }
