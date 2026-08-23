@@ -9,6 +9,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::io::IsTerminal;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -1991,10 +1992,16 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     Ok(())
 }
 
+/// Whether stdout should use ANSI color escapes: only on an interactive
+/// terminal, never when piped/redirected (services, `madhyamas > run.log`).
+fn stdout_ansi_enabled() -> bool {
+    std::io::stdout().is_terminal()
+}
+
 /// Initialize the global tracing subscriber with stdout + rotating file
 /// layers.
 ///
-/// - **Stdout layer**: always on, ANSI-formatted (or JSON when
+/// - **Stdout layer**: always on, ANSI-formatted on a TTY (or JSON when
 ///   `log_config.json_format` is true), so `tail`/`docker logs` work.
 /// - **File layer**: on when `log_config.enabled`, writing to
 ///   `<log_dir>/madhyamas.log` via [`RotatingFileWriter`] (time/size-based
@@ -2023,8 +2030,12 @@ fn init_logging(
         .or_else(|_| EnvFilter::try_new(level.as_str().to_lowercase()))
         .unwrap_or_else(|_| EnvFilter::new(level.as_str().to_lowercase()));
 
-    // Stdout fmt layer (always on).
-    let stdout_layer = fmt::layer().with_target(false).with_filter(filter.clone());
+    // Stdout fmt layer (always on). Enable ANSI only when stdout is an
+    // interactive terminal so piped/redirected output stays plain text.
+    let stdout_layer = fmt::layer()
+        .with_target(false)
+        .with_ansi(stdout_ansi_enabled())
+        .with_filter(filter.clone());
 
     let mut layers = vec![stdout_layer.boxed()];
 
@@ -2067,15 +2078,19 @@ fn init_logging(
                     }
                 });
 
+                // The file layer must never emit ANSI escapes: log files are
+                // read by editors, grep, and log ingestion tools.
                 let file_layer = if log_config.json_format {
                     fmt::layer()
                         .json()
+                        .with_ansi(false)
                         .with_target(true)
                         .with_writer(writer.clone())
                         .with_filter(filter.clone())
                         .boxed()
                 } else {
                     fmt::layer()
+                        .with_ansi(false)
                         .with_target(false)
                         .with_writer(writer.clone())
                         .with_filter(filter.clone())
@@ -2319,5 +2334,75 @@ mod tests {
         let (user, pass) = parse_auth_credentials("alice:");
         assert_eq!(user.as_deref(), Some("alice"));
         assert_eq!(pass.as_deref(), Some(""));
+    }
+
+    /// Test-only writer capturing formatted log output in memory.
+    struct CaptureWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CaptureWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Clone)]
+    struct SharedBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl tracing_subscriber::fmt::MakeWriter<'_> for SharedBuf {
+        type Writer = CaptureWriter;
+        fn make_writer(&self) -> Self::Writer {
+            CaptureWriter(self.0.clone())
+        }
+    }
+
+    fn format_event_with_ansi(ansi: bool) -> Vec<u8> {
+        let buf = SharedBuf(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt::fmt()
+            .with_ansi(ansi)
+            .with_writer(buf.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!("test message for ansi check");
+        });
+        let out = buf.0.lock().unwrap().clone();
+        assert!(
+            String::from_utf8_lossy(&out).contains("test message for ansi check"),
+            "event text missing from formatted output"
+        );
+        out
+    }
+
+    #[test]
+    fn file_layer_config_disables_ansi_escapes() {
+        // The file layers in init_logging are configured with_ansi(false);
+        // formatted output must contain no ESC (0x1b) bytes.
+        let out = format_event_with_ansi(false);
+        assert!(
+            !out.contains(&0x1b),
+            "ANSI escape byte present with ansi disabled: {:?}",
+            String::from_utf8_lossy(&out)
+        );
+    }
+
+    #[test]
+    fn ansi_enabled_output_still_contains_escapes() {
+        // Sanity check that the test harness detects escapes when enabled,
+        // so the disabled test above is meaningful.
+        let out = format_event_with_ansi(true);
+        assert!(out.contains(&0x1b));
+    }
+
+    #[test]
+    fn stdout_ansi_enabled_matches_tty_detection() {
+        // stdout_ansi_enabled must mirror IsTerminal on stdout exactly.
+        assert_eq!(
+            stdout_ansi_enabled(),
+            std::io::stdout().is_terminal(),
+            "stdout_ansi_enabled must mirror IsTerminal on stdout"
+        );
     }
 }

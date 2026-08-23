@@ -67,7 +67,10 @@ async fn main() -> Result<()> {
     } else {
         Level::INFO
     };
-    let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(level)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
+        .finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 
     // Execute the command
