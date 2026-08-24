@@ -308,6 +308,24 @@ next agent in a pipeline (e.g. `developer` → `reviewer` → `docs-author` →
 4. Strong typing with minimal panics
 5. Do not create tests unless explicitly asked (per global rules)
 
+### Test Placement (hybrid layout)
+When tests are called for, place them per the workspace hybrid layout:
+- **Inline unit tests** (`#[cfg(test)] mod tests` in the src file): tests of
+  private behavior — they may call `pub(crate)`/private items, assert raw
+  byte layouts, or check module-internal invariants.
+- **Integration tests** (`crates/<crate>/tests/<module>.rs`): tests that
+  construct and assert purely via public `madhyamas_*::` paths (explicit
+  named imports, never glob). Cross-module, end-to-end, and trait-contract
+  tests belong here.
+- **Never widen visibility just to move a test.** If a test needs private
+  items, it stays inline.
+- Shared cross-crate fixtures live in the dev-only `madhyamas-test-utils`
+  crate (dev-dependency; its `enterprise` feature gates BSL-crate fixtures
+  so the OSS build graph stays clean). Single-crate test helpers go in that
+  crate's `tests/common/mod.rs` or stay local to one tests file.
+- CI runs unit (`kind(lib) | kind(bin)`) and integration (`kind(test)`)
+  tests as separate nextest steps. See `docs/ENTERPRISE_TESTING.md`.
+
 ### Adding Features
 1. Add module in `madhyamas-core/src/`
 2. Implement with proper error handling
@@ -340,7 +358,7 @@ new-dep.workspace = true
 
 ### Debugging
 - `RUST_LOG=debug cargo run --bin madhyamas -- --verbose`
-- `cargo test -- --nocapture` for test output
+- `cargo nextest run --no-capture` for test output (`cargo test -- --nocapture` also works)
 - Check database schema matches code expectations
 
 ### Common Issues

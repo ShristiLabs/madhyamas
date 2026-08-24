@@ -103,13 +103,30 @@ graph TD
 
 ---
 
-## 3. Unit Tests
+## 3. Unit and Integration Tests (hybrid layout)
 
-Unit tests live in `#[cfg(test)] mod tests` blocks within each source
-file. They use in-memory SQLite for store-backed tests and require no
-external services.
+The workspace uses a hybrid test layout:
 
-### 3.1 Auth tests (`auth.rs`, lines 644–851)
+- **Unit tests** (private behavior) live inline in `#[cfg(test)] mod tests`
+  blocks within each source file. They may call `pub(crate)`/private items,
+  use in-memory SQLite for store-backed tests, and require no external
+  services.
+- **Integration tests** (public-API behavior) live in each crate's
+  `tests/<module>.rs` files (e.g. `crates/madhyamas-enterprise/tests/auth.rs`).
+  They construct and assert only via public `madhyamas_*::` paths, with
+  explicit named imports (no glob imports).
+- Shared fixtures (`test_manager`, `test_store`, `seed_user`, `MemStore`,
+  `spawn_mock_server`, `tmpdir`, `test_key`) come from the dev-only
+  `madhyamas-test-utils` crate (a dev-dependency; its BSL-crate fixtures
+  sit behind the non-default `enterprise` feature so the OSS graph never
+  resolves `madhyamas-enterprise`).
+- **Never widen visibility just to move a test** — if a test needs private
+  items, it stays inline.
+- CI runs the two classes as separate nextest steps:
+  `-E 'kind(lib)' -E 'kind(bin)'` (unit) and `-E 'kind(test)'`
+  (integration), in both feature tiers.
+
+### 3.1 Auth tests (`tests/auth.rs` + inline remainder in `src/auth.rs`)
 
 | Test | What it verifies |
 |---|---|
@@ -124,7 +141,7 @@ external services.
 
 Helpers: `test_manager()`, `test_store()` (in-memory SQLite), `seed_user()`.
 
-### 3.2 RBAC tests (`rbac.rs`, lines 278–311)
+### 3.2 RBAC tests (`tests/rbac.rs`)
 
 | Test | What it verifies |
 |---|---|
@@ -135,7 +152,7 @@ Helpers: `test_manager()`, `test_store()` (in-memory SQLite), `seed_user()`.
 Exercises the static permission matrix in `RbacManager::new()` defining
 role → `(ResourceType, Permission)` mappings for Admin, User, Viewer, ReadOnly.
 
-### 3.3 Audit tests (`audit.rs`, lines 451–547)
+### 3.3 Audit tests (`tests/audit.rs`)
 
 | Test | What it verifies |
 |---|---|
@@ -147,7 +164,7 @@ role → `(ResourceType, Permission)` mappings for Admin, User, Viewer, ReadOnly
 Verifies the tamper-evident audit log: each event's `prev_hash` links to
 the previous event's `hash`; `verify_hash_chain()` detects modifications.
 
-### 3.4 License tests (`license.rs`, lines 310–497)
+### 3.4 License tests (`tests/license.rs`)
 
 | Test | What it verifies |
 |---|---|
@@ -165,7 +182,7 @@ the previous event's `hash`; `verify_hash_chain()` detects modifications.
 Helpers: `make_signed_license()` (fresh Ed25519 keypair + signed claims),
 `sample_claims()` (standard test claims).
 
-### 3.5 Redis state tests (`redis_state.rs`, lines 417–669)
+### 3.5 Redis state tests (`tests/redis_state.rs`)
 
 All `#[ignore]` — require Redis at `redis://localhost:6379`.
 
@@ -180,33 +197,36 @@ All `#[ignore]` — require Redis at `redis://localhost:6379`.
 | `test_instance_registration_with_metrics` | Metrics snapshot stored and updated |
 | `test_cluster_metrics_aggregation` | Cluster-wide metrics aggregation across instances |
 
-### 3.6 Additional unit tests
+### 3.6 Additional test files
 
-- **Credentials** (`credentials.rs`): Argon2id hashing/verification, malformed
-  hash handling, password complexity (length, uppercase, lowercase, digit,
-  special character).
-- **Security** (`security.rs`): OIDC callback URL validation (HTTPS-only,
-  rejects private/loopback IPs), private IP detection for IPv4/IPv6.
-- **Handlers** (`handlers.rs`): Health check with and without Redis.
+- **Credentials** (`tests/credentials.rs`): Argon2id hashing/verification,
+  malformed hash handling, password complexity (length, uppercase,
+  lowercase, digit, special character).
+- **Security** (`tests/security.rs`): OIDC callback URL validation
+  (HTTPS-only, rejects private/loopback IPs), private IP detection for
+  IPv4/IPv6.
+- **Handlers** (`tests/handlers.rs`): Health check with and without Redis.
 
-### 3.7 Running unit tests
+### 3.7 Running unit and integration tests
 
 ```bash
-cargo test -p madhyamas-enterprise              # all enterprise unit tests
-cargo test -p madhyamas-enterprise auth::tests  # specific module
-cargo test -p madhyamas-enterprise license::tests
+cargo nextest run -p madhyamas-enterprise                  # all enterprise tests
+cargo nextest run -p madhyamas-enterprise -E 'kind(lib)'   # inline unit tests only
+cargo nextest run -p madhyamas-enterprise -E 'kind(test)'  # tests/ files only
 ```
 
 ---
 
-## 4. Integration Tests
+## 4. External-Service Tests (`#[ignore]`)
 
-Integration tests require external services (PostgreSQL and/or Redis),
-marked `#[ignore]` so they skip during normal `cargo test`.
+Tests that require external services (PostgreSQL and/or Redis) are marked
+`#[ignore]` so they skip during normal runs. They now live in the crates'
+`tests/` directories alongside the other integration tests; `#[ignore]`
+flags are preserved on the moved tests.
 
 ### 4.1 PostgreSQL traffic store tests
 
-**File:** `crates/madhyamas-core/src/storage/postgres/traffic.rs` (lines 1874–2165)
+**File:** `crates/madhyamas-core/tests/persistence.rs`
 
 | Test | What it verifies |
 |---|---|
@@ -222,7 +242,7 @@ marked `#[ignore]` so they skip during normal `cargo test`.
 
 ### 4.2 PostgreSQL enterprise store tests
 
-**File:** `crates/madhyamas-enterprise/src/store/postgres.rs` (lines 534+)
+**File:** `crates/madhyamas-enterprise/tests/store.rs`
 
 | Test | What it verifies |
 |---|---|
@@ -250,11 +270,11 @@ docker run -d --name madhyamas-pg-test \
 docker run -d --name madhyamas-redis-test -p 6379:6379 redis:7-alpine
 
 # Run all ignored tests (PostgreSQL + Redis)
-cargo test --all-features -- --ignored
+cargo nextest run --all-features --run-ignored all
 
 # Run only PostgreSQL or Redis tests
-cargo test -p madhyamas-core -- --ignored test_pg_
-cargo test -p madhyamas-enterprise -- --ignored test_redis_
+cargo nextest run -p madhyamas-core --run-ignored all test_pg_
+cargo nextest run -p madhyamas-enterprise --run-ignored all test_redis_
 ```
 
 ---
@@ -373,16 +393,20 @@ Instances) render and each panel loads without errors.
 
 ```bash
 # OSS tests (no enterprise features)
-cargo test --no-default-features
+cargo nextest run --no-default-features
 
-# Enterprise unit tests (no external deps)
-cargo test -p madhyamas-enterprise
+# Enterprise tests (no external deps)
+cargo nextest run -p madhyamas-enterprise
 
-# All unit tests with enterprise features
-cargo test --all-features
+# All tests with enterprise features
+cargo nextest run --all-features
 
-# Enterprise integration tests (requires PostgreSQL + Redis, see §8)
-cargo test --all-features -- --ignored
+# Unit-only / integration-only (tests/ directory targets)
+cargo nextest run --all-features -E 'kind(lib)' -E 'kind(bin)'
+cargo nextest run --all-features -E 'kind(test)'
+
+# External-service tests (requires PostgreSQL + Redis, see §8)
+cargo nextest run --all-features --run-ignored all
 
 # Multi-instance verification (requires Docker)
 ./startup-local.sh  # then run manual checks (see §5)
@@ -397,12 +421,16 @@ node scripts/capture-enterprise-screenshots.mjs
 
 ### 7.2 Using cargo-nextest
 
-CI uses `cargo-nextest` for faster, parallel test execution:
+CI uses `cargo-nextest` for faster, parallel test execution, with unit
+(inline `#[cfg(test)]`, lib/bin targets) and integration (`tests/`
+directory) tests as separate steps:
 
 ```bash
-cargo install cargo-nextest
+cargo install cargo-nextest   # or: brew install cargo-nextest
 cargo nextest run -p madhyamas-enterprise
 cargo nextest run --all-features --run-ignored all  # includes #[ignore]
+cargo nextest run --all-features -E 'kind(lib)' -E 'kind(bin)'  # unit only
+cargo nextest run --all-features -E 'kind(test)'                # integration only
 ```
 
 ### 7.3 Clippy and formatting
@@ -452,13 +480,13 @@ docker rm madhyamas-pg-test madhyamas-redis-test
 
 ### 9.1 How tests are run in CI
 
-Tests run in the `rust-checks` job in `.github/workflows/ci.yml` with a two-tier matrix:
+Tests run in the `rust-checks` job in `.github/workflows/ci.yml` with a two-tier matrix; each tier runs unit and integration tests as separate nextest steps (`-E 'kind(lib)' -E 'kind(bin)'` and `-E 'kind(test)'`):
 
 ```mermaid
 graph TD
     FE["Build Frontend"] -->|artifact| RC["Rust Checks"]
-    RC --> M1["enterprise<br/>cargo nextest run --all-features"]
-    RC --> M2["oss<br/>cargo nextest run --no-default-features"]
+    RC --> M1["enterprise<br/>nextest --all-features<br/>unit + integration"]
+    RC --> M2["oss<br/>nextest --no-default-features<br/>unit + integration"]
     M1 --> SA["Security Audit + OSS BSL check"]
     M2 --> SA
     FE --> DB["Docker Build Test (oss + enterprise)"]
@@ -473,7 +501,7 @@ graph TD
 | Rust | `stable` (all OSes), `beta` (ubuntu only) |
 | Tier | `enterprise` (all features), `oss` (no default features) |
 
-Each cell runs: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo build`, `cargo nextest run`.
+Each cell runs: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo build`, `cargo nextest run` (unit and integration steps).
 
 ### 9.3 PostgreSQL service container
 
