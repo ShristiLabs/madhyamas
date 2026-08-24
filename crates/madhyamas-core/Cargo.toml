@@ -95,3 +95,5 @@ tempfile = { workspace = true }
 tokio-test = "0.4"
 tempfile.workspace = true
 filetime.workspace = true
+# Shared fixtures for integration tests under tests/
+madhyamas-test-utils.workspace = true

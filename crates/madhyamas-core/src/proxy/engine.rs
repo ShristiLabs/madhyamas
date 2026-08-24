@@ -2277,10 +2277,4 @@ mod tests {
         // The buffer should contain exactly what was written.
         assert_eq!(writer.buffer, data);
     }
-
-    #[test]
-    fn test_config_enable_h2_downstream_default_false() {
-        let config = crate::config::ProxyConfig::default();
-        assert!(!config.enable_h2_downstream);
-    }
 }

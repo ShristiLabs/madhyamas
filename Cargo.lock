@@ -2762,6 +2762,7 @@ dependencies = [
  "hyper-util",
  "jsonpath_lib",
  "local-ip-address",
+ "madhyamas-test-utils",
  "notify",
  "once_cell",
  "parking_lot",

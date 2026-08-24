@@ -311,17 +311,6 @@ impl super::service::SecretStore for FileKeystore {
 mod tests {
     use super::*;
 
-    fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "madhyamas-keystore-test-{}-{}",
-            tag,
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
-    }
-
     fn test_key() -> Vec<u8> {
         // Deterministic 32-byte key for tests.
         (0u8..32).collect()
@@ -361,54 +350,6 @@ mod tests {
     }
 
     #[test]
-    fn keystore_round_trip_and_persistence() {
-        let dir = tmpdir("roundtrip");
-        let path = dir.join("secrets.enc.json");
-        {
-            let ks = FileKeystore::with_key(path.clone(), test_key());
-            assert!(ks.names().unwrap().is_empty());
-            ks.set("api_token", "tok-123").unwrap();
-            ks.set("db_password", "pw").unwrap();
-            ks.set("api_token", "tok-456").unwrap(); // overwrite
-            assert_eq!(ks.get("api_token").unwrap().as_deref(), Some("tok-456"));
-            assert_eq!(
-                ks.names().unwrap(),
-                vec!["api_token".to_string(), "db_password".to_string()]
-            );
-        }
-        // Reopen: entries persist and decrypt.
-        let ks = FileKeystore::with_key(path, test_key());
-        assert_eq!(ks.get("api_token").unwrap().as_deref(), Some("tok-456"));
-        assert_eq!(ks.get("db_password").unwrap().as_deref(), Some("pw"));
-        assert!(ks.get("missing").unwrap().is_none());
-        let all = ks.load_all().unwrap();
-        assert_eq!(all.len(), 2);
-        assert_eq!(all["api_token"], "tok-456");
-    }
-
-    #[test]
-    fn keystore_delete() {
-        let dir = tmpdir("delete");
-        let ks = FileKeystore::with_key(dir.join("secrets.enc.json"), test_key());
-        ks.set("a", "1").unwrap();
-        assert!(ks.delete("a").unwrap());
-        assert!(!ks.delete("a").unwrap());
-        assert!(ks.get("a").unwrap().is_none());
-    }
-
-    #[test]
-    fn keystore_file_is_encrypted_at_rest() {
-        let dir = tmpdir("atrest");
-        let path = dir.join("secrets.enc.json");
-        let ks = FileKeystore::with_key(path.clone(), test_key());
-        let value = "plaintext-must-not-appear";
-        ks.set("s", value).unwrap();
-        let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(!raw.contains(value), "plaintext leaked to disk");
-        assert!(raw.contains("\"ciphertext\""));
-    }
-
-    #[test]
     fn parse_key_material_variants() {
         let hex64 = "00".repeat(32);
         assert_eq!(parse_key_material(&hex64, "t").unwrap().len(), 32);
@@ -417,27 +358,5 @@ mod tests {
         assert!(parse_key_material("short", "t").is_err());
         let bad_hex = "zz".repeat(32);
         assert!(parse_key_material(&bad_hex, "t").is_err());
-    }
-
-    #[test]
-    fn resolve_key_generates_and_reuses_key_file() {
-        let dir = tmpdir("resolve");
-        // No env vars set in test environment for these names in practice;
-        // remove to be safe.
-        std::env::remove_var(KEY_ENV_VAR);
-        std::env::remove_var(KEY_FILE_ENV_VAR);
-        let k1 = resolve_key(&dir).unwrap();
-        assert_eq!(k1.len(), 32);
-        let k2 = resolve_key(&dir).unwrap();
-        assert_eq!(k1, k2, "key file must be reused across calls");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(dir.join("secrets.key"))
-                .unwrap()
-                .permissions()
-                .mode();
-            assert_eq!(mode & 0o777, 0o600);
-        }
     }
 }
