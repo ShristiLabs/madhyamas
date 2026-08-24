@@ -27,3 +27,6 @@ reqwest.workspace = true
 madhyamas-core = { path = "../madhyamas-core", version = "0.1.6", default-features = false, features = [
     "plugins",
 ] }
+
+[dev-dependencies]
+madhyamas-test-utils.workspace = true
