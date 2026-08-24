@@ -10,7 +10,7 @@ description: >
   (10) configuring MCP server for AI agent integration, (11) troubleshooting
   proxy/TLS/certificate issues, (12) using madhyamas CLI commands, or
   (13) calling the Madhyamas REST API. Covers MCP tools (146 tools), CLI
-  commands (159 subcommands), and REST API (184 endpoints).
+  commands (159 subcommands), and REST API (186 endpoints).
 license: MIT OR Apache-2.0
 metadata:
   author: madhyamas

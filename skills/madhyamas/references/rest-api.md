@@ -1,8 +1,8 @@
 # REST API Reference
 
-All 184 REST API endpoints (153 core + 31 enterprise). Base URL: `http://localhost:3001/api`. All endpoints return JSON unless otherwise noted.
+All 186 REST API endpoints (156 core + 31 enterprise). Base URL: `http://localhost:3001/api`. All endpoints return JSON unless otherwise noted.
 
-## Phase 1 — Core (30 endpoints)
+## Phase 1 — Core (33 endpoints)
 
 ### Traffic
 
@@ -50,6 +50,16 @@ All 184 REST API endpoints (153 core + 31 enterprise). Base URL: `http://localho
 | PATCH | `/config` | Update configuration | `curl -X PATCH -H 'Content-Type: application/json' -d '{"intercept_https":false}' http://localhost:3001/api/config` |
 
 **PATCH /config body fields:** `intercept_https` (boolean), `max_requests` (integer), `verbose` (boolean), `public_ip` (string|null), `max_body_size` (integer)
+
+### Secrets
+
+| Method | Path | Description | Example |
+|--------|------|-------------|---------|
+| GET | `/secrets` | List secret names (values are never returned) | `curl http://localhost:3001/api/secrets` |
+| PUT | `/secrets/{name}` | Create or update a secret (write-only value) | `curl -X PUT -H 'Content-Type: application/json' -d '{"value":"hunter2"}' http://localhost:3001/api/secrets/api_token` |
+| DELETE | `/secrets/{name}` | Delete a secret | `curl -X DELETE http://localhost:3001/api/secrets/api_token` |
+
+**Security:** secret values are write-only. No endpoint ever returns a plaintext secret value — `GET /secrets` returns only `{"names": [...]}`, and `PUT`/`DELETE` responses contain only the name and status. If the secrets subsystem is not enabled, these endpoints return 404. Enterprise: these routes require the `config:*` (admin) scope; OSS has no auth.
 
 ### Auto Save
 
@@ -250,7 +260,7 @@ All 184 REST API endpoints (153 core + 31 enterprise). Base URL: `http://localho
 | PATCH | `/logs` | Update log rotation configuration |
 | POST | `/logs/rotate` | Rotate the current log file immediately (on-demand) |
 
-**PATCH /logs body:** `enabled` (boolean), `rotation` (object: `{"mode":"never"|"hourly"|"daily"}` or `{"mode":"size","size_mb":<n>}`), `max_files` (integer), `max_file_size_mb` (integer), `json_format` (boolean)
+**PATCH /logs body:** `enabled` (boolean), `rotation` (object: `{"mode":"never"|"hourly"|"daily"}` or `{"mode":"size","size_mb":<n>}`), `max_files` (integer), `max_file_size_mb` (integer), `json_format` (boolean), `async_mode` (string), `async_writing` (boolean), `async_buffer_size` (integer, restart to apply), `debug_logging` (object: `enabled` (boolean), `level` (`summary`|`headers`|`full`), `host_filter` (array of host patterns), `redact_headers` (array of header names), `redact_bodies` (boolean) — runtime-toggleable proxied-traffic debug logging)
 
 ### Persistence
 
