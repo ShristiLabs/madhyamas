@@ -80,9 +80,12 @@ pub fn resolve_key(data_dir: &Path) -> crate::Result<Vec<u8>> {
     std::fs::create_dir_all(data_dir)?;
     let tmp = data_dir.join("secrets.key.tmp");
     {
-        use std::os::unix::fs::PermissionsExt;
         let mut f = std::fs::File::create(&tmp)?;
-        f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
         f.write_all(hex_encode(&key).as_bytes())?;
     }
     std::fs::rename(&tmp, &key_path)?;
