@@ -379,6 +379,8 @@ mod tests {
             fuel_limit: 1_000_000,
             timer_interval_seconds: None,
             publisher_public_key: None,
+            env_grants: vec![],
+            secret_grants: vec![],
             panels: vec![],
             tags: vec![],
         };

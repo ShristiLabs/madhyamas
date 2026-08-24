@@ -121,6 +121,13 @@ pub struct AppState {
     /// enterprise crate injects its `AuditLogger`-backed implementation
     /// (Phase 1b).
     pub audit_sink: Option<Arc<dyn AuditSink + Send + Sync>>,
+    /// Secrets service (`${ENV:}`/`${SECRET:}` substitution + management
+    /// API). `None` disables the secrets subsystem entirely (issue #87).
+    pub secrets: Option<Arc<madhyamas_core::secrets::SecretService>>,
+    /// Redaction settings (from `Config.secrets`). Applied to traffic
+    /// capture, HAR export, plugin logs, and script traces.
+    pub secrets_redact_enabled: bool,
+    pub secrets_redact_headers: Vec<String>,
     /// Pluggable event publisher for cross-instance pub/sub notifications
     /// (config changes, intercept rule changes). `None` in single-instance
     /// mode (no Redis); `Some` in multi-instance mode backed by Redis.
@@ -164,9 +171,46 @@ impl AppState {
             auth_provider: None,
             authorizer: None,
             audit_sink: None,
+            secrets: None,
+            secrets_redact_enabled: true,
+            secrets_redact_headers: madhyamas_core::secrets::redaction::DEFAULT_REDACT_HEADERS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             event_publisher: None,
             cross_instance_sender: None,
         }
+    }
+
+    /// Attach the secrets service and redaction settings (issue #87).
+    pub fn with_secrets(
+        mut self,
+        service: Arc<madhyamas_core::secrets::SecretService>,
+        redact_enabled: bool,
+        redact_headers: Vec<String>,
+    ) -> Self {
+        self.secrets = Some(service);
+        self.secrets_redact_enabled = redact_enabled;
+        self.secrets_redact_headers = redact_headers;
+        self
+    }
+
+    /// Build the shared redactor for egress points (traffic capture, HAR
+    /// export, plugin logs, script traces). Returns `None` when redaction
+    /// is disabled. Header-pattern redaction applies even when no secrets
+    /// service is configured (defense in depth).
+    pub fn redactor(&self) -> Option<madhyamas_core::secrets::Redactor> {
+        if !self.secrets_redact_enabled {
+            return None;
+        }
+        let values: Vec<String> = match &self.secrets {
+            Some(s) => s.value_snapshot(),
+            None => Vec::new(),
+        };
+        Some(madhyamas_core::secrets::Redactor::new(
+            &self.secrets_redact_headers,
+            values,
+        ))
     }
 
     pub fn with_cert_manager(mut self, cert_manager: Arc<CertificateManager>) -> Self {

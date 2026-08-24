@@ -229,6 +229,53 @@ pub struct ProxyConfig {
     /// [`docs/LOGGING.md`](../../docs/LOGGING.md) for the end-user guide.
     #[serde(default)]
     pub debug_logging: DebugLogConfig,
+    /// Secrets & redaction configuration (issue #87).
+    ///
+    /// Governs the `${ENV:}`/`${SECRET:}` substitution system and the
+    /// shared redaction pass applied to traffic capture, HAR export,
+    /// plugin logs, and script traces. The secret store itself is always
+    /// encrypted at rest; these settings control redaction behavior only.
+    ///
+    /// See [`SecretsConfig`] for field details.
+    #[serde(default)]
+    pub secrets: SecretsConfig,
+}
+
+/// Configuration for the secrets/redaction subsystem (#87).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SecretsConfig {
+    /// Master switch for redaction of known secret values and configured
+    /// headers from traffic capture, HAR export, plugin logs, and script
+    /// traces. Default: `true` (redact). Header-pattern redaction is
+    /// defense-in-depth on top of value matching.
+    #[serde(default = "default_secrets_redact_enabled")]
+    pub redact_enabled: bool,
+    /// Header names whose values are replaced with `[REDACTED]` in traffic
+    /// capture, HAR export, plugin logs, and script traces. Matched
+    /// case-insensitively. Default: Authorization, Proxy-Authorization,
+    /// Cookie, Set-Cookie, X-API-Key.
+    #[serde(default = "default_secrets_redact_headers")]
+    pub redact_headers: Vec<String>,
+}
+
+fn default_secrets_redact_enabled() -> bool {
+    true
+}
+
+fn default_secrets_redact_headers() -> Vec<String> {
+    crate::secrets::redaction::DEFAULT_REDACT_HEADERS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+impl Default for SecretsConfig {
+    fn default() -> Self {
+        Self {
+            redact_enabled: true,
+            redact_headers: default_secrets_redact_headers(),
+        }
+    }
 }
 
 /// Upstream (external) proxy chaining configuration.
@@ -975,6 +1022,7 @@ impl Default for ProxyConfig {
             mirror: MirrorConfig::default(),
             log_config: LogConfig::default(),
             debug_logging: DebugLogConfig::default(),
+            secrets: SecretsConfig::default(),
         }
     }
 }
@@ -1246,6 +1294,37 @@ mod tests {
     // ── DebugLogConfig / DebugLogLevel ───────────────────────────────────────
 
     #[test]
+    #[test]
+    fn secrets_config_defaults() {
+        let c = SecretsConfig::default();
+        assert!(c.redact_enabled);
+        assert!(c
+            .redact_headers
+            .iter()
+            .any(|h| h.eq_ignore_ascii_case("authorization")));
+        assert!(c
+            .redact_headers
+            .iter()
+            .any(|h| h.eq_ignore_ascii_case("cookie")));
+    }
+
+    #[test]
+    fn secrets_config_deserializes_minimal_and_custom() {
+        // Absent fields fall back to defaults (serde default).
+        let c: SecretsConfig = serde_json::from_str("{}").unwrap();
+        assert!(c.redact_enabled);
+        assert!(!c.redact_headers.is_empty());
+        // Custom headers + disabled.
+        let c: SecretsConfig =
+            serde_json::from_str(r#"{"redact_enabled": false, "redact_headers": ["X-Internal"]}"#)
+                .unwrap();
+        assert!(!c.redact_enabled);
+        assert_eq!(c.redact_headers, vec!["X-Internal".to_string()]);
+        // ProxyConfig round-trips with the secrets section.
+        let pc = ProxyConfig::default();
+        assert!(pc.secrets.redact_enabled);
+    }
+
     fn debug_log_config_defaults() {
         let c = DebugLogConfig::default();
         assert!(!c.enabled);

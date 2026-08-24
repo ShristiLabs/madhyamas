@@ -180,7 +180,9 @@ pub fn required_scope(method: &axum::http::Method, path: &str) -> Option<Scope> 
         "scripts"
     } else if path.starts_with("/plugins") {
         "plugins"
-    } else if path.starts_with("/config") {
+    } else if path.starts_with("/config") || path.starts_with("/secrets") {
+        // Secrets management is admin-only: only the admin role holds
+        // config:write/config:delete in the default RBAC matrix (#87).
         "config"
     } else if path.starts_with("/users") {
         "users"

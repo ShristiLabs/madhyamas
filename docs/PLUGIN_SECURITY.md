@@ -136,3 +136,37 @@ paths, preventing the zip-slip directory traversal attack.
 4. **Monitor invocation logs** — `madhyamas plugins logs <id>` to see what
    the plugin is doing.
 5. **Disable plugins when not needed** — `madhyamas plugins disable <id>`.
+
+## Environment variables and secrets (v1.2, issue #87)
+
+Plugins can receive environment variables and managed secrets through
+**substitution only** — there is no runtime `env_get` host function and no
+`madhyamas.env.get` API, by design: substituted values never persist in
+serialized contexts, script traces, or guest memory beyond the substituted
+value itself.
+
+- Placeholders `${ENV:VAR}` and `${SECRET:name}` are expanded in plugin
+  **settings** at hook-dispatch time (the stored settings are never
+  rewritten on disk).
+- Grants are **per-name and deny-by-default**, declared in the manifest:
+
+  ```toml
+  env_grants = ["MY_API_ENDPOINT"]
+  secret_grants = ["api_token"]
+  ```
+
+  Only granted names are substituted for that plugin. Ungranted (or
+  unresolvable) placeholders are left untouched. A plugin with no grants
+  sees no behavioral change whatsoever — the sandbox still links exactly
+  one host function (`log`); no new imports exist.
+- Secret values are stored encrypted at rest (AES-256-GCM; see
+  `docs/PLUGINS.md` for key management) and are never returned in
+  plaintext by any management API endpoint.
+- Known secret values plus configurable header patterns
+  (`Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`,
+  `X-API-Key` by default) are redacted from traffic capture, HAR export,
+  plugin logs (`GET /api/plugins/{id}/logs`), and script traces.
+- In the enterprise tier, secrets live in the enterprise store
+  (PostgreSQL/SQLite, still AES-256-GCM sealed at the field level),
+  management is RBAC-gated to admins, and every set/delete/grant is
+  recorded in the tamper-evident audit trail.

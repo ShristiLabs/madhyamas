@@ -67,6 +67,17 @@ pub struct PluginManifest {
     /// Optional list of tags used by the registry for search/discovery.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Environment variable names this plugin may receive via `${ENV:VAR}`
+    /// substitution in its settings. Deny by default: an empty list means no
+    /// env placeholders are expanded. Never grants raw process-environment
+    /// access. See `docs/PLUGIN_SECURITY.md`.
+    #[serde(default)]
+    pub env_grants: Vec<String>,
+    /// Secret names this plugin may receive via `${SECRET:name}`
+    /// substitution in its settings. Deny by default. Each substitution is
+    /// audit-logged in the enterprise tier.
+    #[serde(default)]
+    pub secret_grants: Vec<String>,
     /// Optional declarative UI panels. Each panel is rendered in the web UI's
     /// plugin detail view. Panels can display static content, settings forms,
     /// live data, or custom widgets.

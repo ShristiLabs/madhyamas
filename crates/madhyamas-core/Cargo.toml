@@ -64,6 +64,10 @@ local-ip-address = "0.6"
 sysinfo.workspace = true
 boa_engine = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
+# AES-256-GCM for the encrypted-at-rest secrets keystore (issue #87).
+# Unconditional: the secrets module is always compiled (redaction and
+# substitution must exist even when plugins/scripting features are off).
+aes-gcm.workspace = true
 # WASM plugin runtime (sandboxed plugin code execution)
 wasmtime = { version = "47", optional = true, default-features = false, features = [
     "cranelift",

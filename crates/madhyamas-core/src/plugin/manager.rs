@@ -21,6 +21,8 @@ use super::{
     Plugin, PluginContext, PluginError, PluginHook, PluginManifest, PluginResult, PluginState,
     PluginStats,
 };
+use crate::secrets::substitution::{expand_json, Grants};
+use crate::secrets::SecretService;
 use crate::storage::PluginStoreBackend;
 use crate::Error;
 use parking_lot::RwLock;
@@ -50,6 +52,10 @@ pub struct PluginManager {
     /// Active timer task handles (plugin_id -> JoinHandle), so timers can be
     /// cancelled when a plugin is disabled/unloaded.
     timer_tasks: RwLock<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// Secret service for `${ENV:}`/`${SECRET:}` substitution in plugin
+    /// settings (`None` disables substitution entirely — placeholders are
+    /// left untouched).
+    secrets: Option<Arc<SecretService>>,
 }
 
 impl PluginManager {
@@ -74,6 +80,7 @@ impl PluginManager {
             persistence: None,
             installer: None,
             timer_tasks: RwLock::new(HashMap::new()),
+            secrets: None,
         }
     }
 
@@ -94,6 +101,47 @@ impl PluginManager {
     pub fn with_installer(mut self, i: Arc<PluginInstaller>) -> Self {
         self.installer = Some(i);
         self
+    }
+
+    /// Attach a secret service (enables `${ENV:VAR}` / `${SECRET:name}`
+    /// substitution in plugin settings, gated per-plugin by the manifest's
+    /// `env_grants` / `secret_grants`).
+    pub fn with_secrets(mut self, s: Arc<SecretService>) -> Self {
+        self.secrets = Some(s);
+        self
+    }
+
+    /// Expand placeholders in a plugin's settings according to the
+    /// plugin's manifest grants. Ungranted names are left untouched; the
+    /// stored (raw) settings are never modified in place.
+    fn substituted_settings(
+        &self,
+        plugin: &Plugin,
+        settings: HashMap<String, serde_json::Value>,
+    ) -> HashMap<String, serde_json::Value> {
+        let Some(service) = &self.secrets else {
+            return settings;
+        };
+        let grants = Grants::new(
+            plugin.manifest.env_grants.clone(),
+            plugin.manifest.secret_grants.clone(),
+        );
+        if grants.is_empty() {
+            return settings;
+        }
+        let consumer = format!("plugin:{}", plugin.manifest.id);
+        let lookup = move |name: &str| service.get(name, &consumer);
+        let mut value = serde_json::to_value(&settings).unwrap_or(serde_json::Value::Null);
+        if value.is_null() {
+            return settings;
+        }
+        expand_json(
+            &mut value,
+            &grants,
+            &|name| std::env::var(name).ok(),
+            &lookup,
+        );
+        serde_json::from_value(value).unwrap_or(settings)
     }
 
     /// Expand a leading `~` in a path to the user's home directory.
@@ -462,7 +510,7 @@ impl PluginManager {
 
         for plugin in plugins {
             context.plugin_id = plugin.manifest.id.clone();
-            context.settings = plugin.settings.clone();
+            context.settings = self.substituted_settings(&plugin, plugin.settings.clone());
 
             let result = self.execute_plugin_hook(&plugin.manifest.id, hook, &context);
             results.push((plugin.manifest.id.clone(), result));
@@ -767,5 +815,129 @@ impl PluginManager {
 impl Default for PluginManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::secrets::service::{SecretService, SecretStore};
+    use std::collections::HashMap;
+
+    struct MemStore(std::sync::Mutex<HashMap<String, String>>);
+
+    impl SecretStore for MemStore {
+        fn load_all(&self) -> crate::Result<HashMap<String, String>> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        fn set(&self, name: &str, value: &str) -> crate::Result<()> {
+            self.0.lock().unwrap().insert(name.into(), value.into());
+            Ok(())
+        }
+        fn delete(&self, name: &str) -> crate::Result<bool> {
+            Ok(self.0.lock().unwrap().remove(name).is_some())
+        }
+    }
+
+    fn manifest(env: Vec<String>, secrets: Vec<String>) -> PluginManifest {
+        PluginManifest {
+            id: "test.plugin".into(),
+            name: "Test".into(),
+            version: "1.0.0".into(),
+            description: None,
+            author: None,
+            homepage: None,
+            repository: None,
+            min_version: None,
+            max_version: None,
+            license: None,
+            dependencies: HashMap::new(),
+            hooks: vec![],
+            settings: None,
+            enabled_by_default: false,
+            capabilities: vec![],
+            network: false,
+            max_memory_pages: 64,
+            fuel_limit: 1_000_000,
+            timer_interval_seconds: None,
+            publisher_public_key: None,
+            tags: vec![],
+            panels: vec![],
+            env_grants: env,
+            secret_grants: secrets,
+        }
+    }
+
+    fn settings(pairs: &[(&str, &str)]) -> HashMap<String, serde_json::Value> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+            .collect()
+    }
+
+    fn service() -> Arc<SecretService> {
+        let store = MemStore(std::sync::Mutex::new(HashMap::new()));
+        let svc = SecretService::new(Arc::new(store)).unwrap();
+        svc.set("api_token", "tok-secret-value").unwrap();
+        svc.set("other", "other-secret-value").unwrap();
+        Arc::new(svc)
+    }
+
+    #[test]
+    fn substituted_settings_expands_granted_secret_only() {
+        let mgr = PluginManager::new().with_secrets(service());
+        let plugin = Plugin::from_manifest(manifest(vec![], vec!["api_token".into()]), "/tmp/x");
+        let out = mgr.substituted_settings(
+            &plugin,
+            settings(&[
+                ("token", "${SECRET:api_token}"),
+                ("other", "${SECRET:other}"),
+            ]),
+        );
+        assert_eq!(out["token"], "tok-secret-value");
+        // Ungranted secret stays untouched.
+        assert_eq!(out["other"], "${SECRET:other}");
+    }
+
+    #[test]
+    fn substituted_settings_expands_granted_env_only() {
+        std::env::set_var("MADHYAMAS_TEST_ENV_GRANT", "env-value");
+        let mgr = PluginManager::new().with_secrets(service());
+        let plugin = Plugin::from_manifest(
+            manifest(vec!["MADHYAMAS_TEST_ENV_GRANT".into()], vec![]),
+            "/tmp/x",
+        );
+        let out = mgr.substituted_settings(
+            &plugin,
+            settings(&[
+                ("a", "${ENV:MADHYAMAS_TEST_ENV_GRANT}"),
+                ("b", "${ENV:PATH}"), // exists but ungranted
+            ]),
+        );
+        assert_eq!(out["a"], "env-value");
+        assert_eq!(out["b"], "${ENV:PATH}");
+    }
+
+    #[test]
+    fn no_grants_means_no_behavior_change() {
+        // Plugin without grants: settings pass through untouched, even with
+        // a secrets service attached.
+        let mgr = PluginManager::new().with_secrets(service());
+        let plugin = Plugin::from_manifest(manifest(vec![], vec![]), "/tmp/x");
+        let input = settings(&[("token", "${SECRET:api_token}")]);
+        let out = mgr.substituted_settings(&plugin, input.clone());
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn no_secrets_service_means_no_behavior_change() {
+        let mgr = PluginManager::new();
+        let plugin = Plugin::from_manifest(
+            manifest(vec!["ANY".into()], vec!["api_token".into()]),
+            "/tmp/x",
+        );
+        let input = settings(&[("token", "${SECRET:api_token}")]);
+        let out = mgr.substituted_settings(&plugin, input.clone());
+        assert_eq!(out, input);
     }
 }

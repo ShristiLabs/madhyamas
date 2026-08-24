@@ -42,6 +42,7 @@ impl PostgresEnterpriseStore {
         sqlx::query(SCHEMA_API_KEYS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_AUTH_SESSIONS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_AUDIT_EVENTS).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_SECRETS).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(Self { pool })
     }
@@ -100,8 +101,48 @@ const SCHEMA_AUDIT_EVENTS: &str = "CREATE TABLE IF NOT EXISTS audit_events (
     hash TEXT
 )";
 
+const SCHEMA_SECRETS: &str = "CREATE TABLE IF NOT EXISTS secrets (
+    name TEXT PRIMARY KEY,
+    nonce TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)";
+
 #[async_trait]
 impl EnterpriseStore for PostgresEnterpriseStore {
+    async fn set_secret(&self, name: &str, nonce: &str, ciphertext: &str) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO secrets (name, nonce, ciphertext, updated_at) VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (name) DO UPDATE SET nonce = EXCLUDED.nonce, \
+             ciphertext = EXCLUDED.ciphertext, updated_at = EXCLUDED.updated_at",
+        )
+        .bind(name)
+        .bind(nonce)
+        .bind(ciphertext)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_secret(&self, name: &str) -> Result<bool> {
+        let res = sqlx::query("DELETE FROM secrets WHERE name = $1")
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn list_secrets(&self) -> Result<Vec<(String, String, String)>> {
+        let rows = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT name, nonce, ciphertext FROM secrets ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     async fn create_user(&self, user: &User, password_hash: &str) -> Result<()> {
         let rec = UserRecord::from(user);
         sqlx::query(

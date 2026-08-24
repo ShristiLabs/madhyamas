@@ -929,6 +929,12 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             .as_ref()
             .map(|s| s.debug_logging.clone())
             .unwrap_or_default(),
+        // Secrets & redaction (#87): preserve the saved config (if any) so
+        // API changes to redaction headers persist across restarts.
+        secrets: saved
+            .as_ref()
+            .map(|s| s.secrets.clone())
+            .unwrap_or_default(),
     };
 
     if saved.is_some() {
@@ -1132,6 +1138,34 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     });
     #[cfg(feature = "grpc")]
     let grpc_manager = Arc::new(GrpcManager::default());
+    // Secrets service (#87): OSS tier uses the encrypted file keystore in
+    // the data directory. The enterprise tier replaces the backing store
+    // with the enterprise store further below (RBAC + audit).
+    let secret_service: Option<Arc<madhyamas_core::secrets::SecretService>> = {
+        let data_dir = std::path::Path::new(&config.db_path)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        match madhyamas_core::secrets::FileKeystore::open(&data_dir) {
+            Ok(keystore) => match madhyamas_core::secrets::SecretService::new(Arc::new(keystore)) {
+                Ok(svc) => {
+                    info!(
+                        "Secrets keystore initialized ({} secret(s))",
+                        svc.names().len()
+                    );
+                    Some(Arc::new(svc))
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load secrets keystore: {}", e);
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Failed to open secrets keystore: {}", e);
+                None
+            }
+        }
+    };
     #[cfg(feature = "scripting")]
     let script_runtime = {
         let runtime = ScriptRuntime::default();
@@ -1192,6 +1226,9 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                     })
                     .map_err(|e| anyhow::anyhow!("failed to init script store: {e}"))
             };
+        if let Some(svc) = &secret_service {
+            runtime.with_secrets(svc.clone());
+        }
         match script_store_result {
             Ok(store) => {
                 if let Err(e) = runtime.with_persistence(store).await {
@@ -1290,6 +1327,11 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         // Attach the installer (download, checksum verify, zip extract).
         let installer = Arc::new(PluginInstaller::new(plugins_dir.clone()));
         mgr = mgr.with_installer(installer);
+
+        // Attach the secrets service (settings substitution, #87).
+        if let Some(svc) = &secret_service {
+            mgr = mgr.with_secrets(svc.clone());
+        }
 
         // Attach the WASM runtime (enables plugin code execution).
         #[cfg(feature = "wasm-runtime")]
@@ -1405,6 +1447,15 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     let api_state = api_state.with_script_runtime(script_runtime);
     #[cfg(feature = "plugins")]
     let api_state = api_state.with_plugin_manager(plugin_manager);
+    // Secrets management API + shared redaction (#87).
+    let api_state = match &secret_service {
+        Some(svc) => api_state.with_secrets(
+            svc.clone(),
+            config.secrets.redact_enabled,
+            config.secrets.redact_headers.clone(),
+        ),
+        None => api_state,
+    };
 
     // Enterprise tier: construct EnterpriseState, inject the three trait
     // impls (AuthProvider, Authorizer, AuditSink) into AppState, and build
@@ -1663,6 +1714,34 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         let audit = std::sync::Arc::new(
             madhyamas_enterprise::AuditLogger::default().with_store(store.clone()),
         );
+        // Enterprise secrets (#87): swap the OSS file keystore backing for
+        // the enterprise store (sealed blobs, RBAC-governed management) and
+        // forward secret access events to the audit trail. The shared
+        // SecretService instance (already wired into the plugin manager,
+        // script runtime, and API state) is reloaded from the new store.
+        let data_dir = std::path::Path::new(&config.db_path)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        if let Some(svc) = &secret_service {
+            match madhyamas_enterprise::EnterpriseSecretStore::new(store.clone(), &data_dir) {
+                Ok(ent_store) => match svc.swap_store(std::sync::Arc::new(ent_store)) {
+                    Ok(()) => {
+                        svc.set_audit_sink(std::sync::Arc::new(
+                            madhyamas_enterprise::SecretAuditAdapter::new(audit.clone()),
+                        ));
+                        info!(
+                            "Enterprise secrets store initialized ({} secret(s))",
+                            svc.names().len()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load enterprise secrets: {}", e)
+                    }
+                },
+                Err(e) => tracing::warn!("Failed to init enterprise secrets store: {}", e),
+            }
+        }
         // Phase 9.6: attach proxy auth validator when --proxy-auth is
         // enabled. The proxy engine is already running (started earlier),
         // but the validator is stored in a OnceLock that hasn't been set

@@ -25,7 +25,9 @@ const SCHEMA_SCRIPTS: &str = "CREATE TABLE IF NOT EXISTS scripts (
     created_at TEXT NOT NULL,
     modified_at TEXT NOT NULL,
     match_json TEXT,
-    on_error TEXT NOT NULL DEFAULT 'stop_chain'
+    on_error TEXT NOT NULL DEFAULT 'stop_chain',
+    env_grants TEXT NOT NULL DEFAULT '[]',
+    secret_grants TEXT NOT NULL DEFAULT '[]'
 )";
 
 /// Schema for the `script_executions` table.
@@ -66,6 +68,8 @@ struct ScriptDbRow {
     modified_at: String,
     match_json: Option<String>,
     on_error: String,
+    env_grants: String,
+    secret_grants: String,
 }
 
 /// Row shape for `script_executions`.
@@ -103,6 +107,14 @@ impl SqliteScriptStore {
             "scripts",
             "on_error",
             "TEXT NOT NULL DEFAULT 'stop_chain'",
+        )
+        .await?;
+        Self::ensure_column(&pool, "scripts", "env_grants", "TEXT NOT NULL DEFAULT '[]'").await?;
+        Self::ensure_column(
+            &pool,
+            "scripts",
+            "secret_grants",
+            "TEXT NOT NULL DEFAULT '[]'",
         )
         .await?;
         Self::ensure_column(&pool, "script_executions", "traffic_entry_id", "TEXT").await?;
@@ -145,6 +157,8 @@ fn row_to_script(row: ScriptDbRow) -> Script {
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
     let on_error: ScriptErrorPolicy = serde_json::from_str(&row.on_error).unwrap_or_default();
+    let env_grants: Vec<String> = serde_json::from_str(&row.env_grants).unwrap_or_default();
+    let secret_grants: Vec<String> = serde_json::from_str(&row.secret_grants).unwrap_or_default();
     Script {
         id: row.id,
         name: row.name,
@@ -157,6 +171,8 @@ fn row_to_script(row: ScriptDbRow) -> Script {
         modified_at: parse_rfc3339(&row.modified_at),
         match_filter,
         on_error,
+        env_grants,
+        secret_grants,
     }
 }
 
@@ -187,10 +203,12 @@ impl ScriptStoreBackend for SqliteScriptStore {
             _ => None,
         };
         let on_error_json = serde_json::to_string(&script.on_error)?;
+        let env_grants_json = serde_json::to_string(&script.env_grants)?;
+        let secret_grants_json = serde_json::to_string(&script.secret_grants)?;
         sqlx::query(
             "INSERT OR REPLACE INTO scripts
-                (id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json, on_error)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json, on_error, env_grants, secret_grants)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&script.id)
         .bind(&script.name)
@@ -203,6 +221,8 @@ impl ScriptStoreBackend for SqliteScriptStore {
         .bind(script.modified_at.to_rfc3339())
         .bind(&match_json)
         .bind(&on_error_json)
+        .bind(&env_grants_json)
+        .bind(&secret_grants_json)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -210,7 +230,7 @@ impl ScriptStoreBackend for SqliteScriptStore {
 
     async fn load_scripts(&self) -> Result<Vec<Script>> {
         let rows: Vec<ScriptDbRow> = sqlx::query_as::<_, ScriptDbRow>(
-            "SELECT id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json, on_error
+            "SELECT id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json, on_error, env_grants, secret_grants
              FROM scripts ORDER BY priority ASC, name ASC",
         )
         .fetch_all(&self.pool)

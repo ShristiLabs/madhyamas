@@ -28,6 +28,7 @@ pub mod middleware;
 pub mod rbac;
 pub mod redis_state;
 pub mod router;
+pub mod secrets;
 pub mod security;
 pub mod store;
 pub mod user;
@@ -43,6 +44,7 @@ pub use redis_state::{
     CHANNEL_INTERCEPT, CHANNEL_SEATS,
 };
 pub use router::create_enterprise_router;
+pub use secrets::{EnterpriseSecretStore, SecretAuditAdapter};
 pub use security::{is_private_ip, validate_callback_url};
 pub use store::{ApiKeyRecord, AuditStats, AuthSession, UserUpdate};
 pub use store::{EnterpriseStore, PostgresEnterpriseStore, SqliteEnterpriseStore, StoreError};

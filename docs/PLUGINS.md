@@ -269,3 +269,48 @@ See [PLUGIN_SECURITY.md](PLUGIN_SECURITY.md) for details.
 - `madhyamas_get_plugin_schema` — settings schema
 - `madhyamas_get_plugin_settings` / `madhyamas_update_plugin_settings`
 - `madhyamas_get_plugin_logs` — invocation logs
+
+## Secrets and environment variables (issue #87)
+
+Declare per-name grants in `madhyamas-plugin.toml`:
+
+```toml
+env_grants = ["UPSTREAM_API_URL"]   # process env vars the plugin may receive
+secret_grants = ["api_token"]       # managed secret names the plugin may receive
+```
+
+Then reference them in the plugin's settings (via the web UI settings form
+or the settings API):
+
+```json
+{ "authorization": "Bearer ${SECRET:api_token}", "url": "${ENV:UPSTREAM_API_URL}" }
+```
+
+Placeholders are expanded at hook-dispatch time; only granted names are
+substituted (deny by default). Scripts use the same syntax with the
+scripts API's `env_grants` / `secret_grants` fields.
+
+### Managing secrets
+
+- Web UI: Tools -> Secrets (names only; values are write-only).
+- API: `GET /api/secrets` (names), `PUT /api/secrets/{name}` with
+  `{"value": "..."}`, `DELETE /api/secrets/{name}`.
+- Enterprise: management is restricted to the admin role and every access
+  is audit-logged.
+
+### Key management (OSS keystore)
+
+Secrets are stored AES-256-GCM encrypted in
+`<data_dir>/secrets.enc.json`. The 32-byte master key is resolved in this
+order:
+
+1. `MADHYAMAS_SECRETS_KEY` env var — 64 hex characters or exactly 32 raw
+   bytes (recommended for containers: inject from Docker/Kubernetes
+   secrets).
+2. `MADHYAMAS_SECRETS_KEY_FILE` — path to a key file (keep it on a
+   different volume than the keystore, or inject via a secret manager).
+3. Auto-generated `<data_dir>/secrets.key` (mode 0600) — development
+   convenience only; losing this file makes stored secrets unrecoverable,
+   and it should not be backed up alongside the keystore.
+
+There is no rotation/TTL in v1 — update secrets manually via the API/UI.

@@ -81,4 +81,13 @@ pub trait EnterpriseStore: Send + Sync {
     /// if the table is empty. Used by the hash-chain computation in
     /// [`crate::AuditLogger`].
     async fn get_latest_audit_hash(&self) -> Result<Option<String>>;
+
+    /// Persist a secret (create or overwrite). `nonce`/`ciphertext` are the
+    /// AES-256-GCM sealed hex pair produced by the keystore helpers; the
+    /// plaintext never reaches the store (issue #87).
+    async fn set_secret(&self, name: &str, nonce: &str, ciphertext: &str) -> Result<()>;
+    /// Delete a secret; returns whether it existed.
+    async fn delete_secret(&self, name: &str) -> Result<bool>;
+    /// List all secrets as (name, nonce, ciphertext) triples (still sealed).
+    async fn list_secrets(&self) -> Result<Vec<(String, String, String)>>;
 }

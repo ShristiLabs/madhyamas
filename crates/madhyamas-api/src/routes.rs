@@ -20,6 +20,11 @@ pub fn create_routes() -> Router<Arc<AppState>> {
 fn create_routes_inner() -> Router<Arc<AppState>> {
     let router = Router::new()
         // Traffic endpoints
+        .route("/secrets", get(handlers::list_secrets))
+        .route(
+            "/secrets/{name}",
+            put(handlers::set_secret).delete(handlers::delete_secret),
+        )
         .route("/traffic", get(handlers::get_traffic))
         .route("/traffic/{id}", get(handlers::get_traffic_entry))
         .route("/traffic/clear", post(handlers::clear_traffic))

@@ -112,6 +112,14 @@ pub struct CreateScriptRequest {
     /// Per-script error policy.  Defaults to `stop_chain`.
     #[serde(default)]
     pub on_error: Option<ScriptErrorPolicy>,
+    /// Env-var names the script may read via `${ENV:VAR}` substitution
+    /// (issue #87). Deny by default.
+    #[serde(default)]
+    pub env_grants: Option<Vec<String>>,
+    /// Secret names the script may read via `${SECRET:name}` substitution
+    /// (issue #87). Deny by default.
+    #[serde(default)]
+    pub secret_grants: Option<Vec<String>>,
 }
 
 /// Create a new script
@@ -154,6 +162,12 @@ pub struct UpdateScriptRequest {
     /// Update the per-script error policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_error: Option<ScriptErrorPolicy>,
+    /// Update the script's env-var substitution grants (issue #87).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_grants: Option<Vec<String>>,
+    /// Update the script's secret substitution grants (issue #87).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_grants: Option<Vec<String>>,
 }
 
 /// Update a script
@@ -179,6 +193,8 @@ pub async fn update_script(
         match_filter: req.match_filter,
         priority: req.priority,
         on_error: req.on_error,
+        env_grants: req.env_grants,
+        secret_grants: req.secret_grants,
     };
     if state.script_runtime.update_script_fields(&id, fields) {
         StatusCode::NO_CONTENT.into_response()
@@ -348,6 +364,8 @@ pub async fn get_traffic_script_traces(
         hook: Option<String>,
     }
 
+    // Redact substituted secret values from script traces (issue #87).
+    let redactor = state.redactor();
     let enriched: Vec<ScriptTrace> = traces
         .into_iter()
         .map(|exec| {
@@ -355,13 +373,21 @@ pub async fn get_traffic_script_traces(
                 .script_runtime
                 .get_script(&exec.script_id)
                 .map(|s| s.name);
+            let (error, mut console) = (exec.error, exec.console);
+            if let Some(r) = &redactor {
+                r.redact_lines(&mut console);
+            }
+            let error = match (&redactor, error) {
+                (Some(r), Some(e)) => Some(r.redact_text(&e)),
+                (_, e) => e,
+            };
             ScriptTrace {
                 script_id: exec.script_id,
                 script_name,
                 duration_ms: exec.duration_ms,
                 success: exec.success,
-                error: exec.error,
-                console: exec.console,
+                error,
+                console,
                 timestamp: exec.timestamp,
                 traffic_entry_id: exec.traffic_entry_id,
                 hook: exec.hook,
@@ -885,7 +911,16 @@ pub async fn get_plugin_logs(
         .get("limit")
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(50);
-    let logs = state.plugin_manager.get_invocations(&id, limit).await;
+    let mut logs = state.plugin_manager.get_invocations(&id, limit).await;
+    // Redact substituted secret values from plugin logs (issue #87).
+    if let Some(redactor) = state.redactor() {
+        for log in logs.iter_mut() {
+            redactor.redact_lines(&mut log.logs);
+            if let Some(err) = &log.error {
+                log.error = Some(redactor.redact_text(err));
+            }
+        }
+    }
     Json(logs).into_response()
 }
 

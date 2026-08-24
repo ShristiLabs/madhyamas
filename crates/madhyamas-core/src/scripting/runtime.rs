@@ -145,6 +145,14 @@ pub struct Script {
     /// after this one fails.
     #[serde(default)]
     pub on_error: ScriptErrorPolicy,
+    /// Environment variable names this script may receive via `${ENV:VAR}`
+    /// substitution in its source. Deny by default (issue #87).
+    #[serde(default)]
+    pub env_grants: Vec<String>,
+    /// Secret names this script may receive via `${SECRET:name}`
+    /// substitution in its source. Deny by default (issue #87).
+    #[serde(default)]
+    pub secret_grants: Vec<String>,
 }
 
 impl Script {
@@ -162,6 +170,8 @@ impl Script {
             priority: 100,
             match_filter: None,
             on_error: ScriptErrorPolicy::default(),
+            env_grants: Vec::new(),
+            secret_grants: Vec::new(),
         }
     }
 }
@@ -271,6 +281,12 @@ pub struct UpdateScriptFields {
     /// Update the per-script error policy.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_error: Option<ScriptErrorPolicy>,
+    /// Update the script's env-var substitution grants.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env_grants: Option<Vec<String>>,
+    /// Update the script's secret substitution grants.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_grants: Option<Vec<String>>,
 }
 
 /// JavaScript runtime manager
@@ -285,6 +301,9 @@ pub struct ScriptRuntime {
     max_history: usize,
     /// Optional async script store for persistence
     store: RwLock<Option<Arc<dyn ScriptStoreBackend + Send + Sync>>>,
+    /// Optional secret service for `${ENV:}`/`${SECRET:}` substitution in
+    /// script source, gated per-script by env/secret grants (#87).
+    secrets: RwLock<Option<Arc<crate::secrets::SecretService>>>,
 }
 
 impl ScriptRuntime {
@@ -295,6 +314,7 @@ impl ScriptRuntime {
             config: RwLock::new(config),
             max_history: 1000,
             store: RwLock::new(None),
+            secrets: RwLock::new(None),
         }
     }
 
@@ -315,6 +335,37 @@ impl ScriptRuntime {
         }
         *self.store.write() = Some(store);
         Ok(())
+    }
+
+    /// Attach a secret service (enables `${ENV:VAR}` / `${SECRET:name}`
+    /// substitution in script source, gated per-script by the script's
+    /// `env_grants` / `secret_grants`).
+    pub fn with_secrets(&self, service: Arc<crate::secrets::SecretService>) {
+        *self.secrets.write() = Some(service);
+    }
+
+    /// Expand placeholders in a script's source according to its grants.
+    /// Ungranted names are left untouched; the stored source is never
+    /// modified in place.
+    fn substituted_source(
+        script: &Script,
+        secrets: &Option<Arc<crate::secrets::SecretService>>,
+    ) -> String {
+        use crate::secrets::substitution::{expand_str, Grants};
+        let Some(service) = secrets else {
+            return script.source.clone();
+        };
+        let grants = Grants::new(script.env_grants.clone(), script.secret_grants.clone());
+        if grants.is_empty() {
+            return script.source.clone();
+        }
+        let consumer = format!("script:{}", script.id);
+        expand_str(
+            &script.source,
+            &grants,
+            &|name| std::env::var(name).ok(),
+            &|name| service.get(name, &consumer),
+        )
     }
 
     /// Spawn a fire-and-forget async task on the current tokio runtime.
@@ -515,6 +566,12 @@ impl ScriptRuntime {
             if let Some(on_error) = fields.on_error {
                 script.on_error = on_error;
             }
+            if let Some(env_grants) = fields.env_grants {
+                script.env_grants = env_grants;
+            }
+            if let Some(secret_grants) = fields.secret_grants {
+                script.secret_grants = secret_grants;
+            }
             script.modified_at = chrono::Utc::now();
             let script_clone = script.clone();
             drop(scripts);
@@ -576,8 +633,9 @@ impl ScriptRuntime {
         };
 
         let config = self.config.read().clone();
-        let result =
-            super::engine::JsEngine::execute(&script.source, &context.hook, context, &config);
+        let secrets = self.secrets.read().clone();
+        let source = Self::substituted_source(&script, &secrets);
+        let result = super::engine::JsEngine::execute(&source, &context.hook, context, &config);
 
         // Record execution in history (in-memory + DB).
         let execution = ScriptExecution {
@@ -1274,5 +1332,85 @@ function onRequest(request, context) {
                 .to_string(),
         );
         s
+    }
+}
+
+#[cfg(test)]
+mod secrets_tests {
+    use super::*;
+    use crate::secrets::service::{SecretService, SecretStore};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    struct MemStore(std::sync::Mutex<HashMap<String, String>>);
+
+    impl SecretStore for MemStore {
+        fn load_all(&self) -> crate::Result<HashMap<String, String>> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        fn set(&self, name: &str, value: &str) -> crate::Result<()> {
+            self.0.lock().unwrap().insert(name.into(), value.into());
+            Ok(())
+        }
+        fn delete(&self, name: &str) -> crate::Result<bool> {
+            Ok(self.0.lock().unwrap().remove(name).is_some())
+        }
+    }
+
+    fn svc() -> Arc<SecretService> {
+        let store = MemStore(std::sync::Mutex::new(HashMap::new()));
+        let s = SecretService::new(Arc::new(store)).unwrap();
+        s.set("api_token", "tok-abc123").unwrap();
+        Arc::new(s)
+    }
+
+    #[test]
+    fn substituted_source_grant_enforcement() {
+        let service = svc();
+        let source = "log('${SECRET:api_token} ${SECRET:other}')".to_string();
+        let mut granted = Script::new("granted".into(), source.clone());
+        granted.secret_grants = vec!["api_token".into()];
+        let out = ScriptRuntime::substituted_source(&granted, &Some(service.clone()));
+        assert!(out.contains("tok-abc123"));
+        assert!(out.contains("${SECRET:other}"));
+
+        let mut ungranted = Script::new("ungranted".into(), source);
+        ungranted.secret_grants = vec![];
+        let out2 = ScriptRuntime::substituted_source(&ungranted, &Some(service));
+        assert_eq!(out2, ungranted.source);
+
+        // No service attached: untouched either way.
+        let out3 = ScriptRuntime::substituted_source(&granted, &None);
+        assert_eq!(out3, granted.source);
+    }
+
+    #[test]
+    fn execute_substitutes_granted_secret_into_running_script() {
+        // A script that logs the substituted token; the execution history
+        // (what script traces are built from) must contain the substituted
+        // value — the redaction pass at the API layer is what protects it
+        // from leaking (tested in secrets::redaction).
+        let runtime = ScriptRuntime::new(ScriptConfig::default());
+        runtime.with_secrets(svc());
+        let mut script = Script::new(
+            "tok".into(),
+            "function onRequest(ctx) { console.log('${SECRET:api_token}'); }".into(),
+        );
+        script.hooks = vec!["on_request".into()];
+        script.secret_grants = vec!["api_token".into()];
+        runtime.register_script(script.clone());
+        let ctx = super::super::ScriptContext::new(
+            "test-req",
+            "test-sess",
+            super::super::ScriptHook::OnRequest,
+        );
+        let result = runtime.execute(&script.id, &ctx);
+        assert!(result.error.is_none(), "error: {:?}", result.error);
+        assert!(result.console.iter().any(|l| l.contains("tok-abc123")));
+        // Redaction: the trace line must redact via the shared redactor.
+        let redactor = crate::secrets::Redactor::with_defaults(vec!["tok-abc123".to_string()]);
+        let mut lines = result.console.clone();
+        redactor.redact_lines(&mut lines);
+        assert!(lines.iter().all(|l| !l.contains("tok-abc123")));
     }
 }

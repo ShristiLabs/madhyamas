@@ -55,6 +55,8 @@ fn make_plugin(id: &str, wasm_path: PathBuf) -> Plugin {
         fuel_limit: 10_000_000,
         timer_interval_seconds: None,
         publisher_public_key: None,
+        env_grants: vec![],
+        secret_grants: vec![],
         panels: vec![],
         tags: vec![],
     };

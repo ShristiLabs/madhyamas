@@ -12,7 +12,9 @@ const ScriptsPanel = lazy(() => import('@/features/tools/ScriptsPanel').then((m)
 const PluginsPanel = lazy(() => import('@/features/tools/PluginsPanel').then((m) => ({ default: m.PluginsPanel })))
 const BlockListPanel = lazy(() => import('@/features/tools/BlockListPanel').then((m) => ({ default: m.BlockListPanel })))
 const MirrorPanel = lazy(() => import('@/features/tools/MirrorPanel').then((m) => ({ default: m.MirrorPanel })))
+const SecretsPanel = lazy(() => import('@/features/tools/SecretsPanel').then((m) => ({ default: m.SecretsPanel })))
 import {
+  KeyRound,
   Pause,
   Theater,
   Pencil,
@@ -32,7 +34,7 @@ interface ToolsSidebarProps {
   onClose: () => void
 }
 
-type TabValue = 'mocks' | 'rewrites' | 'breakpoints' | 'throttle' | 'replay' | 'grpc' | 'scripts' | 'plugins' | 'blocklist' | 'mirror'
+type TabValue = 'mocks' | 'rewrites' | 'breakpoints' | 'throttle' | 'replay' | 'grpc' | 'scripts' | 'plugins' | 'blocklist' | 'mirror' | 'secrets'
 
 interface TabConfig {
   value: TabValue
@@ -52,6 +54,7 @@ const tabs: TabConfig[] = [
   { value: 'grpc', label: 'gRPC', icon: Zap, category: 'debug' },
   { value: 'scripts', label: 'Scripts', icon: Code, category: 'extend' },
   { value: 'plugins', label: 'Plugins', icon: Puzzle, category: 'extend' },
+  { value: 'secrets', label: 'Secrets', icon: KeyRound, category: 'extend' },
 ]
 
 const categoryOrder: TabConfig['category'][] = ['intercept', 'modify', 'debug', 'extend']
@@ -135,6 +138,7 @@ export function ToolsSidebar({ isOpen, onClose }: ToolsSidebarProps) {
           {activeTab === 'grpc' && <GrpcPanel />}
           {activeTab === 'scripts' && <ScriptsPanel />}
           {activeTab === 'plugins' && <PluginsPanel />}
+          {activeTab === 'secrets' && <SecretsPanel />}
         </Suspense>
       </div>
     </div>

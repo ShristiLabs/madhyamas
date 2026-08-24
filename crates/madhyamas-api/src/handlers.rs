@@ -318,7 +318,12 @@ pub async fn export_har(State(state): State<Arc<AppState>>) -> impl IntoResponse
     let session_id = state.traffic_store.current_session_id();
 
     match state.traffic_store.export_har(&session_id).await {
-        Ok(har) => Json(har).into_response(),
+        Ok(mut har) => {
+            if let Some(redactor) = state.redactor() {
+                redactor.redact_json(&mut har);
+            }
+            Json(har).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -2453,5 +2458,209 @@ mod tests {
         assert_eq!(v["host_filter"], serde_json::json!(["a.com"]));
         assert_eq!(v["redact_headers"], serde_json::json!(["Authorization"]));
         assert_eq!(v["redact_bodies"], true);
+    }
+}
+
+/// ── Secrets management (issue #87) ─────────────────────────────────────
+///
+/// Values are write-only: no endpoint ever returns a plaintext secret
+/// (same semantics as `auth_password`). Listing names is allowed. In the
+/// enterprise tier these routes are scope-gated to `config:*` (admin) by
+/// the enterprise middleware.
+/// List secret names (never values).
+pub async fn list_secrets(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match &state.secrets {
+        Some(service) => Json(serde_json::json!({ "names": service.names() })).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Secrets subsystem is not enabled".to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// Request body for creating/updating a secret.
+#[derive(Debug, Deserialize)]
+pub struct SetSecretRequest {
+    /// The secret value. Write-only: never echoed back.
+    pub value: String,
+}
+
+/// Create or update a secret. The response never includes the value.
+pub async fn set_secret(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(req): Json<SetSecretRequest>,
+) -> impl IntoResponse {
+    let Some(service) = &state.secrets else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Secrets subsystem is not enabled".to_string(),
+            }),
+        )
+            .into_response();
+    };
+    match service.set(&name, &req.value) {
+        Ok(()) => (
+            StatusCode::NO_CONTENT,
+            Json(serde_json::json!({ "name": name, "status": "set" })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// Delete a secret.
+pub async fn delete_secret(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let Some(service) = &state.secrets else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Secrets subsystem is not enabled".to_string(),
+            }),
+        )
+            .into_response();
+    };
+    if service.delete(&name) {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Secret not found".to_string(),
+            }),
+        )
+            .into_response()
+    }
+}
+
+#[cfg(test)]
+mod secrets_api_tests {
+    use super::*;
+    use madhyamas_core::secrets::service::{SecretService, SecretStore};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    struct MemStore(std::sync::Mutex<HashMap<String, String>>);
+
+    impl SecretStore for MemStore {
+        fn load_all(&self) -> madhyamas_core::Result<HashMap<String, String>> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        fn set(&self, name: &str, value: &str) -> madhyamas_core::Result<()> {
+            self.0.lock().unwrap().insert(name.into(), value.into());
+            Ok(())
+        }
+        fn delete(&self, name: &str) -> madhyamas_core::Result<bool> {
+            Ok(self.0.lock().unwrap().remove(name).is_some())
+        }
+    }
+
+    async fn secrets_state() -> Arc<AppState> {
+        let store = madhyamas_core::TrafficStore::new(":memory:")
+            .await
+            .expect("in-memory store");
+        let svc =
+            SecretService::new(Arc::new(MemStore(std::sync::Mutex::new(HashMap::new())))).unwrap();
+        Arc::new(AppState::new(store).with_secrets(
+            Arc::new(svc),
+            true,
+            vec!["authorization".into()],
+        ))
+    }
+
+    async fn respond(
+        resp: axum::response::Response,
+    ) -> (axum::http::StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn secrets_api_never_returns_plaintext_values() {
+        let state = secrets_state().await;
+        // Set a secret via the handler.
+        let req: SetSecretRequest =
+            serde_json::from_str(r#"{"value": "super-secret-plaintext"}"#).unwrap();
+        let resp = set_secret(
+            axum::extract::State(state.clone()),
+            axum::extract::Path("api_token".to_string()),
+            axum::Json(req),
+        )
+        .await;
+        let (status, body) = respond(resp.into_response()).await;
+        assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+        assert!(
+            !body.to_string().contains("super-secret-plaintext"),
+            "set response must not echo the value"
+        );
+
+        // Listing returns names only.
+        let resp = list_secrets(axum::extract::State(state.clone())).await;
+        let (status, body) = respond(resp.into_response()).await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(body["names"][0], "api_token");
+        assert!(
+            !body.to_string().contains("super-secret-plaintext"),
+            "list response must never include values"
+        );
+
+        // Redaction: the state redactor must scrub the secret value and
+        // configured headers from captured traffic JSON.
+        let redactor = state.redactor().unwrap();
+        let mut entry = serde_json::json!({
+            "request": {
+                "headers": { "Authorization": "Bearer super-secret-plaintext" },
+                "body": "token=super-secret-plaintext"
+            }
+        });
+        redactor.redact_json(&mut entry);
+        assert!(!entry.to_string().contains("super-secret-plaintext"));
+        assert_eq!(entry["request"]["headers"]["Authorization"], "[REDACTED]");
+    }
+
+    #[tokio::test]
+    async fn secrets_api_delete_and_disabled() {
+        let state = secrets_state().await;
+        let req: SetSecretRequest = serde_json::from_str(r#"{"value": "v"}"#).unwrap();
+        let _ = set_secret(
+            axum::extract::State(state.clone()),
+            axum::extract::Path("s1".to_string()),
+            axum::Json(req),
+        )
+        .await;
+        let resp = delete_secret(
+            axum::extract::State(state.clone()),
+            axum::extract::Path("s1".to_string()),
+        )
+        .await;
+        assert_eq!(
+            resp.into_response().status(),
+            axum::http::StatusCode::NO_CONTENT
+        );
+
+        // Without the secrets subsystem: 404.
+        let store = madhyamas_core::TrafficStore::new(":memory:").await.unwrap();
+        let plain = Arc::new(AppState::new(store));
+        let resp = list_secrets(axum::extract::State(plain)).await;
+        assert_eq!(
+            resp.into_response().status(),
+            axum::http::StatusCode::NOT_FOUND
+        );
     }
 }

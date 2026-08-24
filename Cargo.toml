@@ -107,6 +107,9 @@ sysinfo = "0.30"
 boa_engine = "0.20"
 # SHA-256 for the script `crypto.hash` API
 sha2 = "0.10"
+# AES-256-GCM authenticated encryption for the OSS secrets keystore (#87).
+# RustCrypto AEAD — same crate family as sha2/argon2 already in the tree.
+aes-gcm = "0.10"
 
 # Ed25519 signature verification for enterprise license files (Phase 3).
 # Pinned to 2.x to match the version already used for plugin signing in

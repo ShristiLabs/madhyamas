@@ -25,7 +25,9 @@ const SCHEMA_SCRIPTS: &str = "CREATE TABLE IF NOT EXISTS scripts (
     created_at TEXT NOT NULL,
     modified_at TEXT NOT NULL,
     match_json TEXT,
-    on_error TEXT NOT NULL DEFAULT 'stop_chain'
+    on_error TEXT NOT NULL DEFAULT 'stop_chain',
+    env_grants TEXT NOT NULL DEFAULT '[]',
+    secret_grants TEXT NOT NULL DEFAULT '[]'
 )";
 
 /// Schema for the `script_executions` table.
@@ -63,6 +65,8 @@ struct ScriptDbRow {
     modified_at: String,
     match_json: Option<String>,
     on_error: String,
+    env_grants: String,
+    secret_grants: String,
 }
 
 /// Row shape for `script_executions`.
@@ -98,6 +102,16 @@ impl PostgresScriptStore {
         for stmt in SCHEMA_INDEX_STMTS {
             sqlx::query(stmt).execute(&mut *tx).await?;
         }
+        // Best-effort migrations for pre-existing databases: add the
+        // grants columns (issue #87). Errors (column already exists) are
+        // ignored.
+        let _ = sqlx::query("ALTER TABLE scripts ADD COLUMN env_grants TEXT NOT NULL DEFAULT '[]'")
+            .execute(&mut *tx)
+            .await;
+        let _ =
+            sqlx::query("ALTER TABLE scripts ADD COLUMN secret_grants TEXT NOT NULL DEFAULT '[]'")
+                .execute(&mut *tx)
+                .await;
         tx.commit().await?;
         Ok(Self { pool })
     }
@@ -121,6 +135,8 @@ fn row_to_script(row: ScriptDbRow) -> Script {
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
     let on_error: ScriptErrorPolicy = serde_json::from_str(&row.on_error).unwrap_or_default();
+    let env_grants: Vec<String> = serde_json::from_str(&row.env_grants).unwrap_or_default();
+    let secret_grants: Vec<String> = serde_json::from_str(&row.secret_grants).unwrap_or_default();
     Script {
         id: row.id,
         name: row.name,
@@ -133,6 +149,8 @@ fn row_to_script(row: ScriptDbRow) -> Script {
         modified_at: parse_rfc3339(&row.modified_at),
         match_filter,
         on_error,
+        env_grants,
+        secret_grants,
     }
 }
 
@@ -163,16 +181,18 @@ impl ScriptStoreBackend for PostgresScriptStore {
             _ => None,
         };
         let on_error_json = serde_json::to_string(&script.on_error)?;
+        let env_grants_json = serde_json::to_string(&script.env_grants)?;
+        let secret_grants_json = serde_json::to_string(&script.secret_grants)?;
         sqlx::query(
             "INSERT INTO scripts
-                (id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json, on_error)
+                (id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json, on_error, env_grants, secret_grants)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name, description = EXCLUDED.description,
                 source = EXCLUDED.source, hooks = EXCLUDED.hooks,
                 enabled = EXCLUDED.enabled, priority = EXCLUDED.priority,
                 created_at = EXCLUDED.created_at, modified_at = EXCLUDED.modified_at,
-                match_json = EXCLUDED.match_json, on_error = EXCLUDED.on_error",
+                match_json = EXCLUDED.match_json, on_error, env_grants, secret_grants = EXCLUDED.on_error, env_grants = EXCLUDED.env_grants, secret_grants = EXCLUDED.secret_grants",
         )
         .bind(&script.id)
         .bind(&script.name)
@@ -185,6 +205,8 @@ impl ScriptStoreBackend for PostgresScriptStore {
         .bind(script.modified_at.to_rfc3339())
         .bind(&match_json)
         .bind(&on_error_json)
+        .bind(&env_grants_json)
+        .bind(&secret_grants_json)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -192,7 +214,7 @@ impl ScriptStoreBackend for PostgresScriptStore {
 
     async fn load_scripts(&self) -> Result<Vec<Script>> {
         let rows: Vec<ScriptDbRow> = sqlx::query_as::<_, ScriptDbRow>(
-            "SELECT id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json, on_error
+            "SELECT id, name, description, source, hooks, enabled, priority, created_at, modified_at, match_json, on_error, env_grants, secret_grants
              FROM scripts ORDER BY priority ASC, name ASC",
         )
         .fetch_all(&self.pool)

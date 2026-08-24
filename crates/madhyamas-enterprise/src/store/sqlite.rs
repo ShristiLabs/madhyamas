@@ -30,6 +30,7 @@ impl SqliteEnterpriseStore {
         sqlx::query(SCHEMA_API_KEYS).execute(&pool).await?;
         sqlx::query(SCHEMA_AUTH_SESSIONS).execute(&pool).await?;
         sqlx::query(SCHEMA_AUDIT_EVENTS).execute(&pool).await?;
+        sqlx::query(SCHEMA_SECRETS).execute(&pool).await?;
         // Phase 4e: add `hash` column to pre-existing audit_events tables.
         // ALTER TABLE ... ADD COLUMN is idempotent-safe via try/catch: if the
         // column already exists the error is ignored.
@@ -93,8 +94,48 @@ const SCHEMA_AUDIT_EVENTS: &str = "CREATE TABLE IF NOT EXISTS audit_events (
     hash TEXT
 )";
 
+const SCHEMA_SECRETS: &str = "CREATE TABLE IF NOT EXISTS secrets (
+    name TEXT PRIMARY KEY,
+    nonce TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)";
+
 #[async_trait]
 impl EnterpriseStore for SqliteEnterpriseStore {
+    async fn set_secret(&self, name: &str, nonce: &str, ciphertext: &str) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO secrets (name, nonce, ciphertext, updated_at) VALUES (?, ?, ?, ?) \
+             ON CONFLICT(name) DO UPDATE SET nonce = excluded.nonce, \
+             ciphertext = excluded.ciphertext, updated_at = excluded.updated_at",
+        )
+        .bind(name)
+        .bind(nonce)
+        .bind(ciphertext)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_secret(&self, name: &str) -> Result<bool> {
+        let res = sqlx::query("DELETE FROM secrets WHERE name = ?")
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn list_secrets(&self) -> Result<Vec<(String, String, String)>> {
+        let rows = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT name, nonce, ciphertext FROM secrets ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     async fn create_user(&self, user: &User, password_hash: &str) -> Result<()> {
         let rec = UserRecord::from(user);
         sqlx::query(

@@ -220,3 +220,20 @@ Block requests based on runtime logic — for example, block all requests except
 - [CLI reference](./cli) — `madhyamas scripts` subcommands
 - [REST API reference](./rest-api) — `/api/scripts` endpoints
 - [Scripting API reference](https://github.com/ShristiLabs/madhyamas/blob/main/docs/SCRIPTING_API.md) — full hook and API documentation (developer docs)
+## Secrets and environment variables
+
+Scripts can receive environment variables and managed secrets via
+substitution in the script source — there is deliberately no
+`madhyamas.env.get()` runtime API. Set per-script grants
+(`env_grants` / `secret_grants`) via the scripts API; then:
+
+```js
+function onRequest(ctx) {
+  ctx.request.setHeader("Authorization", "Bearer ${SECRET:api_token}");
+}
+```
+
+Only granted names are substituted (deny by default); ungranted
+placeholders are left untouched. Substituted secret values are redacted
+from script traces, traffic capture, and HAR export. Manage secrets under
+Tools -> Secrets or `PUT /api/secrets/{name}` (values are write-only).

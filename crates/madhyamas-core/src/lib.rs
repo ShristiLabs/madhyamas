@@ -27,6 +27,7 @@ pub mod proxy;
 pub mod replay;
 #[cfg(feature = "scripting")]
 pub mod scripting;
+pub mod secrets;
 pub mod session;
 pub mod storage;
 pub mod tls;

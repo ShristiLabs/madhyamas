@@ -10,7 +10,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "madhyamas-plugin-request-logger"
-version = "1.0.1-SNAPSHOT"
+version = "1.0.2-SNAPSHOT"
 dependencies = [
  "madhyamas-plugin-sdk",
  "serde",
@@ -114,3 +114,7 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[patch.unused]]
+name = "licensing-core"
+version = "0.1.0"
