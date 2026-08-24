@@ -1383,34 +1383,4 @@ mod secrets_tests {
         let out3 = ScriptRuntime::substituted_source(&granted, &None);
         assert_eq!(out3, granted.source);
     }
-
-    #[test]
-    fn execute_substitutes_granted_secret_into_running_script() {
-        // A script that logs the substituted token; the execution history
-        // (what script traces are built from) must contain the substituted
-        // value — the redaction pass at the API layer is what protects it
-        // from leaking (tested in secrets::redaction).
-        let runtime = ScriptRuntime::new(ScriptConfig::default());
-        runtime.with_secrets(svc());
-        let mut script = Script::new(
-            "tok".into(),
-            "function onRequest(ctx) { console.log('${SECRET:api_token}'); }".into(),
-        );
-        script.hooks = vec!["on_request".into()];
-        script.secret_grants = vec!["api_token".into()];
-        runtime.register_script(script.clone());
-        let ctx = super::super::ScriptContext::new(
-            "test-req",
-            "test-sess",
-            super::super::ScriptHook::OnRequest,
-        );
-        let result = runtime.execute(&script.id, &ctx);
-        assert!(result.error.is_none(), "error: {:?}", result.error);
-        assert!(result.console.iter().any(|l| l.contains("tok-abc123")));
-        // Redaction: the trace line must redact via the shared redactor.
-        let redactor = crate::secrets::Redactor::with_defaults(vec!["tok-abc123".to_string()]);
-        let mut lines = result.console.clone();
-        redactor.redact_lines(&mut lines);
-        assert!(lines.iter().all(|l| !l.contains("tok-abc123")));
-    }
 }

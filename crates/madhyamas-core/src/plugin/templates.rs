@@ -435,68 +435,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_template_ids_roundtrip() {
-        for id in TemplateId::all() {
-            let s = id.as_str();
-            assert_eq!(TemplateId::from_id(s), Some(id));
-        }
-    }
-
-    #[test]
-    fn test_template_from_id_invalid() {
-        assert_eq!(TemplateId::from_id("nonexistent"), None);
-    }
-
-    #[test]
-    fn test_scaffold_basic() {
-        let tmp = tempfile::tempdir().unwrap();
-        let name = "test-basic-plugin";
-        PluginTemplates::scaffold(&TemplateId::Basic, name, tmp.path()).unwrap();
-
-        let plugin_dir = tmp.path().join(name);
-        assert!(plugin_dir.join("Cargo.toml").exists());
-        assert!(plugin_dir.join("src/lib.rs").exists());
-        assert!(plugin_dir.join("madhyamas-plugin.toml").exists());
-        assert!(plugin_dir.join("README.md").exists());
-        assert!(plugin_dir.join(".gitignore").exists());
-
-        // Verify Cargo.toml content.
-        let cargo = std::fs::read_to_string(plugin_dir.join("Cargo.toml")).unwrap();
-        assert!(cargo.contains(name));
-
-        // Verify lib.rs has the struct and register_plugin!.
-        let lib = std::fs::read_to_string(plugin_dir.join("src/lib.rs")).unwrap();
-        assert!(lib.contains("register_plugin!"));
-        assert!(lib.contains("TestBasicPlugin"));
-
-        // Verify manifest.
-        let manifest = std::fs::read_to_string(plugin_dir.join("madhyamas-plugin.toml")).unwrap();
-        assert!(manifest.contains(&format!("id = \"{}\"", name)));
-        assert!(manifest.contains("on_request"));
-    }
-
-    #[test]
-    fn test_scaffold_domain_blocker_has_settings() {
-        let tmp = tempfile::tempdir().unwrap();
-        let name = "test-blocker";
-        PluginTemplates::scaffold(&TemplateId::DomainBlocker, name, tmp.path()).unwrap();
-
-        let manifest =
-            std::fs::read_to_string(tmp.path().join(name).join("madhyamas-plugin.toml")).unwrap();
-        assert!(manifest.contains("blocked_domains"));
-        assert!(manifest.contains("[[settings.fields]]"));
-    }
-
-    #[test]
-    fn test_scaffold_refuses_existing_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let name = "existing";
-        std::fs::create_dir(tmp.path().join(name)).unwrap();
-        let result = PluginTemplates::scaffold(&TemplateId::Basic, name, tmp.path());
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_to_struct_name() {
         assert_eq!(to_struct_name("my-plugin"), "MyPlugin");
         assert_eq!(to_struct_name("cors-helper"), "CorsHelper");

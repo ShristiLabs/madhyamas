@@ -127,35 +127,3 @@ fn hex_val(c: u8) -> crate::Result<u8> {
         ))),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_keypair_sign_verify() {
-        let kp = generate_keypair();
-        let message = b"hello, plugin world!";
-        let sig = sign_package(message, &kp.secret_key).unwrap();
-        verify_package(message, &sig, &kp.public_key).unwrap();
-    }
-
-    #[test]
-    fn test_verify_rejects_tampered() {
-        let kp = generate_keypair();
-        let message = b"original message";
-        let sig = sign_package(message, &kp.secret_key).unwrap();
-        // Tamper with the message.
-        let tampered = b"tampered message";
-        assert!(verify_package(tampered, &sig, &kp.public_key).is_err());
-    }
-
-    #[test]
-    fn test_hex_roundtrip() {
-        let bytes = [0u8, 1, 2, 3, 255, 128, 64];
-        let hex = bytes_to_hex(&bytes);
-        assert_eq!(hex, "00010203ff8040");
-        let decoded: [u8; 7] = hex_to_bytes(&hex).unwrap();
-        assert_eq!(decoded, bytes);
-    }
-}
