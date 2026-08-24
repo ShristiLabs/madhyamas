@@ -49,7 +49,8 @@ immediately, so a file can never grow unbounded between scheduled rotations.
 With `async_writing: true` (the default), the file layer does not touch the
 disk on the thread that emits a log event. Events are enqueued into a
 bounded buffer drained by a single dedicated writer thread that owns the
-write side of the rotating file:
+write side of the rotating file (implemented in
+`crates/madhyamas-core/src/async_log.rs`):
 
 - **No mutex-guarded file I/O on request threads** — proxy request latency
   is decoupled from disk I/O latency spikes; concurrent events no longer
