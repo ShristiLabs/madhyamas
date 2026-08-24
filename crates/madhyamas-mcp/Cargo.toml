@@ -44,6 +44,8 @@ default = []
 
 [dev-dependencies]
 tokio-test = "0.4"
+# Shared fixtures for integration tests under tests/
+madhyamas-test-utils.workspace = true
 
 [[bin]]
 name = "madhyamas-mcp"

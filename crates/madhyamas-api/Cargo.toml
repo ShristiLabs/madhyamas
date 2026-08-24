@@ -44,3 +44,8 @@ url.workspace = true
 parking_lot.workspace = true
 validator.workspace = true
 regex.workspace = true
+
+[dev-dependencies]
+# Shared fixtures for integration tests under tests/
+madhyamas-test-utils.workspace = true
+tempfile.workspace = true

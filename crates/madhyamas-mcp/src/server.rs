@@ -1345,38 +1345,4 @@ mod tests {
             );
         }
     }
-
-    #[tokio::test]
-    async fn test_tier_detection_defaults_to_community() {
-        let (url, _rx) = spawn_mock_server().await;
-        let config = McpConfig {
-            api_url: url,
-            timeout_secs: 5,
-            auth: McpAuth::None,
-            transport: McpTransport::Stdio,
-        };
-        let server = McpServer::new(config).unwrap();
-        assert_eq!(server.tier(), "community");
-        std::mem::forget(server);
-    }
-
-    #[tokio::test]
-    async fn test_tier_detection_unreachable_server() {
-        // Bind to a port then immediately drop the listener so nothing is
-        // listening — the tier detection should gracefully default to
-        // "community".
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        let url = format!("http://127.0.0.1:{}", port);
-        let config = McpConfig {
-            api_url: url,
-            timeout_secs: 2,
-            auth: McpAuth::None,
-            transport: McpTransport::Stdio,
-        };
-        let server = McpServer::new(config).unwrap();
-        assert_eq!(server.tier(), "community");
-        std::mem::forget(server);
-    }
 }
