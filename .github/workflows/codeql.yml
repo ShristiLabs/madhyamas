@@ -37,7 +37,7 @@ jobs:
         language: ['rust', 'javascript-typescript']
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Without repo access, Rust autobuild cannot fetch the private
       # licensing-core dependency and the analysis extracts almost nothing.
