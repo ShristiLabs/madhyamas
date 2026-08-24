@@ -1294,7 +1294,6 @@ mod tests {
     // ── DebugLogConfig / DebugLogLevel ───────────────────────────────────────
 
     #[test]
-    #[test]
     fn secrets_config_defaults() {
         let c = SecretsConfig::default();
         assert!(c.redact_enabled);
@@ -1325,6 +1324,7 @@ mod tests {
         assert!(pc.secrets.redact_enabled);
     }
 
+    #[test]
     fn debug_log_config_defaults() {
         let c = DebugLogConfig::default();
         assert!(!c.enabled);
