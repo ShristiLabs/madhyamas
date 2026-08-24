@@ -2811,6 +2811,7 @@ dependencies = [
  "licensing-core",
  "madhyamas-api",
  "madhyamas-core",
+ "madhyamas-test-utils",
  "parking_lot",
  "password-hash",
  "rand 0.9.5",

@@ -43,3 +43,6 @@ url.workspace = true
 # OS RNG for Ed25519 keypair generation in license tests.
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 tempfile.workspace = true
+# Shared fixtures for integration tests under tests/ (enterprise feature
+# gates the BSL-crate fixtures; dev-only, never in the OSS graph).
+madhyamas-test-utils = { workspace = true, features = ["enterprise"] }
