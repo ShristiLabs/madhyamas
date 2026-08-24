@@ -1047,3 +1047,25 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.VERSION }}
           files: sbom/*.cdx.json
+
+  # =============================================================================
+  # Publish versioned docs for this release tag (issue #84). Runs the
+  # deploy-docs workflow in "release" mode for vX.Y.Z. The tag-push trigger in
+  # deploy-docs.yml may be skipped by its paths filter (releases without doc
+  # changes), so the release workflow always triggers it explicitly.
+  # =============================================================================
+  docs:
+    name: Publish versioned docs
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Trigger docs deployment for the release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${RELEASE_VERSION:-${GITHUB_REF#refs/tags/v}}"
+          tag="v${version}"
+          gh workflow run deploy-docs.yml --ref "$tag" -f docs_version="$tag"

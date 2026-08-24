@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vitepress dev",
     "build": "vitepress build",
-    "preview": "vitepress preview"
+    "preview": "vitepress preview",
+    "check:versioned": "./scripts/check-versioned-build.sh"
   },
   "devDependencies": {
     "vitepress": "^1.6.3",

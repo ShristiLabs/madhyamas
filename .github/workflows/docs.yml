@@ -16,6 +16,7 @@ on:
       - "crates/**"
       - "web/**"
       - "scripts/check-docs*.sh"
+      - "docs-site/**"
       - ".github/workflows/docs.yml"
   pull_request:
     branches: [main, develop]
@@ -24,6 +25,7 @@ on:
       - "crates/**"
       - "web/**"
       - "scripts/check-docs*.sh"
+      - "docs-site/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -37,3 +39,23 @@ jobs:
         run: bash scripts/check-docs.sh
       - name: Check module documentation coverage
         run: bash scripts/check-docs-coverage.sh
+
+  docs-site-check:
+    name: Docs site versioned build check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # VitePress lastUpdated timestamps need git history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+      - name: Install dependencies
+        working-directory: docs-site
+        run: npm ci
+      - name: Check versioned build layout, latest alias, and switcher links
+        working-directory: docs-site
+        run: ./scripts/check-versioned-build.sh

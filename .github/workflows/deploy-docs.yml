@@ -1,19 +1,43 @@
 name: Deploy Documentation
 
+# Versioned docs deployment. See docs-site/VERSIONING.md for the full design.
+#
+# - Push to main touching docs-site/** -> rebuild SNAPSHOT/ (release version
+#   directories are preserved).
+# - Push of a v* tag -> builds vX.Y.Z/ and refreshes latest/ + root redirect.
+# - workflow_dispatch with docs_version -> backport rebuild of that version
+#   (run from a release branch holding the cherry-picked doc fixes).
+#
+# Version preservation: GitHub Pages replaces the whole site on every deploy,
+# so this workflow chains artifacts — it downloads the `github-pages` artifact
+# from the last successful run of this workflow, overlays the newly built
+# version tree(s) into it, and re-uploads. No persistent docs branch is used.
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+    tags:
+      - "v*"
     paths:
       - "docs-site/**"
       - ".github/workflows/deploy-docs.yml"
   workflow_dispatch:
+    inputs:
+      docs_version:
+        description: "Release version to rebuild (e.g. v0.1.6). Empty = SNAPSHOT. Run from main for SNAPSHOT, or from a release branch for a backport."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
 concurrency:
+  # Serialized so artifact chaining cannot race two deploys against each other.
   group: "deploy-docs"
   cancel-in-progress: false
 
@@ -23,6 +47,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history so VitePress `lastUpdated` timestamps are correct.
+          fetch-depth: 0
+
+      - name: Determine mode
+        id: mode
+        env:
+          DOCS_VERSION_INPUT: ${{ inputs.docs_version }}
+        run: |
+          if [ -n "$DOCS_VERSION_INPUT" ]; then
+            echo "mode=backport" >> "$GITHUB_OUTPUT"
+            echo "version=$DOCS_VERSION_INPUT" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "mode=release" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=snapshot" >> "$GITHUB_OUTPUT"
+            echo "version=SNAPSHOT" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -35,17 +78,53 @@ jobs:
         working-directory: docs-site
         run: npm ci
 
-      - name: Build VitePress site
+      - name: Recover previously published versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Chain from the last successful deploy of this workflow: its
+          # `github-pages` artifact contains the full multi-version site.
+          # The unpacked tar becomes the staging root that the build script
+          # overlays the new version tree into, so all other version
+          # directories survive this deploy.
+          mkdir -p docs-site/.vitepress/staging
+          run_id="$(gh run list --workflow deploy-docs.yml --status success \
+            --limit 1 --json databaseId --jq '.[0].databaseId' || true)"
+          if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then
+            echo "Recovering site from run $run_id"
+            if gh run download "$run_id" --name github-pages --dir prior-site; then
+              tar -xf prior-site/artifact.tar -C docs-site/.vitepress/staging
+              echo "Recovered versions:"
+              ls docs-site/.vitepress/staging
+            else
+              echo "No downloadable github-pages artifact in run $run_id; starting from a clean site"
+            fi
+          else
+            echo "No prior successful deploy found; starting from a clean site"
+          fi
+          rm -rf prior-site
+
+      - name: Build versioned docs
         working-directory: docs-site
-        run: npm run build
+        env:
+          MODE: ${{ steps.mode.outputs.mode }}
+          VERSION: ${{ steps.mode.outputs.version }}
+        run: |
+          case "$MODE" in
+            snapshot) ./scripts/build-versioned.sh snapshot --ci ;;
+            release)  ./scripts/build-versioned.sh release "$VERSION" --ci ;;
+            backport) ./scripts/build-versioned.sh backport "$VERSION" --ci ;;
+          esac
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      # upload-pages-artifact tars the directory itself; pass the staging
+      # root (the full multi-version site) directly.
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs-site/.vitepress/dist
+          path: docs-site/.vitepress/staging
 
   deploy:
     needs: build

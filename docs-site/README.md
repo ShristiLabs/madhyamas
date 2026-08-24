@@ -48,9 +48,13 @@ npm run preview  # Preview the built site
 
 Documentation is automatically built and deployed to GitHub Pages via the
 [deploy-docs.yml](../.github/workflows/deploy-docs.yml) GitHub Actions workflow.
-Pushing changes to `docs-site/**` on the `main` branch triggers a deployment.
+The site is **versioned**: pushes to `main` publish `/madhyamas/SNAPSHOT/`,
+and release tags publish `/madhyamas/vX.Y.Z/` (plus the `latest/` alias and a
+root redirect). See [VERSIONING.md](VERSIONING.md) for the path layout, the
+CI version-preservation mechanism (artifact chaining), the version switcher,
+and the doc-backport procedure.
 
-**Live URL**: https://shristilabs.github.io/madhyamas/
+**Live URL**: https://shristilabs.github.io/madhyamas/ (redirects to `latest/`)
 
 ## Regenerating Screenshots
 
