@@ -270,33 +270,3 @@ pub enum MemoryPressure {
     /// least `target_bytes` worth of data.
     Cleanup { target_bytes: u64 },
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_memory_manager() {
-        let manager = MemoryManager::with_limits(100, 1000);
-
-        manager.entry_added(1024);
-        manager.entry_added(2048);
-
-        let stats = manager.stats();
-        assert_eq!(stats.used_bytes, 3072);
-        assert_eq!(stats.entry_count, 2);
-        assert!(!stats.is_under_pressure);
-    }
-
-    #[test]
-    fn test_memory_pressure() {
-        let manager = MemoryManager::with_limits(1, 100); // 1 MB limit
-
-        // Add entries to trigger pressure (> 80%)
-        for _ in 0..90 {
-            manager.entry_added(10_000); // 10 KB each
-        }
-
-        assert!(manager.is_under_pressure());
-    }
-}

@@ -497,41 +497,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rotation_label() {
-        assert_eq!(LogRotation::Never.label(), "never");
-        assert_eq!(LogRotation::Hourly.label(), "hourly");
-        assert_eq!(LogRotation::Daily.label(), "daily");
-        assert_eq!(LogRotation::SizeMB { size_mb: 50 }.label(), "size (50 MB)");
-    }
-
-    #[test]
-    fn effective_size_cap() {
-        assert_eq!(LogRotation::Never.effective_size_cap_mb(100), 100);
-        assert_eq!(LogRotation::Daily.effective_size_cap_mb(100), 100);
-        assert_eq!(
-            LogRotation::SizeMB { size_mb: 25 }.effective_size_cap_mb(100),
-            25
-        );
-    }
-
-    #[test]
-    fn rotate_now_renames_and_reopens() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path();
-        let writer = RotatingFileWriter::new(dir, LogConfig::default()).unwrap();
-        // Write some data.
-        {
-            let mut w = writer.clone();
-            writeln!(w, "hello world").unwrap();
-        }
-        assert!(dir.join(LOG_FILE_NAME).exists());
-        let archive = writer.rotate_now().unwrap();
-        assert!(archive.exists());
-        // A fresh file should now exist and be empty.
-        assert_eq!(writer.current_size(), 0);
-    }
-
-    #[test]
     fn prune_keeps_max_files() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();

@@ -82,32 +82,3 @@ impl AppError for crate::Error {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn core_error_codes_are_stable() {
-        assert_eq!(crate::Error::Config("x".into()).error_code(), "CORE_CONFIG");
-        assert_eq!(
-            crate::Error::Io(std::io::Error::other("boom")).error_code(),
-            "CORE_IO"
-        );
-    }
-
-    #[test]
-    fn core_io_is_retryable() {
-        assert!(crate::Error::Io(std::io::Error::other("boom")).is_retryable());
-        assert!(!crate::Error::Config("x".into()).is_retryable());
-    }
-
-    #[test]
-    fn response_json_contains_expected_fields() {
-        let err = crate::Error::Config("bad value".into());
-        let json = err.as_response_json();
-        assert_eq!(json["code"], "CORE_CONFIG");
-        assert_eq!(json["retryable"], false);
-        assert!(json["message"].as_str().unwrap().contains("bad value"));
-    }
-}

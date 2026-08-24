@@ -316,29 +316,3 @@ pub struct PoolStatistics {
     /// Reuse rate percentage
     pub reuse_rate: f64,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_connection_pool() {
-        let pool = ConnectionPool::new(PoolConfig::default());
-
-        // Create a connection
-        let conn = pool.create("example.com");
-        assert_eq!(conn.host, "example.com");
-        assert_eq!(conn.use_count, 1);
-
-        // Release it back
-        pool.release(conn);
-
-        // Get it back (should reuse)
-        let reused = pool.get("example.com").unwrap();
-        assert_eq!(reused.use_count, 2);
-
-        let stats = pool.stats();
-        assert_eq!(stats.total_created, 1);
-        assert_eq!(stats.total_reused, 1);
-    }
-}

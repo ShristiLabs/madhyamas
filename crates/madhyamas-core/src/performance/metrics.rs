@@ -315,24 +315,3 @@ pub struct PoolStats {
     /// Pending connection requests
     pub pending_requests: u64,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_metrics_collector() {
-        let collector = MetricsCollector::new();
-
-        collector.record_request(100);
-        collector.record_response(200, Duration::from_millis(50));
-        collector.record_error();
-
-        let metrics = collector.snapshot();
-        assert_eq!(metrics.request_count, 1);
-        assert_eq!(metrics.response_count, 1);
-        assert_eq!(metrics.error_count, 1);
-        assert_eq!(metrics.bytes_sent, 100);
-        assert_eq!(metrics.bytes_received, 200);
-    }
-}

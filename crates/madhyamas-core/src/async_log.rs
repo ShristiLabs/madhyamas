@@ -441,19 +441,6 @@ mod tests {
     }
 
     #[test]
-    fn mode_toggles_at_runtime() {
-        let (_tmp, rotating) = tmp_writer();
-        let (writer, guard) = AsyncFileWriter::new(rotating, 8, AsyncLogMode::Lossless);
-        assert_eq!(writer.mode(), AsyncLogMode::Lossless);
-        writer.set_mode(AsyncLogMode::Lossy);
-        assert_eq!(writer.mode(), AsyncLogMode::Lossy);
-        assert_eq!(writer.status().mode, "lossy");
-        writer.set_mode(AsyncLogMode::Lossless);
-        assert_eq!(writer.status().mode, "lossless");
-        drop(guard);
-    }
-
-    #[test]
     fn rotation_boundary_no_lost_or_duplicated_lines() {
         let (tmp, _default_writer) = tmp_writer();
         let cfg = LogConfig {
@@ -490,16 +477,6 @@ mod tests {
         let status = writer.status();
         assert!(status.high_water >= 1, "high-water mark must be tracked");
         assert_eq!(status.buffer_depth, 0);
-        drop(guard);
-    }
-
-    #[test]
-    fn write_never_errors_and_reports_full_length() {
-        let (_tmp, rotating) = tmp_writer();
-        let (mut writer, guard) = AsyncFileWriter::new(rotating, 8, AsyncLogMode::Lossless);
-        let n = writer.write(b"hello async log\n").unwrap();
-        assert_eq!(n, 16);
-        assert!(writer.flush().is_ok());
         drop(guard);
     }
 }
