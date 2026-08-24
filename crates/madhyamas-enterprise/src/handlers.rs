@@ -1342,8 +1342,11 @@ mod tests {
     use madhyamas_core::{TrafficStore, WsManager};
 
     async fn make_state() -> Arc<AppState> {
-        let tmp = tempfile::tempdir().expect("temp dir");
-        let db_path = tmp.path().join("test.db").to_string_lossy().to_string();
+        // Keep the temp dir alive for the store's lifetime: dropping it would
+        // unlink the SQLite file out from under the pool and flake ping-based
+        // tests (seen on linux CI) when a connection is re-opened.
+        let tmp = tempfile::tempdir().expect("temp dir").keep();
+        let db_path = tmp.join("test.db").to_string_lossy().to_string();
         let store = TrafficStore::new(db_path).await.expect("open store");
         Arc::new(AppState::new(store).with_ws_manager(Arc::new(WsManager::new())))
     }
