@@ -2856,6 +2856,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "madhyamas-test-utils"
+version = "0.1.6"
+dependencies = [
+ "madhyamas-core",
+ "madhyamas-enterprise",
+ "sqlx",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

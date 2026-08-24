@@ -96,10 +96,18 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Run tests
+      # Unit tests = lib/bin targets (inline #[cfg(test)] modules);
+      # integration tests = tests/ directory targets. Split via nextest
+      # filtersets — see ci.yml for the rationale.
+      - name: Run unit tests
         env:
           RUST_BACKTRACE: 1
-        run: cargo nextest run --verbose
+        run: cargo nextest run --verbose -E 'kind(lib)' -E 'kind(bin)'
+
+      - name: Run integration tests
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo nextest run --verbose -E 'kind(test)'
 
   # =============================================================================
   # Build the unified binary for all platforms — both tiers

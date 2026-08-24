@@ -1,0 +1,24 @@
+[package]
+name = "madhyamas-test-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Shared test fixtures for the Madhyamas workspace (dev-only)"
+publish = false
+
+[features]
+default = []
+## Fixtures that build enterprise (BSL-1.1) types. Never enabled by
+## default: this crate is consumed only as a dev-dependency, and enabling
+## this feature in a non-dev graph would leak the BSL crate into the OSS
+## build (guarded by CI's `cargo tree` check).
+enterprise = ["dep:madhyamas-enterprise", "dep:sqlx"]
+
+[dependencies]
+madhyamas-core.workspace = true
+tokio.workspace = true
+tempfile.workspace = true
+sqlx = { workspace = true, optional = true }
+madhyamas-enterprise = { workspace = true, optional = true }

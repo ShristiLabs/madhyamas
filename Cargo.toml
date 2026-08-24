@@ -8,6 +8,8 @@ members = [
     "crates/madhyamas-cli",
     "crates/madhyamas-mcp",
     "crates/madhyamas-plugin-sdk",
+    # Dev-only fixture crate — never a runtime dependency of any crate.
+    "crates/madhyamas-test-utils",
 ]
 
 [workspace.package]
@@ -144,6 +146,11 @@ madhyamas-core = { path = "crates/madhyamas-core", version = "0.1.6" }
 madhyamas-api = { path = "crates/madhyamas-api", version = "0.1.6", default-features = false }
 madhyamas-cli = { path = "crates/madhyamas-cli", version = "0.1.6" }
 madhyamas-mcp = { path = "crates/madhyamas-mcp", version = "0.1.6" }
+# BSL-1.1 enterprise crate — publish=false, no version; consumed by the
+# enterprise tier and (dev-only) by madhyamas-test-utils' `enterprise` feature.
+madhyamas-enterprise = { path = "crates/madhyamas-enterprise" }
+# Dev-only shared fixtures (publish=false).
+madhyamas-test-utils = { path = "crates/madhyamas-test-utils" }
 
 # Embedded web assets
 rust-embed = { version = "8", features = ["mime-guess"] }

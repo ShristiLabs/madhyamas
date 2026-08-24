@@ -171,17 +171,34 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Run tests (enterprise tier)
+      # Unit tests = lib/bin targets (inline #[cfg(test)] modules);
+      # integration tests = tests/ directory targets. Split via nextest
+      # filtersets: cargo's --tests/--lib flags overlap (cargo's --tests
+      # also selects the lib target), and --lib alone misses bin unit
+      # tests (crates/madhyamas/src/main.rs). Multiple -E filters OR.
+      - name: Run unit tests (enterprise tier)
         if: matrix.rust == 'stable' && matrix.tier == 'enterprise'
         env:
           RUST_BACKTRACE: 1
-        run: cargo nextest run --verbose --all-features
+        run: cargo nextest run --verbose --all-features -E 'kind(lib)' -E 'kind(bin)'
 
-      - name: Run tests (oss tier)
+      - name: Run integration tests (enterprise tier)
+        if: matrix.rust == 'stable' && matrix.tier == 'enterprise'
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo nextest run --verbose --all-features -E 'kind(test)'
+
+      - name: Run unit tests (oss tier)
         if: matrix.rust == 'stable' && matrix.tier == 'oss'
         env:
           RUST_BACKTRACE: 1
-        run: cargo nextest run --verbose --no-default-features
+        run: cargo nextest run --verbose --no-default-features -E 'kind(lib)' -E 'kind(bin)'
+
+      - name: Run integration tests (oss tier)
+        if: matrix.rust == 'stable' && matrix.tier == 'oss'
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo nextest run --verbose --no-default-features -E 'kind(test)'
 
   # =============================================================================
   # Security audit — both tiers + license compliance (no BSL in OSS)
