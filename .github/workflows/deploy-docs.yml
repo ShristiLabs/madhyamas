@@ -5,8 +5,12 @@ name: Deploy Documentation
 # - Push to main touching docs-site/** -> rebuild SNAPSHOT/ (release version
 #   directories are preserved).
 # - Push of a v* tag -> builds vX.Y.Z/ and refreshes latest/ + root redirect.
-# - workflow_dispatch with docs_version -> backport rebuild of that version
-#   (run from a release branch holding the cherry-picked doc fixes).
+# - workflow_dispatch with docs_version -> backport rebuild if that version
+#   was already published (run from a release branch holding cherry-picked
+#   doc fixes), or a first-time release build (+ latest/ + root redirect) if
+#   it was never published — e.g. a release tag cut before this versioning
+#   system existed. Mode is decided AFTER recovering the prior artifact, by
+#   checking whether the version directory is actually present.
 #
 # Version preservation: GitHub Pages replaces the whole site on every deploy,
 # so this workflow chains artifacts — it downloads the `github-pages` artifact
@@ -51,22 +55,6 @@ jobs:
           # Full history so VitePress `lastUpdated` timestamps are correct.
           fetch-depth: 0
 
-      - name: Determine mode
-        id: mode
-        env:
-          DOCS_VERSION_INPUT: ${{ inputs.docs_version }}
-        run: |
-          if [ -n "$DOCS_VERSION_INPUT" ]; then
-            echo "mode=backport" >> "$GITHUB_OUTPUT"
-            echo "version=$DOCS_VERSION_INPUT" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "mode=release" >> "$GITHUB_OUTPUT"
-            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "mode=snapshot" >> "$GITHUB_OUTPUT"
-            echo "version=SNAPSHOT" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -103,6 +91,30 @@ jobs:
             echo "No prior successful deploy found; starting from a clean site"
           fi
           rm -rf prior-site
+
+      - name: Determine mode
+        id: mode
+        env:
+          DOCS_VERSION_INPUT: ${{ inputs.docs_version }}
+        run: |
+          if [ -n "$DOCS_VERSION_INPUT" ]; then
+            echo "version=$DOCS_VERSION_INPUT" >> "$GITHUB_OUTPUT"
+            if [ -d "docs-site/.vitepress/staging/$DOCS_VERSION_INPUT" ]; then
+              # Already published: a true backport, rebuilding in place.
+              echo "mode=backport" >> "$GITHUB_OUTPUT"
+            else
+              # Never published (e.g. a release tag cut before this
+              # versioning system existed) -- build it fresh and refresh
+              # latest/ + the root redirect, same as a real release deploy.
+              echo "mode=release" >> "$GITHUB_OUTPUT"
+            fi
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "mode=release" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=snapshot" >> "$GITHUB_OUTPUT"
+            echo "version=SNAPSHOT" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build versioned docs
         working-directory: docs-site
