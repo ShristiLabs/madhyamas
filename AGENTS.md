@@ -366,6 +366,13 @@ new-dep.workspace = true
 - **Port Conflicts**: Check ports 8888/3001 available
 - **Database Locked**: Only one instance at a time
 - **Web UI not updating**: Rebuild frontend (`cd web && npm run build`) then rebuild Rust
+- **Disk out of space**: if `cargo build`/`test`/`clippy` fails with "No
+  space left on device" (`ENOSPC`), run `cargo clean` (drops `target/`,
+  forcing a full rebuild) and retry before troubleshooting further.
+  `cargo clean -p <crate>` scopes it to one workspace crate; `du -sh
+  target/*` shows what's largest. A full rebuild plus a `web/` asset
+  rebuild is expensive here (embedded assets), so try the scoped clean
+  first if only one crate is implicated.
 
 ## Resources
 
