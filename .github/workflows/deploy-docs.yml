@@ -134,7 +134,7 @@ jobs:
       # upload-pages-artifact tars the directory itself; pass the staging
       # root (the full multi-version site) directly.
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: docs-site/.vitepress/staging
 
