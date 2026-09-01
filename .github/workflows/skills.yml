@@ -15,7 +15,7 @@ jobs:
     name: Validate Skills
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Make scripts executable
         run: chmod +x skills/madhyamas/scripts/*.sh
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: validate
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Make scripts executable
         run: chmod +x skills/madhyamas/scripts/*.sh
@@ -103,7 +103,7 @@ jobs:
       matrix:
         target: [claude, devin, windsurf, cursor, opencode, commandcode, agents]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Reuse the `build` job's artifact instead of rebuilding per target —
       # install.sh reads from the repo-root dist/ directory, which the

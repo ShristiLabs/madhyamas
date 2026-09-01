@@ -34,7 +34,7 @@ jobs:
     name: Docs check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check internal links and source path references
         run: bash scripts/check-docs.sh
       - name: Check module documentation coverage
@@ -44,7 +44,7 @@ jobs:
     name: Docs site versioned build check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # VitePress lastUpdated timestamps need git history.
           fetch-depth: 0
