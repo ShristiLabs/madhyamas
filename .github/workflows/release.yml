@@ -490,7 +490,7 @@ jobs:
           fi
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.version.outputs.VERSION }}
           name: Madhyamas v${{ steps.version.outputs.VERSION }}
@@ -1051,7 +1051,7 @@ jobs:
         run: echo "VERSION=${RELEASE_VERSION:-${GITHUB_REF#refs/tags/v}}" >> $GITHUB_OUTPUT
 
       - name: Attach SBOM to Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.version.outputs.VERSION }}
           files: sbom/*.cdx.json
