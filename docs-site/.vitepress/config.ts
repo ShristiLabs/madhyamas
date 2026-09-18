@@ -200,6 +200,7 @@ export default defineConfig({
           { text: "MCP & AI Agents", link: "/mcp" },
           { text: "Security Overview", link: "/security" },
           { text: "Migrating from Charles Proxy", link: "/migration-from-charles" },
+          { text: "Roadmap", link: "/roadmap" },
           { text: "Troubleshooting", link: "/troubleshooting" },
         ],
       },
