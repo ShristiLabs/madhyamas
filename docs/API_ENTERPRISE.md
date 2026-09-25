@@ -65,7 +65,8 @@ Resources: `Traffic`, `Session`, `Mock`, `Rewrite`, `Breakpoint`, `Script`,
 ### Audit event types
 
 `Login`, `Logout`, `ApiKeyCreated`, `ApiKeyRevoked`, `DeviceRegistered`,
-`DeviceKeyRotated`, `DeviceRevoked`, `TrafficExported`, `SessionCreated`,
+`DeviceKeyRotated`, `DeviceRevoked`, `DeviceEnrollmentIssued`,
+`DeviceEnrolled`, `TrafficExported`, `SessionCreated`,
 `SessionDeleted`, `MockCreated`, `MockDeleted`, `BreakpointCreated`,
 `BreakpointDeleted`, `ConfigChanged`, `Custom`.
 
@@ -92,6 +93,8 @@ hash is stored.
 | POST | `/devices/{id}/rotate` | Revoke the device's current key and mint a new one; returns `{device, key}` (show-once) |
 | POST | `/devices/{id}/revoke` | Revoke the device and deactivate its keys (record kept, status `revoked`) |
 | DELETE | `/devices/{id}` | Revoke the device's keys and delete the record |
+| POST | `/devices/{id}/enrollment-token` | Issue a short-lived single-use enrollment token; returns `{device, token, expires_at}` (show-once) |
+| POST | `/devices/enroll` | **Public.** Redeem `{token}` for the long-lived credential; returns `{device, key}` (show-once) |
 
 Lifecycle notes:
 
@@ -103,7 +106,44 @@ Lifecycle notes:
 - Rotate deactivates the old key and issues a new one atomically from the
   caller's perspective; the device identity (and future per-device traffic
   attribution) is unaffected.
-- Audit: `DeviceRegistered`, `DeviceKeyRotated`, `DeviceRevoked`.
+- Audit: `DeviceRegistered`, `DeviceKeyRotated`, `DeviceRevoked`,
+  `DeviceEnrollmentIssued`, `DeviceEnrolled`.
+
+### QR enrollment (issue #106)
+
+The credential dialog renders a `madhyamas://connect` QR alongside the
+manual values. The QR carries an **enrollment token** by default — not the
+long-lived key — so a photographed QR expires:
+
+```text
+madhyamas://connect?host=proxy.example.com&port=8888&tls=0
+  &token=mdy_enroll_...              (or key=mdy_dev_... in manual mode)
+  &name=Hari%27s%20Pixel
+  &ca=http://proxy.example.com:3001/api/cert/ca
+  &api=http://proxy.example.com:3001/api
+```
+
+- `tls` is `0` today (a TLS-wrapped proxy listener is a later issue) but
+  the field always round-trips.
+- `ca`/`api` are derived from the instance's own origin (the web UI is
+  served by the API server).
+
+Enrollment tokens:
+
+- Format `mdy_enroll_{hex}` — rejected on REST/MCP/CLI and at the proxy
+  listener alike: they are exchange credentials, not usable secrets.
+- Single-use and 15-minute TTL, enforced atomically at redemption
+  (`UPDATE ... WHERE redeemed_at IS NULL AND expires_at > now`): a token
+  older than 15 minutes or already redeemed returns `401`, as do unknown
+  and revoked tokens (indistinguishable, to prevent enumeration).
+- Redeeming revokes the device's existing active keys (including the
+  create-time show-once key) and mints exactly one fresh `mdy_dev_`
+  credential — one live credential per device.
+- Hashed at rest (SHA-256, same as device keys); the plaintext appears
+  only in the QR payload. Neither tokens nor keys are ever logged or
+  written to audit metadata (device IDs only).
+- Revoking or deleting a device also revokes its outstanding enrollment
+  tokens; expired token rows are pruned opportunistically on issuance.
 
 ### Proxy auth policy (`require_proxy_auth`)
 
@@ -135,6 +175,10 @@ unauthenticated connections is a policy:
 | GET | `/onboarding` | Get onboarding progress |
 | POST | `/onboarding/complete` | Mark an onboarding step as completed |
 | POST | `/onboarding/skip` | Skip onboarding entirely |
+
+Steps: `welcome`, `certificate`, `proxy`, `device` (optional — connect a
+phone/tablet via the Devices panel QR, issue #106), `features`
+(optional), `tips` (optional).
 
 ## Configuration Import/Export
 

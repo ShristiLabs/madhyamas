@@ -249,6 +249,20 @@ export function deleteDeviceApi(id: string): Promise<void> {
   return apiDeleteVoid(`/devices/${id}`)
 }
 
+/** Issued enrollment token (issue #106): plaintext mdy_enroll_ token shown
+ * once in the QR payload, plus the RFC 3339 instant it expires. */
+export interface DeviceEnrollmentToken {
+  device: DeviceEntry
+  /** Plaintext mdy_enroll_ token — carried by the QR, single-use, 15-min TTL. */
+  token: string
+  /** RFC 3339 timestamp after which redemption is rejected. */
+  expires_at: string
+}
+
+export function createEnrollmentTokenApi(id: string): Promise<DeviceEnrollmentToken> {
+  return apiPost<DeviceEnrollmentToken>(`/devices/${id}/enrollment-token`, {})
+}
+
 // ============================================================================
 // Instances
 // ============================================================================

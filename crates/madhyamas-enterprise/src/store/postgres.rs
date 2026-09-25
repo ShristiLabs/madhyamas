@@ -15,7 +15,7 @@ use sqlx::PgPool;
 use super::types::{AuditEventRecord, UserRecord};
 use super::{
     ApiKeyRecord, AuditEvent, AuditFilter, AuditStats, AuthSession, DeviceKeyRecord, DeviceRecord,
-    EnterpriseStore, Result, UserUpdate,
+    EnrollmentTokenRecord, EnterpriseStore, Result, UserUpdate,
 };
 use crate::user::User;
 
@@ -43,6 +43,9 @@ impl PostgresEnterpriseStore {
         sqlx::query(SCHEMA_API_KEYS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_DEVICES).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_DEVICE_KEYS).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_DEVICE_ENROLLMENT_TOKENS)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(SCHEMA_AUTH_SESSIONS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_AUDIT_EVENTS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_SECRETS).execute(&mut *tx).await?;
@@ -100,6 +103,18 @@ const SCHEMA_DEVICE_KEYS: &str = "CREATE TABLE IF NOT EXISTS device_keys (
     created_at TEXT NOT NULL,
     revoked_at TEXT,
     last_used_at TEXT
+)";
+
+const SCHEMA_DEVICE_ENROLLMENT_TOKENS: &str =
+    "CREATE TABLE IF NOT EXISTS device_enrollment_tokens (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    token_hash TEXT UNIQUE NOT NULL,
+    token_prefix TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    redeemed_at TEXT,
+    revoked_at TEXT
 )";
 
 const SCHEMA_AUTH_SESSIONS: &str = "CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -489,6 +504,73 @@ impl EnterpriseStore for PostgresEnterpriseStore {
         Ok(())
     }
 
+    async fn create_enrollment_token(&self, token: &EnrollmentTokenRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO device_enrollment_tokens \
+             (id, device_id, token_hash, token_prefix, created_at, expires_at, redeemed_at, revoked_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(&token.id)
+        .bind(&token.device_id)
+        .bind(&token.token_hash)
+        .bind(&token.token_prefix)
+        .bind(&token.created_at)
+        .bind(&token.expires_at)
+        .bind(&token.redeemed_at)
+        .bind(&token.revoked_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn redeem_enrollment_token(&self, token_hash: &str, now: &str) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE device_enrollment_tokens SET redeemed_at = $1 \
+             WHERE token_hash = $2 AND redeemed_at IS NULL AND revoked_at IS NULL \
+             AND expires_at > $3",
+        )
+        .bind(now)
+        .bind(token_hash)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn get_enrollment_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<EnrollmentTokenRecord>> {
+        let row: Option<EnrollmentTokenRecord> = sqlx::query_as::<_, EnrollmentTokenRecord>(
+            "SELECT * FROM device_enrollment_tokens WHERE token_hash = $1",
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    async fn revoke_enrollment_tokens_for_device(&self, device_id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "UPDATE device_enrollment_tokens SET revoked_at = $1 \
+             WHERE device_id = $2 AND redeemed_at IS NULL AND revoked_at IS NULL",
+        )
+        .bind(&now)
+        .bind(device_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_expired_enrollment_tokens(&self, now: &str) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM device_enrollment_tokens WHERE expires_at < $1")
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     async fn create_session(&self, session: &AuthSession) -> Result<()> {
         sqlx::query(
             "INSERT INTO auth_sessions \
@@ -710,6 +792,8 @@ fn event_type_label(t: crate::audit::AuditEventType) -> String {
         DeviceRegistered => "device_registered",
         DeviceKeyRotated => "device_key_rotated",
         DeviceRevoked => "device_revoked",
+        DeviceEnrollmentIssued => "device_enrollment_issued",
+        DeviceEnrolled => "device_enrolled",
         TrafficExported => "traffic_exported",
         SessionCreated => "session_created",
         SessionDeleted => "session_deleted",

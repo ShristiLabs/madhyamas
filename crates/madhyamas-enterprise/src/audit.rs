@@ -39,6 +39,11 @@ pub enum AuditEventType {
     DeviceKeyRotated,
     /// Device revoked or deleted — its credentials no longer authenticate
     DeviceRevoked,
+    /// Device enrollment token issued (QR onboarding, issue #106)
+    DeviceEnrollmentIssued,
+    /// Device enrollment token redeemed for a long-lived device key
+    /// (issue #106)
+    DeviceEnrolled,
     /// Traffic exported
     TrafficExported,
     /// Session created
@@ -381,6 +386,8 @@ impl From<AuditEventType> for ApiAuditEventType {
             AuditEventType::DeviceRegistered
             | AuditEventType::DeviceKeyRotated
             | AuditEventType::DeviceRevoked
+            | AuditEventType::DeviceEnrollmentIssued
+            | AuditEventType::DeviceEnrolled
             | AuditEventType::Custom => ApiAuditEventType::Custom,
         }
     }

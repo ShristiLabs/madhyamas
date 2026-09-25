@@ -1,19 +1,27 @@
 /**
- * DevicesPanel — device principal management (enterprise, issues #104/#105).
+ * DevicesPanel — device principal management (enterprise, issues #104/#105/#106).
  *
  * Registers devices, mints per-device connect-only credentials
  * (`mdy_dev_...`), and tracks liveness via the proxy-auth-derived
  * `last_seen`. On create/rotate the plaintext credential is shown ONCE
  * alongside the manual-apply values (host/port/username/password) for
- * clients that cannot scan a QR (QR onboarding is a later issue).
+ * clients that cannot scan a QR.
  * Issue #105: per-row "view traffic" opens the traffic view scoped to the
  * device, and the status flips to "Connected — capturing" live while the
  * device's attributed entries stream in over the traffic WebSocket.
- * API: GET/POST /api/devices, POST /api/devices/:id/rotate|revoke,
- * DELETE /api/devices/:id.
+ * Issue #106: the credential dialog adds a QR carrying a
+ * `madhyamas://connect` payload with a single-use 15-minute enrollment
+ * token (default mode — the QR is never a standing credential), stays
+ * open with a live "waiting for device… connected — capturing" loop, and
+ * auto-navigates to the device's traffic view on first connect. The raw
+ * values remain rendered alongside for manual entry, with a
+ * screenshot warning and an instant-rotation affordance.
+ * API: GET/POST /api/devices, POST /api/devices/:id/rotate|revoke|
+ * enrollment-token, POST /api/devices/enroll, DELETE /api/devices/:id.
  */
 import { useEffect, useRef, useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { QRCodeSVG } from "qrcode.react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -31,11 +39,11 @@ import {
   Plus,
   Trash2,
   Copy,
-  AlertTriangle,
   Check,
   RefreshCw,
   Ban,
   Activity,
+  Camera,
 } from "lucide-react"
 import { apiGet } from "@/lib/api/client"
 import {
@@ -44,7 +52,9 @@ import {
   rotateDeviceKeyApi,
   revokeDeviceApi,
   deleteDeviceApi,
+  createEnrollmentTokenApi,
   type DeviceEntry,
+  type DeviceEnrollmentToken,
   type CreateDevicePayload,
 } from "@/lib/api/admin"
 import { buildTrafficWsUrl } from "@/hooks/useTrafficWebSocket"
@@ -300,7 +310,13 @@ export function DevicesPanel() {
         loading={createMut.isPending}
       />
 
-      <CredentialDialog issued={issued} onClose={() => setIssued(null)} />
+      <CredentialDialog
+        issued={issued}
+        onClose={() => setIssued(null)}
+        lastCaptureAt={issued ? (capturingAt[issued.device.id] ?? null) : null}
+        onRotate={(id) => rotateMut.mutate(id)}
+        rotatePending={rotateMut.isPending}
+      />
 
       <Dialog open={!!revokeTarget} onOpenChange={(open) => !open && setRevokeTarget(null)}>
         <DialogContent className="sm:max-w-[400px]">
@@ -449,22 +465,99 @@ function CopyRow({ label, value }: { label: string; value: string }) {
   )
 }
 
+/** Parameters of the `madhyamas://connect` QR payload (issue #106,
+ * docs/CREDENTIAL_ONBOARDING.md QR payload section). Exactly one of
+ * `token` / `key` must be set: `token` is the default (single-use
+ * 15-minute enrollment token the companion exchanges for the real key);
+ * `key` is the manual-mode fallback carrying the show-once credential. */
+interface ConnectUriParams {
+  host: string
+  port: number
+  /** TLS flag of the proxy listener — 0 today (listener TLS is a later
+   * issue) but the field must exist and round-trip. */
+  tls: boolean
+  name: string
+  token?: string
+  key?: string
+}
+
+/** Build the `madhyamas://connect` deep-link payload. `ca` and `api` are
+ * derived from the instance's own origin — the web UI is served by the
+ * API server, the same source the manual-apply host/port values use. */
+export function buildConnectUri(params: ConnectUriParams): string {
+  const q = new URLSearchParams({
+    host: params.host,
+    port: String(params.port),
+    tls: params.tls ? "1" : "0",
+    name: params.name,
+  })
+  if (params.token) q.set("token", params.token)
+  if (params.key) q.set("key", params.key)
+  const origin = typeof window !== "undefined" ? window.location.origin : ""
+  q.set("ca", `${origin}/api/cert/ca`)
+  q.set("api", `${origin}/api`)
+  return `madhyamas://connect?${q.toString()}`
+}
+
+/** Auto-navigate to the device's traffic view this long after the
+ * "connected" flip, so the user sees the status change before the view
+ * switches. */
+const CONNECT_NAV_DELAY_MS = 1500
+
+function formatCountdown(secondsLeft: number): string {
+  const m = Math.floor(secondsLeft / 60)
+  const s = secondsLeft % 60
+  return `${m}:${String(s).padStart(2, "0")}`
+}
+
 /**
- * Show-once credential dialog: the plaintext `mdy_dev_` key plus the
- * manual-apply values (host/port/username/password) rendered as
- * copyable text for devices without QR support.
+ * Credential dialog (issues #104/#106): the QR carries a
+ * `madhyamas://connect` payload with a single-use enrollment token
+ * (default mode — a photographed QR expires), while the raw values
+ * (host/port/username/password) are ALWAYS rendered alongside for
+ * manual entry. The dialog stays open with a live status loop
+ * ("waiting for device… connected — capturing") driven by the traffic
+ * WebSocket, and auto-navigates to the device's traffic view on the
+ * first attributed entry. The manual section warns against screenshots
+ * and offers instant rotation.
  */
-function CredentialDialog({ issued, onClose }: {
+function CredentialDialog({ issued, onClose, lastCaptureAt, onRotate, rotatePending }: {
   issued: { device: DeviceEntry; key: string } | null
   onClose: () => void
+  /** Epoch ms of the device's last attributed WS entry (panel-level
+   * capture tracker), or null when none arrived yet. */
+  lastCaptureAt: number | null
+  onRotate: (id: string) => void
+  rotatePending: boolean
 }) {
   const [host, setHost] = useState("")
   const [port, setPort] = useState(8888)
+  const [enrollment, setEnrollment] = useState<DeviceEnrollmentToken | null>(null)
+  const [enrollmentError, setEnrollmentError] = useState(false)
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  /** When this dialog instance opened — only entries arriving AFTER this
+   * count as the device connecting through it. */
+  const [openedAt, setOpenedAt] = useState(() => Date.now())
+  const navigated = useRef(false)
+
+  const deviceId = issued?.device.id ?? null
+
+  const requestEnrollmentToken = (id: string) => {
+    setEnrollmentError(false)
+    createEnrollmentTokenApi(id)
+      .then(setEnrollment)
+      .catch(() => setEnrollmentError(true))
+  }
 
   // Resolve the proxy listener address once per dialog from /api/config
-  // (same source as the header's proxy address display).
+  // (same source as the header's proxy address display), reset the
+  // connect-tracking state, and fetch a fresh enrollment token for the QR.
   useEffect(() => {
-    if (!issued) return
+    if (!deviceId) return
+    setOpenedAt(Date.now())
+    navigated.current = false
+    setEnrollment(null)
+    setEnrollmentError(false)
     apiGet<{ host?: string; proxy_port?: number; public_ip?: string }>("/config")
       .then((c) => {
         setHost(c.public_ip || c.host || window.location.hostname)
@@ -474,31 +567,152 @@ function CredentialDialog({ issued, onClose }: {
         setHost(window.location.hostname)
         setPort(8888)
       })
+    requestEnrollmentToken(deviceId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deviceId])
+
+  // One-second tick for the enrollment-token countdown.
+  useEffect(() => {
+    if (!issued) return
+    const t = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(t)
   }, [issued])
+
+  const secondsLeft = enrollment
+    ? Math.max(0, Math.floor((Date.parse(enrollment.expires_at) - nowMs) / 1000))
+    : 0
+  const qrExpired = !!enrollment && secondsLeft <= 0
+
+  const connectUri = enrollment && !qrExpired
+    ? buildConnectUri({
+        host,
+        port,
+        tls: false,
+        name: issued?.device.name ?? "",
+        token: enrollment.token,
+      })
+    : ""
+
+  // Live status loop: an attributed entry that arrived after this dialog
+  // opened means the device connected (manual apply or token redemption
+  // both land here — the entries carry the device_id either way).
+  const connected = lastCaptureAt !== null && lastCaptureAt >= openedAt
+
+  // Auto-navigate to the device's traffic view on first connect (the
+  // AppShell handles the event and syncs the shareable ?device= URL).
+  useEffect(() => {
+    if (!issued || !connected || navigated.current) return
+    navigated.current = true
+    const deviceId = issued.device.id
+    const t = setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent("madhyamas:view-device-traffic", { detail: { device: deviceId } }),
+      )
+    }, CONNECT_NAV_DELAY_MS)
+    return () => clearTimeout(t)
+  }, [issued, connected])
 
   return (
     <Dialog open={!!issued} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[520px]">
+      <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
-          <DialogTitle>Device Credential Issued</DialogTitle>
+          <DialogTitle>Connect Your Device</DialogTitle>
           <DialogDescription>
-            Apply these values in the device's manual proxy settings. The password is
-            shown only once — copy it now.
+            Scan the QR to enroll, or apply the manual values below. The QR carries a
+            single-use enrollment token — it expires and cannot be reused.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            Store this credential securely. It will not be shown again.
+          <div className="flex flex-col items-center gap-2 rounded-md border border-border p-3">
+            {connectUri ? (
+              <>
+                <QRCodeSVG
+                  value={connectUri}
+                  size={160}
+                  level="M"
+                  bgColor="#ffffff"
+                  fgColor="#000000"
+                />
+                <p className="text-2xs text-muted-foreground">
+                  Scan to connect — expires in {formatCountdown(secondsLeft)}
+                </p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => issued && requestEnrollmentToken(issued.device.id)}
+                  title="Issue a fresh enrollment token (the old one stays valid until it expires or is used)"
+                >
+                  <RefreshCw className="mr-1 h-3 w-3" /> New QR
+                </Button>
+              </>
+            ) : qrExpired ? (
+              <div className="flex h-40 w-40 flex-col items-center justify-center gap-2 text-center">
+                <p className="text-2xs text-muted-foreground">QR expired</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => issued && requestEnrollmentToken(issued.device.id)}
+                >
+                  <RefreshCw className="mr-1 h-3 w-3" /> Generate new QR
+                </Button>
+              </div>
+            ) : enrollmentError ? (
+              <div className="flex h-40 w-40 flex-col items-center justify-center gap-2 text-center">
+                <p className="text-2xs text-muted-foreground">
+                  QR unavailable — use the manual values below.
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => issued && requestEnrollmentToken(issued.device.id)}
+                >
+                  <RefreshCw className="mr-1 h-3 w-3" /> Retry
+                </Button>
+              </div>
+            ) : (
+              <div className="h-40 w-40 animate-pulse rounded bg-muted" />
+            )}
+            {connected ? (
+              <div className="flex items-center gap-2 rounded-md border border-success/30 bg-success/10 p-2 text-2xs font-medium text-success">
+                <Check className="h-3.5 w-3.5 shrink-0" />
+                Connected — capturing. Opening this device&apos;s traffic view…
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-2xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Waiting for device…
+              </div>
+            )}
           </div>
-          <CopyRow label="Password" value={issued?.key ?? ""} />
           <div className="space-y-2 rounded-md border border-border p-3">
             <p className="text-2xs font-medium text-muted-foreground">
-              Manual proxy configuration
+              Manual proxy configuration (fallback — values shown once)
             </p>
+            <CopyRow label="Password" value={issued?.key ?? ""} />
             <CopyRow label="Host" value={host} />
             <CopyRow label="Port" value={String(port)} />
             <CopyRow label="Username" value={issued?.device.name ?? ""} />
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <div className="flex items-center gap-2 text-2xs text-warning">
+                <Camera className="h-3.5 w-3.5 shrink-0" />
+                Do not photograph or screenshot — anyone with the password
+                captures this device&apos;s traffic.
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => issued && onRotate(issued.device.id)}
+                disabled={rotatePending || issued?.device.status === "revoked"}
+                title="Rotate now if the credential was exposed"
+              >
+                {rotatePending ? (
+                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-1 h-3 w-3" />
+                )}
+                Rotate
+              </Button>
+            </div>
           </div>
           <p className="text-2xs text-muted-foreground">
             The credential authenticates proxy connections only — it cannot access the

@@ -249,6 +249,35 @@ pub fn generate_device_key() -> String {
     )
 }
 
+/// Prefix of device enrollment tokens (issue #106). An enrollment token
+/// is a short-lived, single-use secret carried by the onboarding QR
+/// code; a smart client redeems it via `POST /api/devices/enroll` for
+/// the real long-lived `mdy_dev_` credential. The distinct prefix lets
+/// the REST middleware and the proxy-auth resolver reject enrollment
+/// tokens without a database hit — they are neither REST credentials
+/// nor CONNECT credentials.
+pub const ENROLLMENT_TOKEN_PREFIX: &str = "mdy_enroll_";
+
+/// How long an enrollment token stays redeemable (issue #106: a
+/// photographed QR expires — the QR must not be a standing credential).
+pub const ENROLLMENT_TOKEN_TTL_SECS: i64 = 15 * 60;
+
+/// Whether the given token is a device enrollment token.
+pub fn is_enrollment_token(token: &str) -> bool {
+    token.trim().starts_with(ENROLLMENT_TOKEN_PREFIX)
+}
+
+/// Generate a new enrollment token: `mdy_enroll_` + 32 hex chars. Like
+/// device keys, only its SHA-256 hash is persisted; the plaintext rides
+/// in the QR payload and is shown once.
+pub fn generate_enrollment_token() -> String {
+    format!(
+        "{}{}",
+        ENROLLMENT_TOKEN_PREFIX,
+        uuid::Uuid::new_v4().simple().to_string().replace('-', "")
+    )
+}
+
 /// Result of validating a per-device credential: carries the device it
 /// resolves to, its owner, and the key record ID for audit logging and
 /// last-seen tracking (issue #104). The device record's display name rides
@@ -415,6 +444,13 @@ impl AuthManager {
         if is_device_key(key) {
             return Err(EnterpriseError::AuthFailed {
                 message: "Device keys are connect-only and cannot be used for API access"
+                    .to_string(),
+            });
+        }
+        if is_enrollment_token(key) {
+            return Err(EnterpriseError::AuthFailed {
+                message: "Enrollment tokens are single-use exchange credentials and cannot be \
+                          used for API access"
                     .to_string(),
             });
         }
@@ -756,12 +792,24 @@ impl AuthProvider for AuthManager {
 /// token is accepted as the `X-API-Key`/Bearer value, or in either half
 /// of a Basic credential — manual proxy-auth fields on iOS/OEM-Android
 /// place the key in the password field with an arbitrary username.
+///
+/// Issue #106: enrollment tokens (`mdy_enroll_...`) are rejected on
+/// every arm — they are single-use exchange credentials, not proxy
+/// credentials. A device must redeem the token first and connect with
+/// the resulting `mdy_dev_` key.
 #[async_trait]
 impl ProxyAuthValidator for AuthManager {
     async fn validate(&self, credentials: &ProxyCredentials) -> Result<ProxyPrincipal, String> {
         match credentials {
             ProxyCredentials::ProxyBasicAuth(creds) => {
                 let (username, password) = creds.split_once(':').unwrap_or((creds, ""));
+                if is_enrollment_token(username) || is_enrollment_token(password) {
+                    return Err(
+                        "Enrollment tokens cannot authenticate proxy connections; redeem the \
+                         token for a device key first"
+                            .to_string(),
+                    );
+                }
                 // A device key in either Basic half routes to device-key
                 // validation (manual-apply flow, issue #104).
                 if is_device_key(username) {
@@ -781,6 +829,13 @@ impl ProxyAuthValidator for AuthManager {
                     .map_err(|e| e.to_string())
             }
             ProxyCredentials::ProxyBearer(token) => {
+                if is_enrollment_token(token) {
+                    return Err(
+                        "Enrollment tokens cannot authenticate proxy connections; redeem the \
+                         token for a device key first"
+                            .to_string(),
+                    );
+                }
                 if is_device_key(token) {
                     return self.device_principal(token).await;
                 }
@@ -795,6 +850,13 @@ impl ProxyAuthValidator for AuthManager {
                     .map_err(|e| e.to_string())
             }
             ProxyCredentials::ApiKey(key) => {
+                if is_enrollment_token(key) {
+                    return Err(
+                        "Enrollment tokens cannot authenticate proxy connections; redeem the \
+                         token for a device key first"
+                            .to_string(),
+                    );
+                }
                 if is_device_key(key) {
                     return self.device_principal(key).await;
                 }

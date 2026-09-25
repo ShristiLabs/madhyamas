@@ -75,6 +75,10 @@ const PUBLIC_PATHS: &[&str] = &[
     "/api/auth/login",
     "/api/auth/refresh",
     "/api/license",
+    // Device enrollment redemption (issue #106): the short-lived
+    // enrollment token itself is the credential — the device scanning
+    // the QR has no web session to authenticate with.
+    "/api/devices/enroll",
 ];
 
 /// Returns true if the request path is exempt from authentication.
@@ -102,7 +106,12 @@ fn is_public_path(uri: &Uri) -> bool {
     // matches a known public path pattern.
     matches!(
         stripped,
-        "/health" | "/health/detailed" | "/auth/login" | "/auth/refresh" | "/license"
+        "/health"
+            | "/health/detailed"
+            | "/auth/login"
+            | "/auth/refresh"
+            | "/license"
+            | "/devices/enroll"
     )
 }
 

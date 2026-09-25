@@ -203,3 +203,99 @@ async fn test_pg_enterprise_devices() {
     store.delete_device(&device.id).await.unwrap();
     assert!(store.get_device(&device.id).await.unwrap().is_none());
 }
+
+/// Enrollment-token lifecycle on PostgreSQL (issue #106): issue (hashed at
+/// rest), single-use redemption, TTL enforcement, revocation cascade, and
+/// expired-row pruning.
+#[tokio::test]
+#[ignore]
+async fn test_pg_enterprise_enrollment_tokens() {
+    use madhyamas_enterprise::auth::{generate_enrollment_token, hash_api_key};
+    use madhyamas_enterprise::store::EnrollmentTokenRecord;
+
+    let store = make_store().await;
+    let owner = format!("owner_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let device = DeviceRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "PG enroll phone".to_string(),
+        owner_user_id: owner,
+        install_uuid: None,
+        mac_address: None,
+        status: "active".to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        last_seen: None,
+    };
+    store.create_device(&device).await.unwrap();
+
+    let seed = |device_id: &str, expires_at: chrono::DateTime<chrono::Utc>| {
+        let token = generate_enrollment_token();
+        let record = EnrollmentTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            device_id: device_id.to_string(),
+            token_hash: hash_api_key(&token),
+            token_prefix: token.chars().take(12).collect(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            expires_at: expires_at.to_rfc3339(),
+            redeemed_at: None,
+            revoked_at: None,
+        };
+        (record, token)
+    };
+
+    // Valid token: redeems once, never twice.
+    let (valid, _t) = seed(
+        &device.id,
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+    );
+    store.create_enrollment_token(&valid).await.unwrap();
+    let now = chrono::Utc::now().to_rfc3339();
+    assert!(store
+        .redeem_enrollment_token(&valid.token_hash, &now)
+        .await
+        .unwrap());
+    assert!(!store
+        .redeem_enrollment_token(&valid.token_hash, &now)
+        .await
+        .unwrap());
+    let fetched = store
+        .get_enrollment_token_by_hash(&valid.token_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(fetched.redeemed_at.is_some());
+    assert_ne!(fetched.token_hash, _t, "hash at rest, not plaintext");
+
+    // Expired token: rejected.
+    let (expired, _t) = seed(
+        &device.id,
+        chrono::Utc::now() - chrono::Duration::minutes(1),
+    );
+    store.create_enrollment_token(&expired).await.unwrap();
+    assert!(!store
+        .redeem_enrollment_token(&expired.token_hash, &now)
+        .await
+        .unwrap());
+
+    // Revocation cascade blocks redemption of an outstanding token.
+    let (revoked, _t) = seed(
+        &device.id,
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+    );
+    store.create_enrollment_token(&revoked).await.unwrap();
+    store
+        .revoke_enrollment_tokens_for_device(&device.id)
+        .await
+        .unwrap();
+    assert!(!store
+        .redeem_enrollment_token(&revoked.token_hash, &now)
+        .await
+        .unwrap());
+
+    // Pruning removes only the expired row; future-expiry rows (redeemed
+    // or revoked) stay.
+    let removed = store
+        .delete_expired_enrollment_tokens(&chrono::Utc::now().to_rfc3339())
+        .await
+        .unwrap();
+    assert_eq!(removed, 1, "only the expired row is pruned");
+}

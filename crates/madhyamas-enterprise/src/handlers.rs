@@ -925,6 +925,10 @@ pub async fn revoke_device(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     store
+        .revoke_enrollment_tokens_for_device(&device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
         .update_device_status(&device.id, "revoked")
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -952,6 +956,10 @@ pub async fn delete_device(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     store
+        .revoke_enrollment_tokens_for_device(&device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
         .delete_device(&device.id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -962,6 +970,162 @@ pub async fn delete_device(
             .with_metadata("deleted", serde_json::json!(true)),
     );
     Ok(StatusCode::OK)
+}
+
+/// A device together with a freshly issued enrollment token — returned by
+/// the enrollment-token endpoint (issue #106). The plaintext
+/// `mdy_enroll_...` token is displayed exactly once (in the QR payload)
+/// and never persisted or shown again; `expires_at` lets the dialog count
+/// down to the 15-minute TTL.
+#[derive(Debug, Serialize)]
+pub struct DeviceWithEnrollmentToken {
+    pub device: Device,
+    /// Plaintext enrollment token — carried by the QR, never stored.
+    pub token: String,
+    /// RFC 3339 timestamp after which redemption is rejected.
+    pub expires_at: String,
+}
+
+/// Issue a short-lived, single-use enrollment token for a device
+/// (issue #106). The onboarding QR carries this token instead of the
+/// long-lived key, so a photographed QR expires. The token is redeemable
+/// exactly once within its TTL via the public enroll endpoint.
+pub async fn issue_device_enrollment_token(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+    Path(device_id): Path<String>,
+) -> Result<Json<DeviceWithEnrollmentToken>, StatusCode> {
+    let device = load_owned_device(&store, &claims, &device_id).await?;
+    if device.status != "active" {
+        return Err(StatusCode::CONFLICT);
+    }
+    let now = chrono::Utc::now();
+    // Opportunistic cleanup: expired tokens are dead rows; prune them so
+    // the table stays bounded. Best-effort — never fails the issuance.
+    let _ = store
+        .delete_expired_enrollment_tokens(&now.to_rfc3339())
+        .await;
+    let record = crate::store::EnrollmentTokenRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        device_id: device.id.clone(),
+        token_hash: String::new(),
+        token_prefix: String::new(),
+        created_at: now.to_rfc3339(),
+        expires_at: (now + chrono::Duration::seconds(crate::auth::ENROLLMENT_TOKEN_TTL_SECS))
+            .to_rfc3339(),
+        redeemed_at: None,
+        revoked_at: None,
+    };
+    let (token, record) = mint_enrollment_token(&store, record)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit.log(
+        AuditEvent::new(
+            AuditEventType::DeviceEnrollmentIssued,
+            "Device enrollment token issued",
+        )
+        .with_user(claims.user_id.clone())
+        .with_metadata("device_id", serde_json::json!(device.id))
+        .with_metadata("expires_at", serde_json::json!(record.expires_at)),
+    );
+    Ok(Json(DeviceWithEnrollmentToken {
+        device: Device::from(device),
+        token,
+        expires_at: record.expires_at,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EnrollDeviceRequest {
+    /// The `mdy_enroll_...` token from the QR payload.
+    pub token: String,
+}
+
+/// Redeem an enrollment token for the real long-lived device credential
+/// (issue #106). This is the exchange a smart client (companion app)
+/// performs after scanning the QR; it is a PUBLIC endpoint because the
+/// token itself is the credential — the device has no web session yet.
+///
+/// Redemption is atomic and single-use: the store stamps `redeemed_at`
+/// only when the token is unredeemed, unrevoked, and unexpired, so
+/// concurrent attempts race on the update and exactly one wins. On
+/// success the device's existing keys are retired (one live credential
+/// per device — the create-time show-once key dies here) and a fresh
+/// `mdy_dev_` key is minted and returned exactly once. Neither the token
+/// nor the key is ever logged or audited — only the device ID.
+pub async fn enroll_device(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
+    Json(req): Json<EnrollDeviceRequest>,
+) -> Result<Json<DeviceWithKey>, StatusCode> {
+    let token = req.token.trim();
+    if !crate::auth::is_enrollment_token(token) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let token_hash = crate::auth::hash_api_key(token);
+    // Atomic single-use + TTL + not-revoked enforcement (rows-affected
+    // compare-and-set): `false` means unknown, expired, already used, or
+    // revoked — indistinguishable by design to avoid token enumeration.
+    let redeemed = store
+        .redeem_enrollment_token(&token_hash, &now)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !redeemed {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let record = store
+        .get_enrollment_token_by_hash(&token_hash)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let device = store
+        .get_device(&record.device_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if device.status != "active" {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    // One live credential per device: retire the create-time show-once
+    // key (and anything older) — mirrors rotate semantics, and kills the
+    // photographed-dialog credential the moment the real device enrolls.
+    store
+        .revoke_device_keys_for_device(&device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let key = mint_device_key(&store, &device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit.log(
+        AuditEvent::new(
+            AuditEventType::DeviceEnrolled,
+            "Device enrolled via enrollment token",
+        )
+        .with_user(device.owner_user_id.clone())
+        .with_metadata("device_id", serde_json::json!(device.id))
+        .with_metadata("via", serde_json::json!("enrollment_token")),
+    );
+    Ok(Json(DeviceWithKey {
+        device: Device::from(device),
+        key,
+    }))
+}
+
+/// Persist an enrollment token record with its hash filled in, returning
+/// the plaintext token alongside the completed record.
+async fn mint_enrollment_token(
+    store: &Arc<dyn EnterpriseStore>,
+    mut record: crate::store::EnrollmentTokenRecord,
+) -> std::result::Result<(String, crate::store::EnrollmentTokenRecord), crate::store::StoreError> {
+    let token = crate::auth::generate_enrollment_token();
+    record.token_hash = crate::auth::hash_api_key(&token);
+    record.token_prefix = token.chars().take(12).collect();
+    store.create_enrollment_token(&record).await?;
+    Ok((token, record))
 }
 
 /// Mint and persist a new `mdy_dev_` credential for `device_id`,
@@ -1385,6 +1549,8 @@ fn parse_event_type(label: &str) -> AuditEventType {
         "device_registered" => AuditEventType::DeviceRegistered,
         "device_key_rotated" => AuditEventType::DeviceKeyRotated,
         "device_revoked" => AuditEventType::DeviceRevoked,
+        "device_enrollment_issued" => AuditEventType::DeviceEnrollmentIssued,
+        "device_enrolled" => AuditEventType::DeviceEnrolled,
         "traffic_exported" => AuditEventType::TrafficExported,
         "session_created" => AuditEventType::SessionCreated,
         "session_deleted" => AuditEventType::SessionDeleted,
@@ -1495,7 +1661,7 @@ pub async fn get_onboarding_status(State(_state): State<Arc<AppState>>) -> Json<
     Json(OnboardingStatus {
         completed: false,
         current_step: 1,
-        total_steps: 5,
+        total_steps: 6,
         steps: vec![
             OnboardingStep {
                 id: "welcome".to_string(),
@@ -1518,6 +1684,15 @@ pub async fn get_onboarding_status(State(_state): State<Arc<AppState>>) -> Json<
                 description: "Set up your browser or app to use the proxy".to_string(),
                 completed: false,
                 optional: false,
+            },
+            OnboardingStep {
+                id: "device".to_string(),
+                title: "Connect a Device".to_string(),
+                description: "Register a phone or tablet and scan its QR to capture its \
+                              traffic under its own identity"
+                    .to_string(),
+                completed: false,
+                optional: true,
             },
             OnboardingStep {
                 id: "features".to_string(),

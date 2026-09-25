@@ -18,7 +18,7 @@ pub use postgres::PostgresEnterpriseStore;
 pub use sqlite::SqliteEnterpriseStore;
 pub use types::{
     ApiKeyRecord, AuditEventRecord, AuditStats, AuthSession, DeviceKeyRecord, DeviceRecord,
-    UserRecord, UserUpdate,
+    EnrollmentTokenRecord, UserRecord, UserUpdate,
 };
 
 use async_trait::async_trait;
@@ -93,6 +93,29 @@ pub trait EnterpriseStore: Send + Sync {
     async fn revoke_device_keys_for_device(&self, device_id: &str) -> Result<()>;
     /// Stamp a device credential's `last_used_at` to now.
     async fn update_device_key_last_used(&self, id: &str) -> Result<()>;
+
+    /// Persist an enrollment token (hash + prefix; the plaintext rides in
+    /// the QR payload and is never stored) (issue #106).
+    async fn create_enrollment_token(&self, token: &EnrollmentTokenRecord) -> Result<()>;
+    /// Look up an enrollment token row by its token hash (used to resolve
+    /// the device after a successful redemption).
+    async fn get_enrollment_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<EnrollmentTokenRecord>>;
+    /// Atomically redeem an enrollment token: stamps `redeemed_at` only
+    /// when the token is still unredeemed, unrevoked, and unexpired at
+    /// `now` (RFC 3339). Returns `true` when this call performed the
+    /// redemption — `false` means the token was already used, revoked,
+    /// expired, or unknown (single-use enforcement, issue #106).
+    async fn redeem_enrollment_token(&self, token_hash: &str, now: &str) -> Result<bool>;
+    /// Deactivate all of a device's outstanding enrollment tokens (device
+    /// revocation/deletion cascade).
+    async fn revoke_enrollment_tokens_for_device(&self, device_id: &str) -> Result<()>;
+    /// Delete enrollment tokens that expired before `now` (RFC 3339);
+    /// returns the number of rows removed (opportunistic cleanup on
+    /// issuance, keeps the table bounded).
+    async fn delete_expired_enrollment_tokens(&self, now: &str) -> Result<u64>;
 
     async fn create_session(&self, session: &AuthSession) -> Result<()>;
     async fn get_session(&self, id: &str) -> Result<Option<AuthSession>>;

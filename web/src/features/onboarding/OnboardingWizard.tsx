@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { CheckCircle, ChevronRight, ChevronLeft, Download, Lightbulb, X } from 'lucide-react'
+import { CheckCircle, ChevronRight, ChevronLeft, Download, Lightbulb, Smartphone, X } from 'lucide-react'
 import { apiGet, apiPostVoid } from '@/lib/api/client'
+import { useTier } from '@/contexts/TierContext'
 
 interface OnboardingStep {
   id: string
@@ -27,6 +28,8 @@ interface OnboardingWizardProps {
 export function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
   const [status, setStatus] = useState<OnboardingStatus | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
+  const { tier } = useTier()
+  const isEnterprise = tier === 'enterprise'
 
   useEffect(() => {
     if (isOpen) {
@@ -56,8 +59,14 @@ export function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
 
   if (!isOpen || !status) return null
 
-  const step = status.steps[currentStep]
-  const isLastStep = currentStep === status.steps.length - 1
+  // The "connect a device" step is enterprise-only (runtime tier
+  // detection, per docs/ENTERPRISE_WEB_UI.md): the steps API is served by
+  // the enterprise router, but the wizard filters client-side as well so
+  // the step never renders in a community build.
+  const steps = status.steps.filter(s => s.id !== 'device' || isEnterprise)
+
+  const step = steps[currentStep]
+  const isLastStep = currentStep === steps.length - 1
   const isFirstStep = currentStep === 0
 
   const renderStepContent = (stepId: string) => {
@@ -136,6 +145,36 @@ export function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
           </div>
         )
 
+      case 'device':
+        return (
+          <div className="space-y-4">
+            <p className="text-muted-foreground">
+              Capture a phone&apos;s or tablet&apos;s HTTP traffic under its own identity:
+              register it as a device and connect it via a QR enrollment code.
+            </p>
+            <div className="p-4 bg-muted rounded-lg space-y-2">
+              <h4 className="font-medium flex items-center gap-2">
+                <Smartphone className="h-4 w-4" />
+                How it works
+              </h4>
+              <ul className="text-sm text-muted-foreground space-y-1">
+                <li>1. Open the <strong>Devices</strong> panel from the navigation rail</li>
+                <li>2. Register the device with a name (e.g. &quot;Hari&apos;s Pixel&quot;)</li>
+                <li>3. Scan the QR with the device — it carries a single-use enrollment
+                    token, not the credential itself, so a photographed code expires</li>
+                <li>4. No QR reader? The dialog always shows the manual proxy values
+                    (host/port/username/password) to type in</li>
+                <li>5. The dialog flips to <strong>Connected — capturing</strong> and opens
+                    the device&apos;s own traffic view on first connect</li>
+              </ul>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Each device gets a connect-only credential: it attributes proxy traffic to
+              the device and cannot touch the REST API.
+            </p>
+          </div>
+        )
+
       case 'features':
         return (
           <div className="space-y-4">
@@ -202,7 +241,7 @@ export function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
             <div>
               <CardTitle>{step.title}</CardTitle>
               <CardDescription>
-                Step {currentStep + 1} of {status.total_steps}
+                Step {currentStep + 1} of {steps.length}
               </CardDescription>
             </div>
             <Button variant="ghost" size="icon" onClick={onClose}>
@@ -210,7 +249,7 @@ export function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
             </Button>
           </div>
           <div className="flex gap-1 mt-4">
-            {status.steps.map((s, i) => (
+            {steps.map((s, i) => (
               <button
                 key={s.id}
                 onClick={() => setCurrentStep(i)}

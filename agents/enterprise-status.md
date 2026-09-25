@@ -2,13 +2,15 @@
 
 ## Current Phase
 Milestone "Credential-Based Device & Agent Scoping" — issue-by-issue orchestration
-(current: #105 device_id persistence + per-device sessions/filters, 3 of 9 — follows separately)
+(current: #106 QR enrollment payload + enrollment tokens + live status loop, 4 of 9)
 
 ## Milestone Progress
 | Issue | Title | Developer | Tester | Reviewer | Regression | Committer | Status |
 |---|---|---|---|---|---|---|---|
 | #103 | Attribution foundation: resolve CONNECT principal and persist client_addr | done | done (15 cases) | approved (0 blockers, 4 low) | pass (all checks) | committed (2f88bdc) | done |
 | #104 | Device principals: registration, per-device credentials, devices API and Devices panel | done | done (24 cases) | approved (0 blockers, 0 high, 5 low) | pass (all checks + 17-step smoke) | committed (a9a0e9e) | done |
+| #105 | Per-device traffic visibility: device sessions, device_id filter end-to-end, connected status | done | done (12 cases; caught + fixed legacy-DB migration-order blocker) | approved (0 blockers, 0 high, 1 medium info, 5 low) | pass (all checks + 10/10 two-device DoD smoke on pre-migration DB) | committed (7cfce6b) | done |
+| #106 | QR enrollment: madhyamas://connect payload, enrollment tokens, live status loop | done | done (21 cases) | approved (0 blockers, 0 high, 1 medium, 6 low) | pass (all checks + 20/20 DoD smoke) | — | commit |
 
 ## Earlier Phases (13-phase plan — COMPLETE)
 Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration.
@@ -56,6 +58,80 @@ Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration
 | 12b+12c+12d Customer+Stripe+Admin | #66,67,68 | done | skipped | approved | done (JWT auth, customer portal React frontend, Stripe Checkout+webhooks, admin portal, revenue dashboard, 604 tests) | committed (039a8ad) | done |
 
 ## Agent Log
+
+### 2026-09-18 — orchestrator (milestone kickoff, #106)
+- Issue #106 exists (maintainer-created, OPEN) — enterprise-issues step skipped; full chain dispatched for #106 ONLY (#107+ explicitly out of scope per maintainer brief)
+- Verified code facts post-#105 (commit 7cfce6b):
+  - Devices REST: router.rs:95-99 (GET/POST /api/devices, DELETE /{id}, POST /{id}/rotate|revoke); handlers.rs create_device:844 mints show-once key via mint_device_key:969 (SHA-256 hash_api_key at rest, 12-char prefix); load_owned_device:989 enforces owner-or-admin
+  - Device key surface: auth.rs DEVICE_KEY_PREFIX mdy_dev_ (:231), is_device_key:236, generate_device_key:244 (32 hex), validate_device_key:471 (revoked key/device checks + last_seen heartbeat); REST rejected at validate_api_key:412
+  - Audit: AuditEventType::{DeviceRegistered,DeviceKeyRotated,DeviceRevoked} (audit.rs:37-41); label/parse maps in store/types.rs:212/233, sqlite.rs:645, postgres.rs:711, handlers.rs:1386
+  - Auth middleware: PUBLIC_PATHS (middleware.rs:71) + is_public_path:85 strip /api prefix — the enroll endpoint must be added there (companion has no JWT; the token IS the credential)
+  - Web: DevicesPanel.tsx CredentialDialog:457 renders show-once CopyRows (Password + Host/Port/Username from /api/config {host, public_ip, proxy_port}); WS live status via useWebSocket + buildTrafficWsUrl watching Added events carrying device_id (:107-118); viewTraffic dispatches `madhyamas:view-device-traffic` CustomEvent (:123-127); admin.ts device wrappers :206-249
+  - QR infra: qrcode.react QRCodeSVG used at CertificateHelper.tsx:842 (size 160, level M)
+  - Onboarding: steps API is ENTERPRISE-ONLY (handlers.rs get_onboarding_status:1494, 5 hardcoded steps; router.rs:112-117); OnboardingWizard.tsx renders steps via apiGet('/onboarding') — currently UNMOUNTED in the app (pre-existing, BRAINSTORM.md H20); OSS has no /onboarding route at all
+  - Tier detection: useTier() hook (web/src/contexts/TierContext.tsx:72), isEnterprise = tierInfo?.tier === "enterprise"
+- Design resolutions (issue text + doc QR payload/Transport-security sections + maintainer brief):
+  - QR mode decision: token= is the DEFAULT (QR never carries a standing secret; photographed QRs expire). key= variant exists in the payload builder only (manual-mode/future companion use); raw-credential fallback renders exactly as today
+  - Endpoint shape: POST /api/devices UNCHANGED (returns show-once DeviceWithKey — preserves #104 semantics + manual fallback); NEW POST /api/devices/{id}/enrollment-token (JWT, owner-or-admin) issues mdy_enroll_ token; NEW PUBLIC POST /api/devices/enroll {token} redeems → returns {device, key} and mints a FRESH mdy_dev_ key (create-time plaintext is unrecoverable — only its hash is stored)
+  - Token: mdy_enroll_ + 32 hex (mirrors device keys), SHA-256 at rest, 15-min TTL enforced at redeem, single-use via atomic UPDATE ... WHERE redeemed_at IS NULL (rows-affected guard), device revoke/delete cascades outstanding tokens, opportunistic expired-token cleanup on issue
+  - Redeem semantics: revoke the device's existing active keys + mint exactly one fresh key (one live credential per device — matches rotate semantics, kills the photographed-dialog key once the real device enrolls)
+  - QR payload: madhyamas://connect?host&port&tls=0&token&name&ca={origin}/api/cert/ca&api={origin}/api — tls field exists and round-trips but is 0 until #110; ca/api derived client-side from window.location.origin (web UI is served by the API server — same source the dialog uses)
+  - Dialog: QR (token) primary + "waiting for device… connected — capturing" live status from existing WS Added events + auto-navigate to ?device= via the existing custom event; manual section keeps CopyRows + screenshot warning + instant Rotate
+  - Wizard: enterprise-only `device` step after `proxy` in get_onboarding_status + frontend case; client-side filter (useTier) so the step never renders in OSS even if returned
+  - No key/token material in logs, WS events, or audit metadata (device_id only)
+- Dispatching enterprise-developer for #106
+- Status: dispatched
+
+### 2026-09-18 — enterprise-developer (#106)
+- Auth: ENROLLMENT_TOKEN_PREFIX mdy_enroll_ + is_enrollment_token + generate_enrollment_token (32 hex) + ENROLLMENT_TOKEN_TTL_SECS=900; validate_api_key early-rejects enrollment tokens (REST/MCP/CLI); ProxyAuthValidator rejects them on all three arms (Basic/Bearer/ApiKey) — exchange credentials, not proxy credentials
+- Store: device_enrollment_tokens table (SQLite + PG DDL) + EnrollmentTokenRecord; trait methods create/get_by_hash/redeem (atomic single-use: UPDATE ... SET redeemed_at WHERE redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > now, rows-affected==1)/revoke_for_device/delete_expired (returns count); revoke_device + delete_device now cascade enrollment tokens; opportunistic expired-token cleanup on issuance
+- Audit: DeviceEnrollmentIssued + DeviceEnrolled variants; all 5 label/parse maps (audit.rs api-sink collapse, types.rs, sqlite.rs, postgres.rs, handlers.rs) — metadata carries device_id + expires_at/via ONLY, never token/key material (verified: server logs contain 0 mdy_enroll_/mdy_dev_ occurrences across two live runs)
+- REST: POST /api/devices/{id}/enrollment-token (JWT, owner-or-admin via load_owned_device, 409 on revoked device) -> {device, token, expires_at}; PUBLIC POST /api/devices/enroll {token} -> DeviceWithKey (400 bad shape / 401 unknown-expired-used-revoked, indistinguishable against enumeration); redeem retires existing keys + mints exactly one fresh mdy_dev_ (create-time plaintext is unrecoverable — only its hash is stored); enroll added to PUBLIC_PATHS + is_public_path strip list; POST /api/devices UNCHANGED (#104 semantics preserved)
+- Web: DevicesPanel CredentialDialog rework — QR (QRCodeSVG) carrying madhyamas://connect?host&port&tls=0&token&name&ca&api (buildConnectUri helper, ca/api from window.location.origin; token= default, key= supported by builder for manual mode), 1s countdown to expiry + regenerate, live "Waiting for device… / Connected — capturing" from panel WS capturingAt (entries arriving after dialog open), auto-navigate to ?device= via madhyamas:view-device-traffic after 1.5s, manual section ALWAYS rendered (Password/Host/Port/Username CopyRows + Camera screenshot warning + instant Rotate); admin.ts DeviceEnrollmentToken + createEnrollmentTokenApi
+- Onboarding: get_onboarding_status inserts optional `device` step after `proxy` (total 6); OnboardingWizard renders the case (5-step how-to incl. screenshot-expiry note) + client-side tier filter (useTier) so the step never shows in OSS; step counter uses filtered length
+- Docs: API_ENTERPRISE.md — enrollment endpoints, audit types, QR payload format + token rules (TTL/single-use/one-live-key/cascade/pruning)
+- VERIFIED: fmt pass; clippy --all-targets --all-features -D warnings 0; tests 729/0/0 (baseline match); OSS release build 27.10MB pass; enterprise release build 35.87MB pass; web tsc+vite pass; LIVE SMOKE (enterprise binary, --enable-auth): issue-noauth 401, redeem-public 200 (fresh mdy_dev_), second-redeem 401, REST-with-token 401, CONNECT-with-token 407, create-key-dead-after-redeem 407, redeemed-key CONNECT 200, expired-token (backdated row) 401, garbage 400, unknown 401, audit issue+redeem recorded without secret material, onboarding steps [welcome,certificate,proxy,device,features,tips], served UI chunk contains madhyamas://connect
+- Gotchas: Cargo.lock flipped to local licensing-core path patch (build ran with [patch] active — committer must git checkout -- Cargo.lock); local default-feature builds disk-serve web/dist from CWD (embedded-assets is release-workflow-only) — run smoke from repo root or set MADHYAMAS_WEB_DIR
+- Status: completed
+
+### 2026-09-18 — enterprise-tester (#106)
+- Created tests/enrollment.rs (20 cases): token shape (prefix/length/hex/uniqueness, classification incl. mdy_dev_/mdy_agent_/no-underscore/empty), REST rejection (validate_api_key error names credential type, no token leak), proxy rejection on all four arms (ApiKey/Bearer/Basic-password/Basic-username; error points at redemption; no-store fails closed), store lifecycle (CRUD+unknown-hash, single-use sequential, concurrent 4-way redeem exactly-one-winner on a 1-connection pool, TTL past/future, revoke cascade + other-device untouched, prune counts expired-only incl. redeemed-expired), audit roundtrip for both new event types, handlers (issue: TTL ~15min asserted, hash-at-rest, 404/403/409 ownership; enroll: returns FRESH mdy_dev_ that authenticates via validate_device_key with device_name, create-time key dies at redemption, single-use 401, bad-shape 400, unknown 401, expired 401, revoked-device 401; audit issue+redeem recorded via synchronous in-memory ring with NO token/key material in serialized events and device_id in metadata; redeem event attributed to owner), onboarding device step present after proxy + optional + total matches
+- tests/store.rs (+1 #[ignore] PG): full enrollment lifecycle on PostgreSQL per MADHYAMAS_PG_TEST_URL convention (redeem-once, TTL, cascade, prune=1, hash-at-rest)
+- RESULTS: workspace 749 passed / 0 failed (baseline 729; +20 runnable, +1 PG-gated ignored); clippy -D warnings: 0; fmt: clean (2 fmt passes applied)
+- GAPS (documented): web dialog (QR render/countdown/WS status loop/auto-nav) has no unit-test infra — covered by tsc/vite build + developer served-chunk smoke + regression live DoD; engine accept-loop CONNECT with redeemed key covered at validator level + live smoke only (no engine harness — consistent with #104/#105 gaps); middleware public-path bypass for /devices/enroll covered by live smoke (no in-process router middleware tests exist); PG test ignore-gated (Docker daemon); tarpaulin not installed — coverage estimated manually (all new store/auth/handler surfaces exercised on SQLite)
+- Status: completed
+
+### 2026-09-18 — enterprise-reviewer (#106)
+- Verdict: approved (0 blockers, 0 high, 1 medium, 6 low)
+- Verified: atomic single-use/TTL/revoked redemption via rows-affected CAS in BOTH stores (parameterized SQL, symmetric binds); enumeration resistance (unknown/expired/used/revoked all 401, bad shape 400); no token/key material in errors, audit metadata (device_id/expires_at/via only), WS events, or server logs (grep-clean live runs); issuance owner-or-admin via load_owned_device + 409 on revoked device; cascade complete for device revoke/delete; route table builds (POST /devices/enroll static vs DELETE /devices/{id} dynamic — no conflict, live-verified); PUBLIC_PATHS covers full + nest-stripped forms; enrollment tokens rejected on all 4 proxy-auth arms + REST; audit label/parse symmetry across all 5 maps + serde snake_case matches labels; onboarding device step server-side enterprise-only + client-side useTier filter; OSS isolation clean (zero core/api diff; sole grep hit pre-existing pubsub.rs doc comment)
+- Medium (follow-up material, not blocking): rotate_device_key does not revoke outstanding enrollment tokens — the dialog's Rotate is labeled "rotate if exposed" but a photographed dialog leaks key AND token; post-rotate the token stays redeemable <=15 min and attacker redemption retires the fresh key (recoverable by re-rotate; revoke-device fully remediates today). Paired web half: CredentialDialog re-arm effect keys on [deviceId] so rotate (same id) shows the new password with the OLD QR token. Recommended: revoke tokens in rotate + re-key the effect on the issued object
+- Low: QR renders while host=="" during the /api/config fetch window (gate on resolved host); enroll consumes token before mint (mint failure leaves device keyless — fail-closed, mirrors accepted #104 rotate ordering); no device_id index on device_enrollment_tokens (matches device_keys precedent); lexicographic RFC3339 SQL comparison documented-correct for the uniform Utc writer; no-op .replace in token generator (replicated pattern); rapid New-QR clicks can race responses (harmless)
+- fmt --check: pass; clippy --all-targets --all-features: 0 warnings; tests 749/0
+- Status: completed
+
+### 2026-09-18 — enterprise-regression (#106)
+- Frontend (tsc+vite): pass; fmt --check: pass; clippy --all-targets --all-features -D warnings: 0
+- OSS release build (--no-default-features): pass, 27,100,528 bytes (baseline 27.10 MB, unchanged); symbol scan: 0 madhyamas_enterprise, 0 mdy_enroll_, 0 device_enrollment, 0 DeviceEnrolled/DeviceEnrollmentIssued, 0 enrollment-token
+- Enterprise release build: pass, 35,873,328 bytes (baseline 35.87 MB); enterprise crate standalone: pass
+- cargo test --all-features: 749 passed / 0 failed / 31 ignored (baseline 729/0/30; +20 runnable +1 PG-gated — zero regressions in existing)
+- Docs: check-docs.sh pass, check-docs-coverage.sh pass; cfg-enterprise gates in core/api src: 0
+- LIVE DoD SMOKE (enterprise release binary, repo-root cwd so web/dist disk-serves, ephemeral HOME, --enable-auth + admin login): 20/20 PASS — login JWT; device created (mdy_dev_ key); enrollment token issued (mdy_enroll_, no-JWT issue 401); PUBLIC redeem 200 returning fresh mdy_dev_; second redeem 401; redeemed key CONNECT 200; create-time key dead after redeem 407; token on REST 401; token at CONNECT 407; garbage shape 400; unknown token 401; backdated-expiry token 401; audit has device_enrollment_issued x2 + device_enrolled x1 with NO token/key material in any serialized event; GET /api/onboarding lists the device step; served DevicesPanel chunk contains madhyamas://connect; server log grep for mdy_enroll_/mdy_dev_ = 0
+- Cargo.lock licensing-core path-patch flip: RESTORED via git checkout (working tree 15 modified + 1 new test file, no lock changes)
+- Verdict: ALL CHECKS PASSED — safe to commit
+- Status: completed
+
+### 2026-09-25 — enterprise-committer (#105)
+- Verified regression pass; cargo fmt no-op; Cargo.lock NOT in status (restored by regression, not staged)
+- Staged 29 files by name (28 modified + tests/device_sessions.rs new; agents/enterprise-status.md included — #105 bookkeeping incl. tester/reviewer/regression log entries)
+- Commit: 7cfce6b "feat: per-device traffic sessions, device_id filter and live status" — body references docs/CREDENTIAL_ONBOARDING.md journey step 5, contains "Implements #105 (3 of 9)"; no AI attribution; author = user
+- 29 files changed, 1800 insertions(+), 86 deletions(-); working tree clean after commit; NOT pushed (maintainer pushes)
+- Status: completed
+
+### 2026-09-25 — orchestrator (#105 close-out)
+- Full chain green: issues (skipped — maintainer-created) -> developer -> tester (resumed interrupted run; +12 cases; fixed real legacy-DB migration-order blocker + test deadlock) -> reviewer (approved) -> regression (all checks + 10/10 live DoD smoke) -> committer (7cfce6b)
+- Issue #105 closed with completion comment (implementation summary, DoD smoke results, test counts, deviations: migration-order fix + deadlocked test helper rewrite, PG test ignore-gated, ownership-scoping flagged as future issue)
+- Milestone position: 3 of 9 complete (#106 QR enrollment NOT started per maintainer instruction)
+- Status: done
 
 ### 2026-09-25 — enterprise-regression (#105)
 - Frontend (tsc+vite): pass; fmt --check: pass; clippy --all-targets --all-features -D warnings: 0

@@ -97,6 +97,14 @@ pub fn create_enterprise_router(
         .route("/devices/{id}", delete(handlers::delete_device))
         .route("/devices/{id}/rotate", post(handlers::rotate_device_key))
         .route("/devices/{id}/revoke", post(handlers::revoke_device))
+        // QR enrollment (issue #106): token issuance is user-authenticated;
+        // redemption is PUBLIC — the enrollment token itself is the
+        // credential (the device has no web session when it scans the QR).
+        .route(
+            "/devices/{id}/enrollment-token",
+            post(handlers::issue_device_enrollment_token),
+        )
+        .route("/devices/enroll", post(handlers::enroll_device))
         // User Management (admin-only via RBAC)
         .merge(user_routes)
         // RBAC

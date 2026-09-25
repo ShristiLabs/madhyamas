@@ -144,6 +144,25 @@ pub struct DeviceKeyRecord {
     pub last_used_at: Option<String>,
 }
 
+/// Database row for the `device_enrollment_tokens` table (issue #106).
+/// Each row is one short-lived, single-use enrollment token carried by
+/// the onboarding QR code; `token_hash` stores the SHA-256 of the
+/// plaintext `mdy_enroll_...` token and `token_prefix` a non-secret
+/// preview. A token is redeemable only while unredeemed, unrevoked, and
+/// younger than `expires_at` (15 minutes); redemption is an atomic
+/// compare-and-set on `redeemed_at`.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct EnrollmentTokenRecord {
+    pub id: String,
+    pub device_id: String,
+    pub token_hash: String,
+    pub token_prefix: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub redeemed_at: Option<String>,
+    pub revoked_at: Option<String>,
+}
+
 /// Database row for the `audit_events` table.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct AuditEventRecord {
@@ -211,6 +230,8 @@ fn event_type_label(t: AuditEventType) -> String {
         AuditEventType::DeviceRegistered => "device_registered".to_string(),
         AuditEventType::DeviceKeyRotated => "device_key_rotated".to_string(),
         AuditEventType::DeviceRevoked => "device_revoked".to_string(),
+        AuditEventType::DeviceEnrollmentIssued => "device_enrollment_issued".to_string(),
+        AuditEventType::DeviceEnrolled => "device_enrolled".to_string(),
         AuditEventType::TrafficExported => "traffic_exported".to_string(),
         AuditEventType::SessionCreated => "session_created".to_string(),
         AuditEventType::SessionDeleted => "session_deleted".to_string(),
@@ -232,6 +253,8 @@ fn parse_event_type(label: &str) -> AuditEventType {
         "device_registered" => AuditEventType::DeviceRegistered,
         "device_key_rotated" => AuditEventType::DeviceKeyRotated,
         "device_revoked" => AuditEventType::DeviceRevoked,
+        "device_enrollment_issued" => AuditEventType::DeviceEnrollmentIssued,
+        "device_enrolled" => AuditEventType::DeviceEnrolled,
         "traffic_exported" => AuditEventType::TrafficExported,
         "session_created" => AuditEventType::SessionCreated,
         "session_deleted" => AuditEventType::SessionDeleted,
