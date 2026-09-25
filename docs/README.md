@@ -117,6 +117,22 @@ Open `http://localhost:3001` for the web UI. Configure your browser to use
 | [WEBSOCKET_MIGRATION.md](WEBSOCKET_MIGRATION.md) | WebSocket implementation migration notes |
 | [TEMPLATE.md](TEMPLATE.md) | Canonical structure for new docs |
 
+### Analysis & Planning
+
+Decision documents for planned features: problem statement, current-state
+inventory, options with tradeoffs, recommendation, open questions. The
+end-user-facing counterparts live on the
+[public roadmap](https://shristilabs.github.io/madhyamas/roadmap).
+
+| Document | Description |
+|----------|-------------|
+| [GATEWAY_SCOPING.md](GATEWAY_SCOPING.md) | Which API-gateway behaviors to adopt ("gateway behaviors you can debug") — per-feature verdicts (issue #85) |
+| [TRAFFIC_SCOPING_PER_USER.md](TRAFFIC_SCOPING_PER_USER.md) | Per-user traffic visibility on shared Enterprise instances — session ownership vs per-entry attribution, staged recommendation |
+| [TRAFFIC_SCOPING_PER_APP.md](TRAFFIC_SCOPING_PER_APP.md) | Per-app traffic scoping — metadata (client_addr/listener/SNI), whitelist recording, per-app VPN routing, listener profiles |
+| [TRAFFIC_SCOPING_PER_DEVICE.md](TRAFFIC_SCOPING_PER_DEVICE.md) | Per-device identity — credentials vs companion app, manual-proxy vs VPN steering modes, Android/iOS capability matrix, rejected IP/MAC correlation |
+| [CREDENTIAL_ONBOARDING.md](CREDENTIAL_ONBOARDING.md) | Credential-based onboarding UX (Enterprise-only) — login → device key → QR → apply → per-device traffic → device-derived agent keys; hierarchy, two-axis enforcement (device binding × user-selected feature scopes, scope taxonomy), tier placement, QR payload design, component map |
+| [CERT_PINNING_OVERRIDES.md](CERT_PINNING_OVERRIDES.md) | Per-host certificate overrides for pinned apps when the pinned key is held — options, design sketch, security constraints |
+
 ### Consolidated (redirect stubs)
 
 These docs have been merged into the indicated target. The stub files remain
