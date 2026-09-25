@@ -9,8 +9,8 @@
 //! remain sync `fn` (they touch only `RwLock` / `AtomicXxx` / broadcast).
 
 use super::{
-    CaptureStats, FocusHost, ImportResult, RequestData, ResponseData, Session, TrafficEntry,
-    TrafficEntrySnapshot, TrafficEvent, TrafficFilter,
+    device_session_id, device_session_name, CaptureStats, FocusHost, ImportResult, RequestData,
+    ResponseData, Session, TrafficEntry, TrafficEntrySnapshot, TrafficEvent, TrafficFilter,
 };
 use crate::mirror::MirrorWriter;
 use crate::storage::TrafficStoreBackend;
@@ -60,6 +60,11 @@ pub struct TrafficStore {
     /// and enabled, captured responses are written to disk asynchronously
     /// after being stored in the database.
     mirror_writer: RwLock<Option<Arc<MirrorWriter>>>,
+    /// Per-device capture sessions already ensured in this process
+    /// (issue #105): device id → display name last written. Avoids an
+    /// upsert roundtrip on every entry; a changed name (device renamed)
+    /// triggers exactly one re-upsert so the session row stays labeled.
+    device_sessions: Mutex<HashMap<String, String>>,
 }
 
 /// How often (in inserts) to run the total-size pruning check.
@@ -91,6 +96,7 @@ CREATE TABLE IF NOT EXISTS requests (
     http_version TEXT,
     script_intercepted INTEGER DEFAULT 0,
     client_addr TEXT,
+    device_id TEXT,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
@@ -110,6 +116,11 @@ CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id);
 CREATE INDEX IF NOT EXISTS idx_requests_url ON requests(url);
 CREATE INDEX IF NOT EXISTS idx_requests_method ON requests(method);
 CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp);
+-- NOTE: idx_requests_device is NOT created here. The device_id column is
+-- added to pre-#105 databases by the PRAGMA-checked ALTER below, which
+-- runs AFTER this schema block — creating the index here would fail on
+-- legacy databases ("no such column: device_id"). The index is created
+-- unconditionally after the migrations instead.
 
 CREATE TABLE IF NOT EXISTS ws_connections (
     id TEXT PRIMARY KEY,
@@ -202,6 +213,7 @@ impl TrafficStore {
             ignored_domains: RwLock::new(Vec::new()),
             insert_counter: AtomicUsize::new(0),
             mirror_writer: RwLock::new(None),
+            device_sessions: Mutex::new(HashMap::new()),
         });
 
         store.create_tables().await?;
@@ -240,6 +252,7 @@ impl TrafficStore {
             ignored_domains: RwLock::new(Vec::new()),
             insert_counter: AtomicUsize::new(0),
             mirror_writer: RwLock::new(None),
+            device_sessions: Mutex::new(HashMap::new()),
         });
 
         store.create_tables().await?;
@@ -330,6 +343,24 @@ impl TrafficStore {
                 .await?;
         }
 
+        // Migration: add device_id column to requests table (issue #105).
+        // Nullable TEXT referencing the enterprise `devices.id`; NULL for
+        // pre-existing rows and entries from unauthenticated or
+        // user-authenticated connections. Indexed — every per-device
+        // filtered query hits it.
+        let cols: Vec<String> = sqlx::query("PRAGMA table_info(requests)")
+            .map(|row: sqlx::sqlite::SqliteRow| row.try_get::<String, _>(1).unwrap_or_default())
+            .fetch_all(&self.pool)
+            .await?;
+        if !cols.iter().any(|c| c == "device_id") {
+            sqlx::query("ALTER TABLE requests ADD COLUMN device_id TEXT;")
+                .execute(&self.pool)
+                .await?;
+        }
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_requests_device ON requests(device_id)")
+            .execute(&self.pool)
+            .await?;
+
         // Migration safety net: ensure a unique constraint exists on
         // focus_hosts.pattern even for databases created before the column
         // was declared `UNIQUE` in `SCHEMA_CORE`. This prevents duplicate
@@ -369,6 +400,74 @@ impl TrafficStore {
         *self.current_session_id.lock() = DEFAULT_SESSION_ID.to_string();
 
         Ok(())
+    }
+
+    /// Upsert the auto-created capture session for a device (issue #105)
+    /// and return its id.
+    ///
+    /// The id is deterministic (`device-{device_id}`) so any instance
+    /// capturing the device resolves to the SAME session row — no
+    /// `instance_state` coordination (that table only governs the global
+    /// current session). The upsert also refreshes the row's name, so a
+    /// renamed device relabels its session on the next ensure. A
+    /// process-local cache skips the roundtrip once the row is known to
+    /// match the requested name.
+    async fn ensure_device_session(&self, device_id: &str, device_name: Option<&str>) -> String {
+        let display_name = device_session_name(device_id, device_name);
+        let session_id = device_session_id(device_id);
+
+        {
+            let cached = self.device_sessions.lock();
+            if let Some(last_name) = cached.get(device_id) {
+                if *last_name == display_name {
+                    return session_id;
+                }
+            }
+        }
+
+        let now = chrono::Utc::now().timestamp();
+        let upsert = sqlx::query(
+            "INSERT INTO sessions (id, name, created_at, updated_at) \
+             VALUES (?, ?, ?, ?) \
+             ON CONFLICT (id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
+        )
+        .bind(&session_id)
+        .bind(&display_name)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await;
+
+        match upsert {
+            Ok(_) => {
+                self.device_sessions
+                    .lock()
+                    .insert(device_id.to_string(), display_name);
+            }
+            Err(e) => {
+                // Session bookkeeping must never break capture: fall back
+                // to returning the deterministic id anyway. If the row is
+                // genuinely missing the requests insert may fail its FK,
+                // which the entry-construction sites already tolerate
+                // (best-effort store), and the next entry retries.
+                tracing::warn!("Failed to ensure device session for {device_id}: {e}");
+            }
+        }
+        session_id
+    }
+
+    /// Resolve the capture session for an attributed entry (issue #105):
+    /// device-attributed entries go to the device's per-device session,
+    /// everything else to the global current session.
+    pub async fn session_for_device(
+        &self,
+        device_id: Option<&str>,
+        device_name: Option<&str>,
+    ) -> String {
+        match device_id {
+            Some(id) => self.ensure_device_session(id, device_name).await,
+            None => self.current_session_id(),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -861,8 +960,8 @@ impl TrafficStore {
         let content_type = entry.request.content_type.as_ref();
 
         sqlx::query(
-            "INSERT OR REPLACE INTO requests (id, session_id, method, url, host, path, headers, body, content_type, timestamp, modified, notes, is_passthrough, http_version, script_intercepted, client_addr)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO requests (id, session_id, method, url, host, path, headers, body, content_type, timestamp, modified, notes, is_passthrough, http_version, script_intercepted, client_addr, device_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&entry.id)
         .bind(&entry.session_id)
@@ -880,6 +979,7 @@ impl TrafficStore {
         .bind(entry.request.http_version.as_deref())
         .bind(entry.script_intercepted as i32)
         .bind(&entry.client_addr)
+        .bind(&entry.device_id)
         .execute(&self.pool)
         .await?;
 
@@ -1015,8 +1115,22 @@ impl TrafficStore {
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, ",
         );
         qb.push(body_cols);
-        qb.push(", r.content_type, r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr, rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version FROM requests r LEFT JOIN responses rs ON r.id = rs.request_id WHERE r.session_id = ");
-        qb.push_bind(session_id);
+        qb.push(", r.content_type, r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr, r.device_id, rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version FROM requests r LEFT JOIN responses rs ON r.id = rs.request_id ");
+        // Issue #105: a device filter scopes the query by the device
+        // dimension instead of the global current session — device entries
+        // live in their own per-device sessions, so `session_id = current`
+        // would never match them. Without a device filter the query keeps
+        // its original current-session scope (OSS behavior unchanged).
+        match &filter.device_id {
+            Some(device_id) => {
+                qb.push("WHERE r.device_id = ");
+                qb.push_bind(device_id.clone());
+            }
+            None => {
+                qb.push("WHERE r.session_id = ");
+                qb.push_bind(session_id);
+            }
+        }
 
         // Phase 10b.3: cursor-based pagination — when a cursor is provided,
         // use keyset pagination instead of OFFSET (O(1) vs O(n)).
@@ -1111,7 +1225,7 @@ impl TrafficStore {
     pub async fn get_by_id(&self, id: &str) -> crate::Result<Option<TrafficEntry>> {
         let row: Option<TrafficRow> = sqlx::query_as::<_, TrafficRow>(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr,
+                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr, r.device_id,
                     rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.body AS resp_body, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
@@ -1443,7 +1557,7 @@ impl TrafficStore {
     ) -> crate::Result<Vec<TrafficEntry>> {
         let rows: Vec<TrafficRow> = sqlx::query_as::<_, TrafficRow>(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr,
+                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr, r.device_id,
                     rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.body AS resp_body, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
@@ -1620,6 +1734,13 @@ impl TrafficStoreBackend for TrafficStore {
     async fn sync_current_session(&self) -> crate::Result<()> {
         self.sync_current_session().await
     }
+    async fn session_for_device(
+        &self,
+        device_id: Option<&str>,
+        device_name: Option<&str>,
+    ) -> String {
+        self.session_for_device(device_id, device_name).await
+    }
     async fn flush(&self) -> crate::Result<()> {
         Ok(())
     }
@@ -1714,6 +1835,7 @@ struct TrafficRow {
     http_version: Option<String>,
     script_intercepted: i32,
     client_addr: Option<String>,
+    device_id: Option<String>,
     status_code: Option<i32>,
     status_message: Option<String>,
     resp_headers: Option<String>,
@@ -1775,6 +1897,7 @@ fn row_to_entry(row: TrafficRow) -> TrafficEntry {
         is_passthrough: row.is_passthrough != 0,
         script_intercepted: row.script_intercepted != 0,
         client_addr: row.client_addr,
+        device_id: row.device_id,
     }
 }
 
@@ -1938,6 +2061,8 @@ pub(crate) fn convert_har_entry(
         script_intercepted: false,
         // HAR files do not carry the capturing proxy's client address.
         client_addr: None,
+        // Nor a device attribution — imported entries are unattributed.
+        device_id: None,
     })
 }
 

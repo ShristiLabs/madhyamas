@@ -112,6 +112,21 @@ function AppShell() {
   const { isDark, toggle } = useTheme()
   const { tierInfo } = useTier()
   const [activeView, setActiveView] = useState<NavView["id"]>("traffic")
+  // Per-device traffic view (issue #105): set by the Devices panel's
+  // "view traffic" action, consumed by TrafficView (which also honors the
+  // shareable `?device=` URL parameter).
+  const [deviceFilter, setDeviceFilter] = useState<string | null>(null)
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const device = (e as CustomEvent<{ device: string }>).detail?.device
+      if (!device) return
+      setDeviceFilter(device)
+      setActiveView("traffic")
+    }
+    window.addEventListener("madhyamas:view-device-traffic", handler)
+    return () => window.removeEventListener("madhyamas:view-device-traffic", handler)
+  }, [])
 
   const isEnterprise = tierInfo?.tier === "enterprise"
   const navViews = isEnterprise ? [...TOOL_VIEWS, ...ADMIN_VIEWS] : TOOL_VIEWS
@@ -124,7 +139,12 @@ function AppShell() {
         <main className="min-w-0 flex-1 overflow-hidden">
           <ErrorBoundary label="Panel">
             <Suspense fallback={<PanelFallback />}>
-              {activeView === "traffic" && <TrafficView />}
+              {activeView === "traffic" && (
+                <TrafficView
+                  deviceFilter={deviceFilter}
+                  onClearDeviceFilter={() => setDeviceFilter(null)}
+                />
+              )}
               {activeView === "breakpoints" && <BreakpointsPanel />}
               {activeView === "blocklist" && <BlockListPanel />}
               {activeView === "throttle" && <ThrottlePanel />}

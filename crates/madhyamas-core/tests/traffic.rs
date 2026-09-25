@@ -844,3 +844,285 @@ async fn test_client_addr_column_backfilled_on_legacy_schema() {
         .expect("entry exists");
     assert_eq!(fetched.client_addr.as_deref(), Some("10.1.2.3:40000"));
 }
+
+// ── device attribution + per-device sessions (issue #105) ─────────────────
+
+/// device_id round-trips through INSERT/SELECT, and the device filter
+/// scopes `get_traffic` to one device's entries across sessions while the
+/// unfiltered query keeps its global-current-session scope (device rows
+/// live in their own sessions and are therefore excluded).
+#[tokio::test]
+async fn test_device_id_roundtrip_and_filter_scoping() {
+    let store = in_memory_traffic_store().await;
+    let global_session = store.current_session_id();
+
+    // Unattributed entry in the global session (the pre-#105 world).
+    let plain = make_entry(&global_session, "plain.example", "/global", None);
+    store.store_request(&plain).await.expect("store plain");
+
+    // Two devices: entries are stamped with the device's deterministic
+    // session id (as the entry-construction points do) and the device id.
+    let alpha_session = store
+        .session_for_device(Some("dev-alpha"), Some("Alpha Phone"))
+        .await;
+    let beta_session = store
+        .session_for_device(Some("dev-beta"), Some("Beta Tablet"))
+        .await;
+    assert_eq!(alpha_session, "device-dev-alpha");
+    assert_ne!(alpha_session, beta_session);
+    assert_ne!(alpha_session, global_session);
+
+    let mut alpha_entry = make_entry(&alpha_session, "alpha.example", "/a", None);
+    alpha_entry.device_id = Some("dev-alpha".to_string());
+    store
+        .store_request(&alpha_entry)
+        .await
+        .expect("store alpha");
+
+    let mut beta_entry = make_entry(&beta_session, "beta.example", "/b", None);
+    beta_entry.device_id = Some("dev-beta".to_string());
+    store.store_request(&beta_entry).await.expect("store beta");
+
+    // Round-trip.
+    let fetched = store
+        .get_by_id(&alpha_entry.id)
+        .await
+        .expect("get alpha")
+        .expect("alpha exists");
+    assert_eq!(fetched.device_id.as_deref(), Some("dev-alpha"));
+    assert_eq!(fetched.session_id, alpha_session);
+    let fetched = store
+        .get_by_id(&plain.id)
+        .await
+        .expect("get plain")
+        .expect("plain exists");
+    assert_eq!(fetched.device_id, None);
+
+    // Device filters return exactly the right subsets.
+    let alpha_rows = store
+        .get_traffic(&TrafficFilter {
+            device_id: Some("dev-alpha".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("filter alpha");
+    assert_eq!(alpha_rows.len(), 1);
+    assert_eq!(alpha_rows[0].id, alpha_entry.id);
+    assert_eq!(alpha_rows[0].request.path, "/a");
+
+    let beta_rows = store
+        .get_traffic(&TrafficFilter {
+            device_id: Some("dev-beta".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("filter beta");
+    assert_eq!(beta_rows.len(), 1);
+    assert_eq!(beta_rows[0].id, beta_entry.id);
+
+    // Unknown device sees nothing.
+    let none_rows = store
+        .get_traffic(&TrafficFilter {
+            device_id: Some("dev-unknown".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("filter unknown");
+    assert!(none_rows.is_empty());
+
+    // The unfiltered query keeps its current-session scope: only the
+    // unattributed entry is visible (device rows are in other sessions —
+    // the OSS behavior is unchanged).
+    let global_rows = store
+        .get_traffic(&TrafficFilter::default())
+        .await
+        .expect("filter default");
+    assert_eq!(global_rows.len(), 1);
+    assert_eq!(global_rows[0].id, plain.id);
+    assert_eq!(global_rows[0].device_id, None);
+
+    // The auto-created sessions are visible and named after the device
+    // records.
+    let sessions = store.list_sessions().await.expect("list sessions");
+    let alpha = sessions
+        .iter()
+        .find(|s| s.id == "device-dev-alpha")
+        .expect("alpha session exists");
+    assert_eq!(alpha.name.as_deref(), Some("Device: Alpha Phone"));
+    assert!(
+        sessions.iter().any(|s| s.id == "device-dev-beta"),
+        "beta session exists"
+    );
+}
+
+/// `session_for_device(None, _)` is the global current session — the OSS
+/// path is byte-for-byte unchanged.
+#[tokio::test]
+async fn test_session_for_device_none_is_global_current_session() {
+    let store = in_memory_traffic_store().await;
+    let global = store.current_session_id();
+    let resolved = store.session_for_device(None, None).await;
+    assert_eq!(resolved, global);
+    assert_eq!(resolved, "default-session");
+}
+
+/// Two store instances sharing one database file resolve a device to the
+/// SAME session row (the cross-instance property of #105: the session id
+/// derives from the device id, so no `instance_state` coordination is
+/// needed) and a renamed device relabels the row on the next ensure.
+#[tokio::test]
+async fn test_device_session_resolution_idempotent_across_instances() {
+    let dir = tmpdir("device-session-idempotent");
+    let db_path = dir.path().join("traffic.db");
+    let db_str = db_path.to_str().expect("utf-8 temp path").to_string();
+
+    let first = TrafficStore::new(&db_str).await.expect("first store");
+    let id_one = first
+        .session_for_device(Some("dev-x"), Some("Old Name"))
+        .await;
+
+    let second = TrafficStore::new(&db_str).await.expect("second store");
+    let id_two = second
+        .session_for_device(Some("dev-x"), Some("Old Name"))
+        .await;
+    assert_eq!(id_one, id_two, "both instances resolve the same session");
+
+    let sessions = first.list_sessions().await.expect("sessions on first");
+    let rows: Vec<_> = sessions.iter().filter(|s| s.id == id_one).collect();
+    assert_eq!(rows.len(), 1, "exactly one session row after two instances");
+    assert_eq!(rows[0].name.as_deref(), Some("Device: Old Name"));
+
+    // Rename propagation: a later ensure under a new display name updates
+    // the row instead of creating a second one.
+    let id_three = second
+        .session_for_device(Some("dev-x"), Some("New Name"))
+        .await;
+    assert_eq!(id_three, id_one);
+    let sessions = first.list_sessions().await.expect("sessions again");
+    let rows: Vec<_> = sessions.iter().filter(|s| s.id == id_one).collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].name.as_deref(), Some("Device: New Name"));
+}
+
+/// Opening the store on a database whose `requests` table predates issue
+/// #105 must add the `device_id` column via the startup migration; the
+/// legacy rows read NULL device_id and remain visible in the unfiltered
+/// (current-session) view.
+#[tokio::test]
+async fn test_device_id_column_backfilled_on_legacy_schema() {
+    use sqlx::Row;
+
+    let dir = tmpdir("device-id-migration");
+    let db_path = dir.path().join("traffic.db");
+    let db_str = db_path.to_str().expect("utf-8 temp path").to_string();
+
+    // Legacy schema without client_addr/device_id, with one pre-migration
+    // row in the default session.
+    {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect(&format!("sqlite:{db_str}?mode=rwc"))
+            .await
+            .expect("open raw legacy pool");
+        sqlx::query(
+            "CREATE TABLE requests (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                method TEXT NOT NULL,
+                url TEXT NOT NULL,
+                host TEXT NOT NULL,
+                path TEXT NOT NULL,
+                headers TEXT,
+                body BLOB,
+                content_type TEXT,
+                timestamp INTEGER,
+                modified INTEGER DEFAULT 0,
+                notes TEXT,
+                is_passthrough INTEGER DEFAULT 0,
+                http_version TEXT,
+                script_intercepted INTEGER DEFAULT 0,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            );",
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy requests table");
+        // The legacy database also predates the store's sessions table
+        // being seeded — create it raw so the pre-migration row satisfies
+        // the requests FK (exactly the shape a pre-#105 on-disk DB has).
+        sqlx::query(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                created_at INTEGER,
+                updated_at INTEGER
+            );",
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy sessions table");
+        sqlx::query(
+            "INSERT INTO sessions (id, name) VALUES ('default-session', 'Default Session')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed session");
+        sqlx::query(
+            "INSERT INTO requests (id, session_id, method, url, host, path, timestamp)
+             VALUES ('legacy-1', 'default-session', 'GET', 'https://old.example/x', 'old.example', '/x', 1)",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed legacy row");
+        pool.close().await;
+    }
+
+    let store = TrafficStore::new(&db_str)
+        .await
+        .expect("open store on legacy db");
+    let cols: Vec<String> = sqlx::query("PRAGMA table_info(requests)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.try_get::<String, _>(1).unwrap_or_default())
+        .fetch_all(store.pool())
+        .await
+        .expect("inspect requests columns");
+    assert!(
+        cols.iter().any(|c| c == "device_id"),
+        "device_id must be added by the startup migration, got columns: {cols:?}"
+    );
+
+    // Pre-migration row: NULL device_id, still visible unfiltered.
+    let rows = store
+        .get_traffic(&TrafficFilter::default())
+        .await
+        .expect("unfiltered view");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, "legacy-1");
+    assert_eq!(rows[0].device_id, None);
+
+    // New device-attributed entries land in the device session without
+    // disturbing the legacy row's visibility.
+    let device_session = store
+        .session_for_device(Some("dev-new"), Some("New Device"))
+        .await;
+    let mut entry = make_entry(&device_session, "new.example", "/n", None);
+    entry.device_id = Some("dev-new".to_string());
+    store.store_request(&entry).await.expect("store device row");
+
+    let device_rows = store
+        .get_traffic(&TrafficFilter {
+            device_id: Some("dev-new".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("device filter");
+    assert_eq!(device_rows.len(), 1);
+    let rows = store
+        .get_traffic(&TrafficFilter::default())
+        .await
+        .expect("unfiltered view again");
+    assert_eq!(
+        rows.len(),
+        1,
+        "legacy row only — device rows live elsewhere"
+    );
+    assert_eq!(rows[0].id, "legacy-1");
+}

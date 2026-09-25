@@ -37,6 +37,10 @@ pub struct TrafficQuery {
     /// Phase 10b.4: when "false", omit body columns from the response
     /// to reduce payload size. Defaults to "true" (include bodies).
     pub include_bodies: Option<String>,
+    /// Filter by the device a connection was attributed to (issue #105,
+    /// enterprise device credentials). Scopes the query to that device's
+    /// entries across sessions.
+    pub device_id: Option<String>,
 }
 
 /// Get all traffic entries
@@ -81,6 +85,7 @@ pub async fn get_traffic(
         host: query.host,
         cursor: query.cursor,
         include_bodies: Some(include_bodies),
+        device_id: query.device_id,
     };
 
     match state.traffic_store.get_traffic(&filter).await {
@@ -231,15 +236,34 @@ pub struct SessionResponse {
 }
 
 /// Get all sessions
+///
+/// Issue #105: returns the real persisted sessions (most recently updated
+/// first) instead of a fabricated single "Default Session" row. Per-device
+/// capture sessions auto-created for enterprise device credentials appear
+/// here alongside manual and HAR-import sessions, named after the device
+/// record ("Device: Hari's Pixel").
 pub async fn get_sessions(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // For now, just return the current session
-    let session_id = state.traffic_store.current_session_id();
-    Json(vec![serde_json::json!({
-        "id": session_id,
-        "name": "Default Session",
-        "created_at": chrono::Utc::now().to_rfc3339(),
-        "updated_at": chrono::Utc::now().to_rfc3339()
-    })])
+    match state.traffic_store.list_sessions().await {
+        Ok(sessions) => Json(
+            sessions
+                .into_iter()
+                .map(|s| SessionResponse {
+                    id: s.id,
+                    name: s.name,
+                    created_at: s.created_at.to_rfc3339(),
+                    updated_at: s.updated_at.to_rfc3339(),
+                })
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
+    }
 }
 
 /// Create a new session

@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Search, AlertCircle, Clock, Globe, X, ShieldOff } from "lucide-react";
+import { Search, AlertCircle, Clock, Globe, X, ShieldOff, Smartphone } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { AddFilterPopover, FilterChip } from "@/features/traffic/FilterBuilder";
@@ -11,6 +11,11 @@ interface TrafficToolbarProps {
   filters: ActiveFilter[];
   onFiltersChange: (filters: ActiveFilter[]) => void;
   count?: number;
+  /** Device name for the active per-device view (issue #105); rendered as
+   *  a dismissible chip when set. The id-based filtering itself lives in
+   *  the traffic query (`?device=`). */
+  deviceName?: string | null;
+  onClearDevice?: () => void;
 }
 
 interface QuickFilterDef {
@@ -78,6 +83,8 @@ export function TrafficToolbar({
   filters,
   onFiltersChange,
   count,
+  deviceName,
+  onClearDevice,
 }: TrafficToolbarProps) {
   const handleQuickFilter = useCallback(
     (qf: QuickFilterDef) => {
@@ -130,6 +137,25 @@ export function TrafficToolbar({
 
         {/* Add Filter */}
         <AddFilterPopover onAdd={handleAddFilter} />
+
+        {/* Per-device view chip (issue #105): the traffic view is scoped to
+            one device's entries; dismissible to return to the global view. */}
+        {deviceName && onClearDevice && (
+          <span
+            className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-muted/60 px-2 text-xs"
+            title="Traffic scoped to this device (from the Devices panel or a ?device= URL)"
+          >
+            <Smartphone className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="max-w-[160px] truncate">{deviceName}</span>
+            <button
+              className="ml-0.5 rounded-sm text-muted-foreground hover:text-foreground"
+              onClick={onClearDevice}
+              aria-label="Clear device filter"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        )}
 
         {/* Quick Filters */}
         <div className="flex items-center gap-1">

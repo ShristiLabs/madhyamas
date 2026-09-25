@@ -246,6 +246,15 @@ pub struct TrafficEntry {
     /// existed or outside a proxied connection (e.g. HAR import).
     #[serde(default)]
     pub client_addr: Option<String>,
+    /// Device the connection that produced this entry was attributed to
+    /// (issue #105). Copied from the connection's attribution context when
+    /// the proxy credential resolved to a device principal; `None` for
+    /// unauthenticated and user-authenticated connections and for entries
+    /// created before the field existed or outside a proxied connection
+    /// (e.g. HAR import). Entries with a `device_id` belong to the device's
+    /// auto-created session (see [`device_session_id`]).
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 fn serialize_datetime<S>(dt: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
@@ -272,6 +281,7 @@ impl TrafficEntry {
             is_passthrough: false,
             script_intercepted: false,
             client_addr: None,
+            device_id: None,
         }
     }
 
@@ -312,6 +322,30 @@ impl Session {
             created_at: now,
             updated_at: now,
         }
+    }
+}
+
+/// Deterministic session id for a device's auto-created session
+/// (issue #105).
+///
+/// Device-attributed entries are captured into a per-device session instead
+/// of the global current session, so one device's traffic never mixes with
+/// another's or with unattributed capture. The id is derived from the device
+/// id (not a random UUID) so the resolution is **idempotent across
+/// instances**: any instance capturing the device upserts and appends to the
+/// same `sessions` row in the shared database, without coordinating through
+/// `instance_state` (which only tracks the global current session).
+pub fn device_session_id(device_id: &str) -> String {
+    format!("device-{device_id}")
+}
+
+/// Display name for a device's auto-created session (issue #105).
+/// `Device: <record name>` when the device record's name is known, falling
+/// back to the device id.
+pub fn device_session_name(device_id: &str, device_name: Option<&str>) -> String {
+    match device_name {
+        Some(name) => format!("Device: {name}"),
+        None => format!("Device {device_id}"),
     }
 }
 
@@ -399,6 +433,14 @@ pub struct TrafficFilter {
     /// bodies are included (backward compatible). The API maps
     /// `?include_bodies=false` to `Some(false)`.
     pub include_bodies: Option<bool>,
+    /// Filter by the device a connection was attributed to (issue #105).
+    /// When set, the query matches entries whose `device_id` equals this
+    /// value regardless of session — device-attributed entries live in the
+    /// device's own session (see [`device_session_id`]), so the device
+    /// dimension, not the global current session, scopes the result. When
+    /// `None`, the query is scoped to the global current session exactly as
+    /// before (OSS behavior unchanged).
+    pub device_id: Option<String>,
 }
 
 /// Keyset pagination cursor (Phase 10b.3). Encodes the `(timestamp, id)`
@@ -1067,6 +1109,31 @@ mod tests {
 
             assert_ne!(session1.id, session2.id);
         }
+
+        #[test]
+        fn test_device_session_id_is_deterministic_and_distinct() {
+            // Deterministic: any instance derives the same id for the same
+            // device (issue #105 cross-instance property).
+            assert_eq!(device_session_id("dev-abc"), device_session_id("dev-abc"));
+            assert_eq!(device_session_id("dev-abc"), "device-dev-abc");
+            // Distinct per device.
+            assert_ne!(device_session_id("dev-abc"), device_session_id("dev-xyz"));
+            // Never collides with the global default session.
+            assert_ne!(device_session_id("default-session"), "default-session");
+        }
+
+        #[test]
+        fn test_device_session_name_uses_record_name_with_fallback() {
+            assert_eq!(
+                device_session_name("dev-abc", Some("Hari's Pixel")),
+                "Device: Hari's Pixel"
+            );
+            assert_eq!(
+                device_session_name("dev-abc", None),
+                "Device dev-abc",
+                "unknown record names fall back to the device id"
+            );
+        }
     }
 
     mod traffic_filter_tests {
@@ -1105,6 +1172,7 @@ mod tests {
                 host: Some("example.com".to_string()),
                 cursor: None,
                 include_bodies: None,
+                device_id: Some("dev-1".to_string()),
             };
 
             assert_eq!(filter.url_pattern, Some("api".to_string()));

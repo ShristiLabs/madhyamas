@@ -629,7 +629,15 @@ pub async fn handle_socks5_connection(
     info!("SOCKS5 CONNECT: {}:{}", host_str, port);
 
     // ── 4. Record a traffic entry ──────────────────────────────────────
-    let session_id = traffic_store.current_session_id();
+    // Issue #105: like the HTTP listener's entry-construction points, the
+    // tunnel entry resolves its session through the attribution context —
+    // a device-attributed connection records into the device's per-device
+    // session (the SOCKS listener performs no proxy auth today, so the
+    // device slot is None here until that changes).
+    let device_id = attribution.device_id.clone();
+    let session_id = traffic_store
+        .session_for_device(device_id.as_deref(), attribution.device_name.as_deref())
+        .await;
     let scheme = if port == 443 { "https" } else { "tcp" };
     let mut entry = TrafficEntry::new(
         &session_id,
@@ -646,6 +654,7 @@ pub async fn handle_socks5_connection(
     );
     entry.is_passthrough = true;
     entry.client_addr = attribution.client_addr_string();
+    entry.device_id = device_id;
     let _ = traffic_store.store_request(&entry).await;
     let _ = traffic_tx.send(entry.clone());
 

@@ -565,6 +565,7 @@ fn proxy_principal_device_only_is_authenticated() {
         user_id: None,
         api_key_id: Some("dk-1".to_string()),
         device_id: Some("dev-1".to_string()),
+        device_name: Some("Dev One".to_string()),
     };
     assert!(principal.is_authenticated());
     assert!(principal.user_id.is_none());

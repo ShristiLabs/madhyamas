@@ -38,6 +38,9 @@ export interface TrafficEntry {
   /** Whether at least one script ran on this request (on_request or
    *  on_response hook).  Set by the proxy pipeline. */
   script_intercepted?: boolean
+  /** Device the capturing connection was attributed to (enterprise
+   *  device credentials); null for unattributed entries. */
+  device_id?: string | null
 }
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'CONNECT' | 'TRACE'
@@ -56,6 +59,9 @@ export interface TrafficFilter {
   fileType?: string
   header?: string
   cookie?: string
+  /** Device id filter (enterprise device credentials): scopes the query
+   *  server-side to entries attributed to this device. */
+  device?: string
 }
 
 export interface Session {

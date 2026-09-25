@@ -254,11 +254,19 @@ impl<'a> Pipeline<'a> {
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        let session_id = self.traffic_store.current_session_id();
+        let device_id = self.attribution.device_id.clone();
+        let session_id = self
+            .traffic_store
+            .session_for_device(
+                device_id.as_deref(),
+                self.attribution.device_name.as_deref(),
+            )
+            .await;
         let mut entry = TrafficEntry::new(&session_id, request_data.clone());
         entry.id = corr.request_id.to_string();
         entry.script_intercepted = script_intercepted;
         entry.client_addr = self.attribution.client_addr_string();
+        entry.device_id = device_id;
         self.traffic_store.store_request(&entry).await?;
         self.traffic_store
             .store_response(&entry.id, response)
@@ -433,8 +441,18 @@ impl<'a> Pipeline<'a> {
         // Generate the session ID early so script executions can be linked
         // to the traffic entry that will be created later.  Also check
         // whether any scripts would fire on this request so we can set the
-        // `script_intercepted` flag.
-        let session_id = self.traffic_store.current_session_id();
+        // `script_intercepted` flag.  Issue #105: device-attributed
+        // connections resolve to the device's per-device session here (and
+        // in short-circuit paths), so the script context and the stored
+        // entry agree on the session.
+        let device_id = self.attribution.device_id.clone();
+        let session_id = self
+            .traffic_store
+            .session_for_device(
+                device_id.as_deref(),
+                self.attribution.device_name.as_deref(),
+            )
+            .await;
         #[cfg(feature = "scripting")]
         let script_intercepted = self.scripts_would_run("on_request", request_data)
             || self.scripts_would_run("on_response", request_data);
@@ -615,6 +633,7 @@ impl<'a> Pipeline<'a> {
         entry.id = request_id.clone();
         entry.script_intercepted = script_intercepted;
         entry.client_addr = self.attribution.client_addr_string();
+        entry.device_id = device_id;
         if should_capture {
             self.traffic_store.store_request(&entry).await?;
             // Broadcast to WebSocket clients

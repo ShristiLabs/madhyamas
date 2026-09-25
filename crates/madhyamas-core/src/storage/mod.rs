@@ -99,6 +99,28 @@ pub trait TrafficStoreBackend: Send + Sync {
     /// local value.
     async fn sync_current_session(&self) -> Result<()>;
 
+    /// Resolve the capture session an attributed entry belongs to
+    /// (issue #105).
+    ///
+    /// Device-attributed entries are captured into the device's
+    /// auto-created per-device session — a deterministic id derived from
+    /// the device id ([`crate::traffic::device_session_id`]) so every
+    /// instance capturing the device appends to the same session row in a
+    /// shared database without coordination. The session row is upserted
+    /// on first use (and when the device's display name changes), named
+    /// after the device record. Everything else — the OSS default and
+    /// unauthenticated or user-authenticated enterprise traffic — belongs
+    /// to the global current session exactly as before; the manual
+    /// `switch_session` flow keeps governing only that global scope.
+    ///
+    /// Returns the global current session id if the upsert fails, so
+    /// traffic capture never breaks on session-bookkeeping errors.
+    async fn session_for_device(
+        &self,
+        device_id: Option<&str>,
+        device_name: Option<&str>,
+    ) -> String;
+
     /// Flush any pending buffered writes (Phase 10b.1 write batching).
     /// For backends without write batching (SQLite), this is a no-op.
     /// Called on graceful shutdown to avoid data loss.

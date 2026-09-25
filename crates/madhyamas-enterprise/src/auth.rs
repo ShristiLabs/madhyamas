@@ -251,11 +251,15 @@ pub fn generate_device_key() -> String {
 
 /// Result of validating a per-device credential: carries the device it
 /// resolves to, its owner, and the key record ID for audit logging and
-/// last-seen tracking (issue #104).
+/// last-seen tracking (issue #104). The device record's display name rides
+/// along (issue #105) so the core engine can name the device's
+/// auto-created capture session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceKeyAuth {
     /// Device the credential belongs to.
     pub device_id: String,
+    /// Display name of the device record (session-naming metadata only).
+    pub device_name: String,
     /// Owning user ID (from the device record).
     pub owner_user_id: String,
     /// Device-key record ID (for audit logging / last-used updates).
@@ -502,6 +506,7 @@ impl AuthManager {
         }
         let auth = DeviceKeyAuth {
             device_id: device.id,
+            device_name: device.name,
             owner_user_id: device.owner_user_id,
             key_id: record.id,
         };
@@ -771,6 +776,7 @@ impl ProxyAuthValidator for AuthManager {
                         user_id: Some(user_id),
                         api_key_id: None,
                         device_id: None,
+                        device_name: None,
                     })
                     .map_err(|e| e.to_string())
             }
@@ -784,6 +790,7 @@ impl ProxyAuthValidator for AuthManager {
                         user_id: Some(identity.user_id),
                         api_key_id: identity.api_key_id,
                         device_id: None,
+                        device_name: None,
                     })
                     .map_err(|e| e.to_string())
             }
@@ -797,6 +804,7 @@ impl ProxyAuthValidator for AuthManager {
                         user_id: Some(auth.user_id),
                         api_key_id: Some(auth.key_id),
                         device_id: None,
+                        device_name: None,
                     })
                     .map_err(|e| e.to_string())
             }
@@ -817,6 +825,7 @@ impl AuthManager {
                 user_id: None,
                 api_key_id: Some(auth.key_id),
                 device_id: Some(auth.device_id),
+                device_name: Some(auth.device_name),
             })
             .map_err(|e| e.to_string())
     }

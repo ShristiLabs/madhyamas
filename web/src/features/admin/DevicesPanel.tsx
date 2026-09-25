@@ -1,15 +1,18 @@
 /**
- * DevicesPanel — device principal management (enterprise, issue #104).
+ * DevicesPanel — device principal management (enterprise, issues #104/#105).
  *
  * Registers devices, mints per-device connect-only credentials
  * (`mdy_dev_...`), and tracks liveness via the proxy-auth-derived
  * `last_seen`. On create/rotate the plaintext credential is shown ONCE
  * alongside the manual-apply values (host/port/username/password) for
  * clients that cannot scan a QR (QR onboarding is a later issue).
+ * Issue #105: per-row "view traffic" opens the traffic view scoped to the
+ * device, and the status flips to "Connected — capturing" live while the
+ * device's attributed entries stream in over the traffic WebSocket.
  * API: GET/POST /api/devices, POST /api/devices/:id/rotate|revoke,
  * DELETE /api/devices/:id.
  */
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -32,6 +35,7 @@ import {
   Check,
   RefreshCw,
   Ban,
+  Activity,
 } from "lucide-react"
 import { apiGet } from "@/lib/api/client"
 import {
@@ -43,11 +47,18 @@ import {
   type DeviceEntry,
   type CreateDevicePayload,
 } from "@/lib/api/admin"
+import { buildTrafficWsUrl } from "@/hooks/useTrafficWebSocket"
+import { useWebSocket } from "@/hooks/useWebSocket"
+import type { WsServerMessage } from "@/types/websocket"
 import { useToast } from "@/components/ui/use-toast"
 import { ApiError } from "@/lib/api/client"
 
 /** A device counts as live when its last proxy-auth event is this fresh. */
 const LIVE_WINDOW_MS = 60_000
+
+/** A device shows "Connected — capturing" while an attributed entry
+ * arrived this recently over the traffic WebSocket (issue #105). */
+const CAPTURING_WINDOW_MS = 60_000
 
 function formatSeen(lastSeen: number | null): string {
   if (!lastSeen) return "—"
@@ -63,8 +74,14 @@ interface DeviceStatus {
   variant: "success" | "secondary" | "destructive" | "outline"
 }
 
-function deviceStatus(d: DeviceEntry): DeviceStatus {
+function deviceStatus(d: DeviceEntry, lastCaptureAt: number | null): DeviceStatus {
   if (d.status === "revoked") return { label: "Revoked", variant: "destructive" }
+  // Live capture signal from attributed traffic entries — flips the card
+  // from "Pending" on the device's first captured request without waiting
+  // for the 15s REST refresh.
+  if (lastCaptureAt && Date.now() - lastCaptureAt < CAPTURING_WINDOW_MS) {
+    return { label: "Connected — capturing", variant: "success" }
+  }
   if (!d.last_seen) return { label: "Pending", variant: "secondary" }
   const live = Date.now() - d.last_seen * 1000 < LIVE_WINDOW_MS
   return live
@@ -80,6 +97,34 @@ export function DevicesPanel() {
     queryFn: listDevicesApi,
     refetchInterval: 15_000,
   })
+
+  // ── Live "Connected — capturing" status (issue #105) ─────────────────
+  // Subscribe to the traffic WebSocket and watch for attributed entries
+  // (Added events carrying a device_id). Lighter than extending the device
+  // event payload: the entries already flow through this stream.
+  const [capturingAt, setCapturingAt] = useState<Record<string, number>>({})
+  const wsUrl = useRef(buildTrafficWsUrl())
+  const handleWsMessage = useRef((message: WsServerMessage) => {
+    if (message.type !== "Traffic" || message.data.type !== "Added") return
+    const deviceId = message.data.data.device_id
+    if (!deviceId) return
+    setCapturingAt((prev) => ({ ...prev, [deviceId]: Date.now() }))
+  }).current
+  useWebSocket({
+    url: wsUrl.current,
+    onMessage: handleWsMessage,
+    autoConnect: true,
+    reconnect: true,
+  })
+
+  // Open the per-device traffic view: AppShell listens for this event and
+  // switches to the traffic view with the device filter pre-applied (the
+  // view syncs the shareable `?device=` URL).
+  const viewTraffic = (device: DeviceEntry) => {
+    window.dispatchEvent(
+      new CustomEvent("madhyamas:view-device-traffic", { detail: { device: device.id } }),
+    )
+  }
 
   const [createOpen, setCreateOpen] = useState(false)
   const [issued, setIssued] = useState<{ device: DeviceEntry; key: string } | null>(null)
@@ -182,7 +227,7 @@ export function DevicesPanel() {
           </thead>
           <tbody>
             {devices?.map((d) => {
-              const status = deviceStatus(d)
+              const status = deviceStatus(d, capturingAt[d.id] ?? null)
               return (
                 <tr key={d.id} className="border-b border-border/50 hover:bg-muted/30">
                   <td className="px-4 py-2 font-medium">{d.name}</td>
@@ -197,6 +242,15 @@ export function DevicesPanel() {
                   <td className="px-4 py-2 text-muted-foreground">{formatSeen(d.last_seen)}</td>
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => viewTraffic(d)}
+                        disabled={d.status === "revoked"}
+                        title="View this device's traffic"
+                      >
+                        <Activity className="h-3 w-3" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon-sm"

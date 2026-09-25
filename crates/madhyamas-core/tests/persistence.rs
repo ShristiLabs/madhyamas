@@ -512,3 +512,52 @@ async fn test_pg_client_addr_roundtrip() {
     let fetched = store.get_by_id(&attributed.id).await.unwrap().unwrap();
     assert_eq!(fetched.client_addr.as_deref(), Some("203.0.113.9:51000"));
 }
+
+/// Issue #105: `device_id` round-trips through the PostgreSQL store, the
+/// device filter scopes `get_traffic` across sessions, and the per-device
+/// session is auto-created with the deterministic id. `#[ignore]`-gated
+/// like the other live-database tests (requires MADHYAMAS_PG_TEST_URL).
+#[tokio::test]
+#[ignore]
+async fn test_pg_device_attribution_and_filter() {
+    use madhyamas_core::traffic::device_session_id;
+
+    let store = pg_store().await;
+
+    let device_id = format!(
+        "dev-pg-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
+    let device_session = store
+        .session_for_device(Some(&device_id), Some("PG Phone"))
+        .await;
+    assert_eq!(device_session, device_session_id(&device_id));
+
+    // Device-attributed entry in the device session.
+    let mut attributed = make_entry(&device_session);
+    attributed.device_id = Some(device_id.clone());
+    store.store_request(&attributed).await.unwrap();
+
+    // Round-trip + filter scope.
+    let fetched = store.get_by_id(&attributed.id).await.unwrap().unwrap();
+    assert_eq!(fetched.device_id.as_deref(), Some(device_id.as_str()));
+    assert_eq!(fetched.session_id, device_session);
+
+    let filtered = store
+        .get_traffic(&TrafficFilter {
+            device_id: Some(device_id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].id, attributed.id);
+
+    // The auto-created session row is named after the device record.
+    let sessions = store.list_sessions().await.unwrap();
+    let row = sessions
+        .iter()
+        .find(|s| s.id == device_session)
+        .expect("device session row exists");
+    assert_eq!(row.name.as_deref(), Some("Device: PG Phone"));
+}

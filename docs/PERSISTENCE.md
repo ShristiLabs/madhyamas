@@ -62,6 +62,7 @@ erDiagram
         TEXT http_version
         INTEGER script_intercepted
         TEXT client_addr
+        TEXT device_id
     }
     responses {
         TEXT request_id PK
@@ -136,9 +137,22 @@ idempotent migrations at store startup — no external migration tool:
   (e.g. `requests.client_addr TEXT`, issue #103 — nullable `ip:port` of the
   directly-connected client, captured from the connection's attribution
   context; `NULL` for pre-existing rows and entries created outside a
-  proxied connection).
+  proxied connection; `requests.device_id TEXT`, issue #105 — device the
+  connection was attributed to via an Enterprise device credential, indexed
+  via `idx_requests_device`).
 - PostgreSQL: `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements executed
   best-effort under the startup advisory lock.
+
+### Per-device capture sessions (issue #105)
+
+Device-attributed entries (Enterprise device credentials) are captured into
+a per-device session instead of the global current session. The session id
+is deterministic — `device-{device_id}` — and the row is upserted on first
+use (and on device rename) with the device record's name ("Device: Hari's
+Pixel"). Because the id derives from the device credential, every instance
+in a multi-instance deployment sharing the database resolves to the SAME
+session row without any `instance_state` coordination (that table still
+governs only the global current session used by unattributed capture).
 
 ## Intercept Store (`storage/sqlite/intercept.rs`)
 

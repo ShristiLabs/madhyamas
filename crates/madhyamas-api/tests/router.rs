@@ -272,3 +272,172 @@ async fn secrets_api_delete_and_disabled() {
         axum::http::StatusCode::NOT_FOUND
     );
 }
+
+// ── issue #105: device_id filter param + real session list ────────────────
+
+mod device_traffic_api {
+    use super::*;
+    use axum::extract::Query;
+    use madhyamas_api::handlers::{get_sessions, get_traffic, TrafficQuery};
+    use madhyamas_core::traffic::{HttpMethod, RequestData, TrafficEntry};
+
+    fn none_query() -> TrafficQuery {
+        TrafficQuery {
+            url: None,
+            method: None,
+            status_code: None,
+            limit: None,
+            offset: None,
+            search: None,
+            file_type: None,
+            header: None,
+            cookie: None,
+            is_passthrough: None,
+            host: None,
+            cursor: None,
+            include_bodies: None,
+            device_id: None,
+        }
+    }
+
+    fn entry(session_id: &str, id: &str, path: &str, device_id: Option<&str>) -> TrafficEntry {
+        let request = RequestData {
+            method: HttpMethod::Get,
+            url: format!("https://device.example{path}"),
+            host: "device.example".to_string(),
+            path: path.to_string(),
+            headers: std::collections::HashMap::new(),
+            body: None,
+            content_type: None,
+            http_version: Some("HTTP/1.1".to_string()),
+        };
+        let mut e = TrafficEntry::new(session_id, request);
+        e.id = id.to_string();
+        e.device_id = device_id.map(str::to_string);
+        e
+    }
+
+    async fn traffic_state() -> Arc<AppState> {
+        let store = TrafficStore::new(":memory:").await.unwrap();
+        Arc::new(AppState::new(store))
+    }
+
+    /// `?device_id=` maps into the filter and scopes the response to that
+    /// device's entries; the entries carry `device_id` for the web client.
+    #[tokio::test]
+    async fn get_traffic_device_id_param_scopes_response() {
+        let state = traffic_state().await;
+
+        // Global (unattributed) entry + two device entries, exactly as the
+        // entry-construction points stamp them.
+        let global = store_entry(&state, entry("default-session", "g1", "/global", None)).await;
+        let alpha_session = state
+            .traffic_store
+            .session_for_device(Some("dev-alpha"), Some("Alpha Phone"))
+            .await;
+        let alpha = store_entry(
+            &state,
+            entry(&alpha_session, "a1", "/alpha", Some("dev-alpha")),
+        )
+        .await;
+        let beta_session = state
+            .traffic_store
+            .session_for_device(Some("dev-beta"), Some("Beta Tablet"))
+            .await;
+        let _beta = store_entry(
+            &state,
+            entry(&beta_session, "b1", "/beta", Some("dev-beta")),
+        )
+        .await;
+        assert_eq!(alpha_session, "device-dev-alpha");
+        assert_ne!(alpha_session, beta_session);
+        let _ = (global, alpha);
+
+        let mut q = none_query();
+        q.device_id = Some("dev-alpha".to_string());
+        let (status, body) = respond(
+            get_traffic(State(state.clone()), Query(q))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(
+            body.as_array().map(Vec::len),
+            Some(1),
+            "only the alpha entry: {body}"
+        );
+        assert_eq!(body[0]["id"], "a1");
+        assert_eq!(body[0]["device_id"], "dev-alpha");
+        assert_eq!(body[0]["session_id"], "device-dev-alpha");
+    }
+
+    /// Without the param the handler keeps its pre-#105 global current
+    /// session scope (OSS behavior unchanged; device rows live elsewhere).
+    #[tokio::test]
+    async fn get_traffic_without_device_id_keeps_global_scope() {
+        let state = traffic_state().await;
+        store_entry(&state, entry("default-session", "g1", "/global", None)).await;
+        let alpha_session = state
+            .traffic_store
+            .session_for_device(Some("dev-alpha"), None)
+            .await;
+        store_entry(
+            &state,
+            entry(&alpha_session, "a1", "/alpha", Some("dev-alpha")),
+        )
+        .await;
+
+        let (status, body) = respond(
+            get_traffic(State(state.clone()), Query(none_query()))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(body.as_array().map(Vec::len), Some(1));
+        assert_eq!(body[0]["id"], "g1");
+        assert_eq!(body[0]["device_id"], serde_json::Value::Null);
+    }
+
+    /// Issue #105: `get_sessions` returns the real persisted sessions —
+    /// including device sessions auto-created by `session_for_device` —
+    /// with the response shape the web client expects
+    /// ({id, name, created_at, updated_at}), not a fabricated default.
+    #[tokio::test]
+    async fn get_sessions_returns_real_rows_including_device_sessions() {
+        let state = traffic_state().await;
+        state
+            .traffic_store
+            .session_for_device(Some("dev-alpha"), Some("Alpha Phone"))
+            .await;
+        // Persist an entry so the row is exercised through the normal path
+        // (the ensure itself already upserts the session row).
+        let sessions_before = state.traffic_store.list_sessions().await.unwrap();
+        assert!(
+            sessions_before.iter().any(|s| s.id == "device-dev-alpha"),
+            "device session row exists before the call"
+        );
+
+        let (status, body) =
+            respond(get_sessions(State(state.clone())).await.into_response()).await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        let rows = body.as_array().expect("sessions array");
+        let alpha = rows
+            .iter()
+            .find(|s| s["id"] == "device-dev-alpha")
+            .expect("device session listed");
+        assert_eq!(alpha["name"], "Device: Alpha Phone");
+        for key in ["id", "name", "created_at", "updated_at"] {
+            assert!(
+                alpha.get(key).is_some(),
+                "session row carries `{key}` for the web client"
+            );
+        }
+    }
+
+    async fn store_entry(state: &Arc<AppState>, e: TrafficEntry) -> TrafficEntry {
+        state.traffic_store.store_request(&e).await.unwrap();
+        e
+    }
+}

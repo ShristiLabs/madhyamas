@@ -49,6 +49,13 @@ pub struct TrafficEntrySnapshot {
     /// Whether at least one script ran on this request.
     #[serde(default)]
     pub script_intercepted: bool,
+    /// Device the connection that produced this entry was attributed to
+    /// (issue #105). `None` for unattributed entries and events emitted
+    /// before the field existed. The web UI uses it to scope live traffic
+    /// views to a device and to flip the Devices panel status to
+    /// "connected — capturing".
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 impl From<&TrafficEntry> for TrafficEntrySnapshot {
@@ -83,6 +90,7 @@ impl From<&TrafficEntry> for TrafficEntrySnapshot {
             is_passthrough: entry.is_passthrough,
             http_version: entry.request.http_version.clone(),
             script_intercepted: entry.script_intercepted,
+            device_id: entry.device_id.clone(),
         }
     }
 }

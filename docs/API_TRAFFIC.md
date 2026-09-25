@@ -28,12 +28,17 @@ GET /api/traffic?method=GET&url=*example.com*&status_code=200&limit=100&offset=0
 | `content_type` | string | Response content type filter |
 | `limit` | number | Max results |
 | `offset` | number | Skip results |
+| `device_id` | string | Filter by the device a connection was attributed to (issue #105; Enterprise device credentials). Scopes the query to that device's entries across sessions instead of the current session |
+
+Entries carry an optional `device_id` field (null for unattributed entries
+and rows captured before issue #105), and WebSocket `Added`/`Updated`
+snapshots carry the same field so live views can be device-scoped.
 
 ## Sessions
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/sessions` | List all sessions |
+| GET | `/sessions` | List all sessions (real persisted rows, most recently updated first; includes auto-created per-device sessions named after the device record) |
 | POST | `/sessions` | Create a new session |
 | GET | `/sessions/{id}` | Get session details |
 | DELETE | `/sessions/{id}` | Delete a session |

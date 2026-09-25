@@ -10,6 +10,7 @@ pub use events::{
 };
 pub use store::TrafficStore;
 pub use types::{
-    host_matches_pattern, CaptureStats, FocusHost, HttpMethod, ImportResult, PaginatedTraffic,
-    RequestData, ResponseData, Session, TrafficCursor, TrafficEntry, TrafficFilter,
+    device_session_id, device_session_name, host_matches_pattern, CaptureStats, FocusHost,
+    HttpMethod, ImportResult, PaginatedTraffic, RequestData, ResponseData, Session, TrafficCursor,
+    TrafficEntry, TrafficFilter,
 };

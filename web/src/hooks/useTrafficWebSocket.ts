@@ -23,6 +23,34 @@ interface UseTrafficWebSocketReturn {
   disconnect: () => void;
 }
 
+/**
+ * Build the traffic WebSocket URL (protocol/host/base-path aware, JWT as
+ * `?token=` query param in enterprise mode — browsers cannot set headers
+ * on the WS upgrade). Exported so other consumers (e.g. the Devices
+ * panel's live "connected — capturing" status, issue #105) can subscribe
+ * to the same stream without duplicating the derivation.
+ */
+export function buildTrafficWsUrl(): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host = window.location.host;
+  // Derive base path from the meta tag injected by the backend.
+  let basePath = "/";
+  const meta = document.querySelector('meta[name="madhyamas-base-path"]');
+  const content = meta?.getAttribute("content");
+  if (content && content.trim()) {
+    let p = content.trim();
+    if (!p.startsWith("/")) p = "/" + p;
+    if (!p.endsWith("/")) p = p + "/";
+    basePath = p;
+  }
+  const baseUrl = `${protocol}//${host}${basePath}api/ws`;
+  const token = getAuthToken();
+  if (token) {
+    return `${baseUrl}?token=${encodeURIComponent(token)}`;
+  }
+  return baseUrl;
+}
+
 export function useTrafficWebSocket(
   options: UseTrafficWebSocketOptions = {}
 ): UseTrafficWebSocketReturn {
@@ -31,34 +59,9 @@ export function useTrafficWebSocket(
   const [traffic, setTraffic] = useState<TrafficEntrySnapshot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Build WebSocket URL (includes base path for context-path deployments).
-  // In enterprise mode with auth enabled, the JWT token is appended as a
-  // `?token=` query parameter because browsers cannot set custom headers on
-  // the WebSocket upgrade handshake (Phase 9.1).
-  const wsUrl = useMemo(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    // Derive base path from the meta tag injected by the backend.
-    let basePath = "/";
-    const meta = document.querySelector('meta[name="madhyamas-base-path"]');
-    const content = meta?.getAttribute("content");
-    if (content && content.trim()) {
-      let p = content.trim();
-      if (!p.startsWith("/")) p = "/" + p;
-      if (!p.endsWith("/")) p = p + "/";
-      basePath = p;
-    }
-    const baseUrl = `${protocol}//${host}${basePath}api/ws`;
-    // Append the auth token as a query parameter when present. The server
-    // validates it during the WS upgrade (Phase 9.1). In OSS mode (no
-    // token), the query param is omitted and the server allows the
-    // connection.
-    const token = getAuthToken();
-    if (token) {
-      return `${baseUrl}?token=${encodeURIComponent(token)}`;
-    }
-    return baseUrl;
-  }, []);
+  // Build WebSocket URL (includes base path for context-path deployments,
+  // JWT as `?token=` in enterprise mode) — see buildTrafficWsUrl.
+  const wsUrl = useMemo(() => buildTrafficWsUrl(), []);
 
   const handleMessage = useCallback(
     (message: WsServerMessage) => {

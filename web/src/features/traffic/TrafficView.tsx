@@ -6,6 +6,10 @@ import {
   useTrafficEntry,
   useImportHar,
 } from "@/hooks/useTraffic"
+import { useTier } from "@/contexts/TierContext"
+import { listDevicesApi } from "@/lib/api/admin"
+import { useQuery } from "@tanstack/react-query"
+import type { TrafficFilter } from "@/types/traffic"
 import { TrafficList } from "./TrafficList"
 import { TrafficTimeline } from "./TrafficTimeline"
 import { TrafficDetail } from "./TrafficDetail"
@@ -49,7 +53,18 @@ const DEFAULT_LIST_WIDTH = 40
 const MIN_LIST_WIDTH = 22
 const MAX_LIST_WIDTH = 60
 
-export function TrafficView() {
+interface TrafficViewProps {
+  /**
+   * Device id pre-applying the device filter (issue #105), set by the
+   * Devices panel's "view traffic" action. Combined with the shareable
+   * `?device=` URL parameter (enterprise only — OSS has no devices and
+   * ignores the dimension entirely).
+   */
+  deviceFilter?: string | null
+  onClearDeviceFilter?: () => void
+}
+
+export function TrafficView({ deviceFilter, onClearDeviceFilter }: TrafficViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState("")
@@ -74,6 +89,59 @@ export function TrafficView() {
     return DEFAULT_LIST_WIDTH
   })
 
+  // ── Per-device traffic view (issue #105, enterprise only) ────────────
+  const { tierInfo } = useTier()
+  const isEnterprise = tierInfo?.tier === "enterprise"
+
+  const deviceFromUrl = useMemo(() => {
+    if (!isEnterprise || typeof window === "undefined") return null
+    return new URLSearchParams(window.location.search).get("device")
+  }, [isEnterprise])
+
+  const activeDevice = isEnterprise ? (deviceFilter ?? deviceFromUrl) : null
+
+  // Keep the URL shareable while the device filter is applied.
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const url = new URL(window.location.href)
+    if (activeDevice) {
+      url.searchParams.set("device", activeDevice)
+      window.history.replaceState(null, "", url)
+    } else if (url.searchParams.has("device")) {
+      url.searchParams.delete("device")
+      window.history.replaceState(null, "", url)
+    }
+  }, [activeDevice])
+
+  const handleClearDevice = useCallback(() => {
+    onClearDeviceFilter?.()
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href)
+      url.searchParams.delete("device")
+      window.history.replaceState(null, "", url)
+    }
+  }, [onClearDeviceFilter])
+
+  // Resolve the device record's name for the filter chip (enterprise).
+  const { data: devices } = useQuery({
+    queryKey: ["admin-devices"],
+    queryFn: listDevicesApi,
+    enabled: isEnterprise && !!activeDevice,
+    staleTime: 30_000,
+  })
+  const activeDeviceName = useMemo(
+    () => devices?.find((d) => d.id === activeDevice)?.name ?? null,
+    [devices, activeDevice],
+  )
+
+  const trafficFilter = useMemo<TrafficFilter | undefined>(() => {
+    if (!activeDevice && !search) return undefined
+    return {
+      ...(search ? { search } : {}),
+      ...(activeDevice ? { device: activeDevice } : {}),
+    }
+  }, [activeDevice, search])
+
   const {
     data: traffic,
     isLoading,
@@ -81,7 +149,16 @@ export function TrafficView() {
     connectionInfo,
     isWebSocketMode,
     setWebSocketMode,
-  } = useTraffic(search ? { filter: { search } } : undefined)
+  } = useTraffic(
+    activeDevice
+      ? // Device-scoped view: REST polling. The WS initial payload is
+        // seeded from the global session, so it has no device history;
+        // 1s polling returns the device's full filtered result set.
+        { filter: trafficFilter, useWebSocket: false }
+      : trafficFilter
+        ? { filter: trafficFilter }
+        : undefined,
+  )
   const { data: count } = useTrafficCount()
   const clearTraffic = useClearTraffic()
   const importHar = useImportHar()
@@ -365,6 +442,8 @@ export function TrafficView() {
         filters={activeFilters}
         onFiltersChange={setActiveFilters}
         count={filteredTraffic.length}
+        deviceName={activeDevice ? (activeDeviceName ?? activeDevice) : null}
+        onClearDevice={activeDevice ? handleClearDevice : undefined}
       />
 
       <div className="flex flex-1 overflow-hidden border-t border-border" ref={containerRef} style={{ contain: "strict" }}>
@@ -372,7 +451,9 @@ export function TrafficView() {
           {/* Sub-toolbar: count + connection + actions */}
           <div className="flex items-center justify-between border-b border-border bg-muted/30 px-2 py-1" style={{ contain: "layout paint" }}>
             <div className="flex items-center gap-2">
-              <span className="text-2xs text-muted-foreground">{count ?? 0} req</span>
+              <span className="text-2xs text-muted-foreground">
+                {activeDevice ? `${filteredTraffic.length} req` : `${count ?? 0} req`}
+              </span>
               {isWebSocketMode ? (
                 <div className="flex items-center gap-1">
                   {wsReconnecting ? (

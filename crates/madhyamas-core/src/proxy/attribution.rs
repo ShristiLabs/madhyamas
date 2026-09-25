@@ -3,12 +3,14 @@
 //! Every accepted connection carries a small [`AttributionContext`] from
 //! the accept loop through connection handling into the traffic-entry
 //! construction points (the intercept pipeline, the CONNECT/TLS-failure
-//! and passthrough entries, and the SOCKS5 tunnel entry). Today only
-//! [`AttributionContext::client_addr`] is stamped onto captured entries;
-//! the `device_id` slot is populated by the engine for device-
+//! and passthrough entries, and the SOCKS5 tunnel entry). Today
+//! [`AttributionContext::client_addr`] and [`AttributionContext::device_id`]
+//! are stamped onto captured entries (issues #103 and #105); the `device_id`
+//! slot is populated by the engine for device-
 //! authenticated connections (issue #104) and is what per-device traffic
 //! filters and device-scoped intercept rules will consume in later
-//! credential-onboarding issues.
+//! credential-onboarding issues. `device_name` (issue #105) rides along as
+//! display metadata for naming the device's auto-created capture session.
 //!
 //! Tier placement: the struct lives in core and is inert in the OSS
 //! tier — the proxy listener performs no authentication there, so the
@@ -42,6 +44,11 @@ pub struct AttributionContext {
     /// (per-device traffic filters, device-scoped intercept rules) consume
     /// it without re-threading this context.
     pub device_id: Option<String>,
+    /// Display name of the device record (issue #105). Purely metadata for
+    /// naming the device's auto-created capture session ("Device: Hari's
+    /// Pixel"); `None` whenever `device_id` is `None`. Not an identity —
+    /// filters key on `device_id`, never on the name.
+    pub device_name: Option<String>,
     /// Address of the directly-connected client. This is the address the
     /// proxy accepted, which may differ from the device identity when
     /// traffic arrives through NAT or a local VPN.
@@ -56,6 +63,7 @@ impl AttributionContext {
     pub fn new(listener: ListenerKind, client_addr: Option<SocketAddr>) -> Self {
         Self {
             device_id: None,
+            device_name: None,
             client_addr,
             listener,
         }
@@ -76,6 +84,7 @@ impl Default for AttributionContext {
     fn default() -> Self {
         Self {
             device_id: None,
+            device_name: None,
             client_addr: None,
             listener: ListenerKind::Http,
         }
@@ -127,5 +136,6 @@ mod tests {
         // The constructor never infers a device: the engine fills the
         // slot from the resolved proxy principal (issue #104).
         assert!(ctx.device_id.is_none());
+        assert!(ctx.device_name.is_none());
     }
 }

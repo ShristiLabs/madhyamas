@@ -23,6 +23,9 @@ export interface TrafficEntrySnapshot {
   http_version?: string | null;
   /** Whether at least one script ran on this request. */
   script_intercepted?: boolean;
+  /** Device the connection was attributed to (enterprise device
+   * credentials); null for unattributed entries and pre-#105 events. */
+  device_id?: string | null;
 }
 
 // Traffic events from server

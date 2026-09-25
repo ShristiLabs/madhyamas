@@ -2,13 +2,13 @@
 
 ## Current Phase
 Milestone "Credential-Based Device & Agent Scoping" — issue-by-issue orchestration
-(current: #104 device principals, 2 of 9)
+(current: #105 device_id persistence + per-device sessions/filters, 3 of 9 — follows separately)
 
 ## Milestone Progress
 | Issue | Title | Developer | Tester | Reviewer | Regression | Committer | Status |
 |---|---|---|---|---|---|---|---|
 | #103 | Attribution foundation: resolve CONNECT principal and persist client_addr | done | done (15 cases) | approved (0 blockers, 4 low) | pass (all checks) | committed (2f88bdc) | done |
-| #104 | Device principals: registration, per-device credentials, devices API and Devices panel | done | done (24 cases) | approved (0 blockers, 0 high, 5 low) | pass (all checks + 17-step smoke) | — | commit |
+| #104 | Device principals: registration, per-device credentials, devices API and Devices panel | done | done (24 cases) | approved (0 blockers, 0 high, 5 low) | pass (all checks + 17-step smoke) | committed (a9a0e9e) | done |
 
 ## Earlier Phases (13-phase plan — COMPLETE)
 Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration.
@@ -56,6 +56,80 @@ Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration
 | 12b+12c+12d Customer+Stripe+Admin | #66,67,68 | done | skipped | approved | done (JWT auth, customer portal React frontend, Stripe Checkout+webhooks, admin portal, revenue dashboard, 604 tests) | committed (039a8ad) | done |
 
 ## Agent Log
+
+### 2026-09-25 — enterprise-regression (#105)
+- Frontend (tsc+vite): pass; fmt --check: pass; clippy --all-targets --all-features -D warnings: 0
+- OSS release build (--no-default-features): pass, 27.10 MB (baseline 27.07); symbol scan: 0 madhyamas_enterprise, 0 mdy_dev_, 0 device_keys/DeviceRegistered/device_session, 0 session_for_device
+- Enterprise release build: pass, 35.82 MB (baseline 35.81); device symbols present; enterprise crate standalone: pass
+- cargo test --all-features: 729 passed / 0 failed / 30 ignored (baseline 716/29; +13/+1 — all new #105 tests; zero regressions in existing)
+- Docs: check-docs.sh pass, check-docs-coverage.sh pass; cfg-enterprise gates in core/api src: 0
+- LIVE DoD SMOKE (enterprise release binary, ephemeral HOME, PRE-MIGRATION DB hand-built with client_addr but WITHOUT device_id + legacy row): 10/10 PASS — server up w/ --enable-auth + admin login (JWT); two devices created (mdy_dev_ keys, distinct ids); two authenticated proxied clients + one unauthenticated through ONE instance; alpha view exactly /from-alpha with device_id+session device-<id1>; beta view exactly /from-beta likewise; unknown device_id → empty; unfiltered view = /global + legacy pre-migration row only, ALL device_id null, no device-row leakage; /api/sessions lists "Device: Alpha Phone" + "Device: Beta Tablet" under deterministic ids; both devices' last_seen stamped (connected)
+- Post-smoke DB inspection: device_id column added by startup migration to the legacy schema, idx_requests_device created, legacy-row device_id NULL in default-session, device rows in device-<uuid> sessions
+- Cargo.lock licensing-core path-patch flip: RESTORED via git checkout (working tree now 28 files, no lock changes)
+- Verdict: ALL CHECKS PASSED — safe to commit
+- Status: completed
+
+### 2026-09-25 — enterprise-reviewer (#105)
+- Verdict: approved (0 blockers, 0 high, 1 medium informational, 5 low)
+- Verified: SQLite migration-order fix correct (SCHEMA_CORE no longer creates idx_requests_device; unconditional post-migration CREATE INDEX covers fresh + legacy DBs; PG ordering already correct: CORE → ADD COLUMN IF NOT EXISTS → optimized stmts); ensure_device_session uses parking_lot::Mutex scoped BEFORE any .await in both stores (no lock-across-await); deterministic device-{id} upsert + name-rename propagation + process cache idempotent under concurrent first-entries (ON CONFLICT); session_for_device(None) == current_session_id() and the switch_session/instance_state global flow is untouched; device-filter SQL parameterized via push_bind in both backends and replaces the session predicate ONLY when the filter is set; WS Added AND Updated snapshots carry device_id (both go through TrafficEntrySnapshot::from); TrafficQuery/get_sessions shape matches web sessions.ts (extra TS fields optional); useTraffic useWebSocket:false + useWebSocket(url,onMessage,autoConnect,reconnect) signatures verified; enterprise device_name plumbs without key material; docs API_TRAFFIC/PERSISTENCE accurate incl. the Updated-event claim
+- OSS isolation: no cfg-enterprise or enterprise imports in core/api src (sole mention = pre-existing doc comment in api/pubsub.rs); jsonwebtoken absent from core; ?device= view/chip/panel enterprise-gated
+- Medium (informational, not a regression): /api/traffic?device_id= and the now-real /api/sessions are not ownership-scoped — any authenticated user can query any device's traffic and see other users' device-session names. Matches the pre-existing global-traffic-visibility model (traffic was never user-scoped); per-user traffic ACLs are out of #105 scope — flag for a future issue (cf. #109 device-scoped rules)
+- Low: ensure_device_session error-comment's FK caveat is PG-accurate but SQLite-inaccurate (FKs declared, not enforced — no PRAGMA foreign_keys=ON; fallback insert succeeds); concurrent same-device first entries may double-upsert (idempotent, harmless); DevicesPanel capturingAt map bounded by device count; OSS user pasting ?device= URL silently gets the global view (by design); MCP traffic tools do not expose the device dimension (out of the issue's listed end-to-end scope — future issue material)
+- fmt --check: pass; clippy --all-targets --all-features -D warnings: 0
+- Status: completed
+
+### 2026-09-25 — enterprise-tester (#105, resumed after interrupted run)
+- Resumed the interrupted test pass (previous session modified test files without executing/reporting); verified, fixed, extended, and ran everything
+- Verified/kept from the interrupted run: traffic.rs (+4: device roundtrip + filter scoping incl. unknown-device and global-scope-unchanged, session_for_device(None)==global, cross-instance idempotency via two stores on one DB file + rename propagation, legacy-schema device_id migration), persistence.rs (+1 #[ignore] PG roundtrip/filter/session-name), devices.rs (+2 device_name assertions on DeviceKeyAuth and device principal), device_sessions.rs (real-engine acceptance tests)
+- Fixed a REAL implementation bug caught by the legacy-schema tests: `idx_requests_device` sat in SCHEMA_CORE, which runs BEFORE the PRAGMA-checked ALTER — opening any pre-#105 SQLite DB failed with "no such column: device_id" (upgrade breaker). Moved index creation to post-migration only (fresh DBs covered by the unconditional post-migration CREATE INDEX; PG ordering was already correct: migrations before optimized-index stmts)
+- Fixed a test hang in device_sessions.rs TLS-failure test: raw CONNECT helper used read_to_end with no timeout; the engine's TLS acceptor waits for a COMPLETE ClientHello, so a truncated garbage record left both sides blocked forever. Now reads the 200 with a 3s bound, then shuts the socket down — the EOF fails the engine's handshake, recording the device-attributed 502 entry (the behavior under test)
+- Fixed legacy-schema test seeding (sessions table now created before INSERT), 2 clippy field_reassign_with_default (struct-update syntax), fmt diffs
+- Added (new this pass): api tests/router.rs (+3: get_traffic ?device_id= scopes response + entries carry device_id/session_id, no-param keeps global scope with null device_id, get_sessions returns real rows incl. "Device: Alpha Phone" with the web-client shape)
+- CASES: 12 added by tester (4 device_sessions incl. the two-device DoD acceptance through a real engine with WS-snapshot device assertions, 4 traffic.rs, 1 PG-gated, 3 api) + 2 developer-inline in types.rs = +14 total
+- RESULTS: workspace 729 passed / 0 failed / 30 ignored (baseline 716/29; +13 pass, +1 PG ignore); clippy -D warnings: 0; fmt: pass
+- GAPS (documented): engine passthrough entry stamp (successful non-intercepted CONNECT) not directly exercised — needs TLS passthrough config + trusted upstream; shares the stamping lines with the covered TLS-failure point (same pattern as the #103-documented gap); pipeline short-circuit (mock/breakpoint) entry path not directly hit; PG test #[ignore]-gated (no Docker daemon in this env; runs under MADHYAMAS_PG_TEST_URL); web changes verified by tsc/vite build only (no web unit-test infra, consistent with #103/#104)
+- Environment notes: freed 12G (target/debug/incremental) after a disk-full rmeta failure; killed one hung test binary from the interrupted run
+- Status: completed
+
+### 2026-09-18 — enterprise-developer (#105)
+- Core types: `TrafficEntry.device_id` (nullable, serde default, follows the exact client_addr pattern) + `TrafficFilter.device_id`; `device_session_id()`/`device_session_name()` helpers in traffic::types (deterministic `device-{id}` scheme); `TrafficEntrySnapshot.device_id` (serde default) so WS events carry the device
+- Attribution: `AttributionContext.device_name` (display metadata, inert in OSS) + `ProxyPrincipal.device_name`; engine copies both after validation
+- Sessions: `TrafficStoreBackend::session_for_device(device_id, device_name) -> String` on the trait; SQLite + PG `ensure_device_session` upsert (`ON CONFLICT (id) DO UPDATE SET name/updated_at`), process-local name-keyed cache (rename propagates, zero steady-state roundtrips), fallback-to-global on error so capture never breaks; cross-instance idempotent by construction (deterministic id, no instance_state coupling)
+- Stamping: all five entry-construction points (pipeline short-circuit, pipeline main, engine TLS-failure, engine passthrough, SOCKS tunnel) resolve the session via session_for_device and stamp entry.device_id; HAR import stays None
+- Persistence: SQLite DDL + PRAGMA migration + idx_requests_device index + INSERT(17 cols)/3 SELECTs/TrafficRow/row_to_entry; PG mirror (CREATE TABLE, ADD COLUMN IF NOT EXISTS under advisory lock, index, INSERT $17, SELECTs, row map); get_traffic with device filter queries `WHERE r.device_id = ?` instead of the global-session predicate (both backends)
+- API: `TrafficQuery.device_id` → filter; `get_sessions` now returns real `list_sessions()` rows (SessionResponse shape unchanged)
+- Enterprise: `DeviceKeyAuth.device_name` from the device record → `device_principal` fills `ProxyPrincipal.device_name`; user/bearer/api-key principals explicitly device_name: None
+- Web: types (TrafficEntry/TrafficFilter.device, snapshot.device_id); useTraffic sends `device_id` param + WS client-side scoping (device entries excluded globally, included only when matching filter — WS/REST parity); TrafficView accepts deviceFilter prop + `?device=` URL (enterprise-gated), forces REST polling for device views, syncs shareable URL; TrafficToolbar device chip; App.tsx custom-event navigation from Devices panel; DevicesPanel "view traffic" action + live "Connected — capturing" via WS Added events carrying device_id (buildTrafficWsUrl exported)
+- Docs: API_TRAFFIC.md (device_id param + entries carry device_id + real sessions), PERSISTENCE.md (device_id column + index in ER + migration list + per-device session rows section)
+- BUILD_OSS check: pass; clippy all-targets all-features: 0 warnings; fmt: pass; web build (tsc + vite): pass
+- Status: completed
+
+### 2026-09-18 — orchestrator (milestone kickoff, #105)
+- Issue #105 exists (created by maintainer) — enterprise-issues step skipped; dispatching full chain for #105 only (#106+ explicitly out of scope per maintainer brief)
+- Verified code facts post-#104 (commit a9a0e9e):
+  - `AttributionContext { device_id, client_addr, listener }` threaded; `device_id` populated from `ProxyPrincipal` at engine.rs:695; five entry-construction sites stamp `client_addr` from attribution (pipeline.rs:257/437→614, engine.rs:847/963, socks.rs:632) — all pull `session_id = current_session_id()`
+  - `TrafficEntry.client_addr` (serde default) persisted in SQLite (store.rs) + PG (postgres/traffic.rs) with PRAGMA/ADD COLUMN IF NOT EXISTS migrations — device_id follows the exact pattern
+  - Engine/socks/pipeline hold `Arc<dyn TrafficStoreBackend>` (storage/mod.rs:58) — the per-device session helper belongs on the trait, implemented by both backends
+  - `TrafficFilter` (types.rs:366) has no device param; `TrafficQuery` (handlers.rs:19) mirrors it; `get_sessions` (handlers.rs:234) is a hardcoded "Default Session" stub; `list_sessions` exists on both backends
+  - Session sync: `switch_session` persists `current_session_id` to `instance_state`; `sync_current_session` (store.rs:1401) pulls it — device sessions instead use a DETERMINISTIC id (`device-{device_id}`) + upsert-by-id so every instance resolves the same row without coordination
+  - Enterprise `validate_device_key` (auth.rs:467) already fetches the DeviceRecord (name available) → principal gains `device_name` for session naming; core-inert
+  - WS events: `TrafficEntrySnapshot` (events.rs:27) carries session_id but not device_id — snapshot gains device_id (serde default) so the web client can scope live views and the Devices panel can derive "capturing"
+  - Web: useTraffic.ts fetch params + client-side WS filter; TrafficToolbar/filters.ts generic ActiveFilter model; App.tsx view switching is state-based (no router) → `?device=` URL param + custom navigation event from DevicesPanel
+- Design resolutions (issue text + maintainer brief): device entries go to the per-device session (unfiltered/global view = current global session, unchanged for OSS); when `TrafficFilter.device_id` is set, `get_traffic` queries by `device_id` instead of the global session predicate; OSS frontend ignores `?device=` (no device UI); device-filter picker chip in toolbar is enterprise-gated
+- Dispatching enterprise-developer for #105
+- Status: dispatched
+
+### 2026-09-18 — enterprise-committer (#104)
+- Verified regression pass; fmt no-op; Cargo.lock NOT modified (restored earlier, not staged)
+- Staged 25 files by name (23 modified + tests/devices.rs and DevicesPanel.tsx new; agents/enterprise-status.md included per task brief — covers #103 leftover bookkeeping + #104 log)
+- Commit: a9a0e9e "feat(enterprise): device principals, mdy_dev_ credentials, devices API and panel" — body references docs/CREDENTIAL_ONBOARDING.md, contains "Implements #104 (2 of 9)"; no AI attribution; author = user
+- 25 files changed, 2366 insertions(+), 93 deletions(-); working tree clean after commit; not pushed
+- Status: completed
+
+### 2026-09-18 — orchestrator (#104 close-out)
+- All pipeline stages green; issue closed with completion comment (full DoD smoke results incl. REST rejection, rotate/revoke 407s, require_proxy_auth, audit events)
+- Milestone position: 2 of 9 complete; next #105 follows separately per maintainer instruction
+- Status: done
 
 ### 2026-09-18 — enterprise-regression (#104)
 - Frontend: pass; fmt --check: pass; clippy -D warnings: 0

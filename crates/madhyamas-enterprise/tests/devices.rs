@@ -123,6 +123,9 @@ async fn test_validate_device_key_resolves_device_and_stamps_last_seen() {
     assert_eq!(auth.device_id, device.id);
     assert_eq!(auth.owner_user_id, uid);
     assert_eq!(auth.key_id, record.id);
+    // Issue #105: the device record's name rides along so the engine can
+    // name the device's auto-created capture session.
+    assert_eq!(auth.device_name, "Pixel");
 
     // The last_seen heartbeat is fire-and-forget; poll briefly for it.
     let mut seen = false;
@@ -221,6 +224,11 @@ async fn test_proxy_validator_device_api_key_resolves_device_principal() {
         .expect("device key validates at CONNECT");
     assert_eq!(principal.device_id.as_deref(), Some(device.id.as_str()));
     assert_eq!(principal.api_key_id.as_deref(), Some(record.id.as_str()));
+    assert_eq!(
+        principal.device_name.as_deref(),
+        Some("Phone"),
+        "issue #105: the device record's name rides along for session naming"
+    );
     assert!(
         principal.user_id.is_none(),
         "device principals must not fold into the owner's user identity"

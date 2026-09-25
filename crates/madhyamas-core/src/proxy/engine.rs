@@ -65,6 +65,11 @@ pub struct ProxyPrincipal {
     /// principal. `None` for user credentials and unauthenticated
     /// connections.
     pub device_id: Option<String>,
+    /// Display name of the device record (issue #105). Present whenever
+    /// `device_id` is; used only to name the device's auto-created capture
+    /// session ("Device: Hari's Pixel"). Never an identity — attribution
+    /// and filters key on `device_id`.
+    pub device_name: Option<String>,
 }
 
 impl ProxyPrincipal {
@@ -691,8 +696,10 @@ impl ProxyEngine {
         // Issue #104: device-authenticated connections carry the device
         // identity on the attribution context for the connection's
         // lifetime (user-key attribution lands with entry persistence,
-        // issue #105).
+        // issue #105). The device record's name rides along (issue #105)
+        // so entry construction can name the device's capture session.
         attribution.device_id = principal.device_id.clone();
+        attribution.device_name = principal.device_name.clone();
 
         if request_str.starts_with("CONNECT ") {
             // For CONNECT, we must consume the full CONNECT request from the buffer
@@ -844,7 +851,13 @@ impl ProxyEngine {
 
                 // Record a traffic entry so the failed attempt is visible.
                 // Include the CONNECT request headers for debugging context.
-                let session_id = self.traffic_store.current_session_id();
+                // Issue #105: a device-attributed CONNECT records into the
+                // device's per-device session.
+                let device_id = attribution.device_id.clone();
+                let session_id = self
+                    .traffic_store
+                    .session_for_device(device_id.as_deref(), attribution.device_name.as_deref())
+                    .await;
                 let mut entry = TrafficEntry::new(
                     &session_id,
                     RequestData {
@@ -859,6 +872,7 @@ impl ProxyEngine {
                     },
                 );
                 entry.client_addr = attribution.client_addr_string();
+                entry.device_id = device_id;
                 let _ = self.traffic_store.store_request(&entry).await;
                 let _ = self
                     .traffic_store
@@ -959,8 +973,14 @@ impl ProxyEngine {
         // Record a passthrough traffic entry so the connection is visible.
         // Include the CONNECT request headers for debugging context — since
         // the actual HTTP request is encrypted inside the TLS tunnel, these
-        // headers are the only metadata we can capture.
-        let session_id = self.traffic_store.current_session_id();
+        // headers are the only metadata we can capture. Issue #105: a
+        // device-attributed CONNECT records into the device's per-device
+        // session.
+        let device_id = attribution.device_id.clone();
+        let session_id = self
+            .traffic_store
+            .session_for_device(device_id.as_deref(), attribution.device_name.as_deref())
+            .await;
         let mut entry = TrafficEntry::new(
             &session_id,
             RequestData {
@@ -976,6 +996,7 @@ impl ProxyEngine {
         );
         entry.is_passthrough = true;
         entry.client_addr = attribution.client_addr_string();
+        entry.device_id = device_id;
         let _ = self.traffic_store.store_request(&entry).await;
         let _ = self.traffic_tx.send(entry.clone());
 

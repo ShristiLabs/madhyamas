@@ -15,6 +15,7 @@ async function fetchTraffic(filter?: TrafficFilter): Promise<TrafficEntry[]> {
   if (filter?.limit) params.set("limit", filter.limit.toString());
   if (filter?.offset) params.set("offset", filter.offset.toString());
   if (filter?.search) params.set("search", filter.search);
+  if (filter?.device) params.set("device_id", filter.device);
 
   return apiGet<TrafficEntry[]>(`/traffic?${params}`);
 }
@@ -65,6 +66,7 @@ function snapshotToTrafficEntry(snapshot: TrafficEntrySnapshot): TrafficEntry {
     response_size: snapshot.response_size ?? undefined,
     is_passthrough: snapshot.is_passthrough ?? false,
     script_intercepted: snapshot.script_intercepted ?? false,
+    device_id: snapshot.device_id ?? null,
   };
 }
 
@@ -166,6 +168,18 @@ export function useTraffic(
     if (!wsData || !filter) return wsData;
 
     return wsData.filter((entry) => {
+      // Device scoping (issue #105): live events are broadcast for every
+      // stored entry, but the REST query behind each view is scoped —
+      // either to the global current session (device filter off) or to one
+      // device (device filter on). Mirror that here so the live list
+      // matches what a refetch would return: without a device filter,
+      // device-attributed entries (which live in their own sessions) are
+      // excluded; with one, only that device's entries are kept.
+      if (filter.device) {
+        if (entry.device_id !== filter.device) return false;
+      } else if (entry.device_id != null) {
+        return false;
+      }
       if (filter.search) {
         const searchLower = filter.search.toLowerCase();
         const matchesUrl = entry.request.url.toLowerCase().includes(searchLower);
