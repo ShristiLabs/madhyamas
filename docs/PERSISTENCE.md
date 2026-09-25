@@ -60,6 +60,8 @@ erDiagram
         TEXT notes
         INTEGER is_passthrough
         TEXT http_version
+        INTEGER script_intercepted
+        TEXT client_addr
     }
     responses {
         TEXT request_id PK
@@ -124,6 +126,19 @@ Tables: `sessions`, `requests`, `responses`, `ws_connections`, `ws_messages`,
 
 Indexes optimize the common query patterns: per-session lookups, URL/method
 filtering, and timestamp ordering.
+
+### Column migrations
+
+Columns added after a table's initial release are handled with lightweight,
+idempotent migrations at store startup — no external migration tool:
+
+- SQLite: `PRAGMA table_info(...)` check, then `ALTER TABLE ... ADD COLUMN`
+  (e.g. `requests.client_addr TEXT`, issue #103 — nullable `ip:port` of the
+  directly-connected client, captured from the connection's attribution
+  context; `NULL` for pre-existing rows and entries created outside a
+  proxied connection).
+- PostgreSQL: `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements executed
+  best-effort under the startup advisory lock.
 
 ## Intercept Store (`storage/sqlite/intercept.rs`)
 

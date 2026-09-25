@@ -41,6 +41,7 @@
 //! ```
 
 use crate::config::ProxyConfig;
+use crate::proxy::attribution::{AttributionContext, ListenerKind};
 use crate::storage::TrafficStoreBackend;
 use crate::traffic::{RequestData, TrafficEntry};
 use crate::Error;
@@ -426,6 +427,10 @@ pub async fn serve_socks5(ctx: SocksContext) -> crate::Result<()> {
         let traffic_tx = ctx.traffic_tx.clone();
         let auth_user = auth_user.clone();
         let auth_pass = auth_pass.clone();
+        // Issue #103: capture the client address (otherwise only used for
+        // the IP ACL above) so the tunnel's traffic entry can be
+        // attributed to its origin.
+        let attribution = AttributionContext::new(ListenerKind::Socks, Some(client_addr));
 
         tokio::spawn(async move {
             debug!("SOCKS5 connection from {}", client_addr);
@@ -436,6 +441,7 @@ pub async fn serve_socks5(ctx: SocksContext) -> crate::Result<()> {
                 require_auth,
                 auth_user.as_deref(),
                 auth_pass.as_deref(),
+                attribution,
             )
             .await
             {
@@ -457,6 +463,7 @@ pub async fn handle_socks5_connection(
     require_auth: bool,
     auth_username: Option<&str>,
     auth_password: Option<&str>,
+    attribution: AttributionContext,
 ) -> crate::Result<()> {
     // ── 1. Method negotiation (greeting) ───────────────────────────────
     // The greeting is short (≤ 257 bytes); read up to that much. We read
@@ -638,6 +645,7 @@ pub async fn handle_socks5_connection(
         },
     );
     entry.is_passthrough = true;
+    entry.client_addr = attribution.client_addr_string();
     let _ = traffic_store.store_request(&entry).await;
     let _ = traffic_tx.send(entry.clone());
 

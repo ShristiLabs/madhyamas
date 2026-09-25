@@ -1,6 +1,8 @@
 //! Integration tests for the public auth API: JWT generate/validate/refresh
-//! flows, API-key lifecycle against a store, and scope matching.
+//! flows, API-key lifecycle against a store, scope matching, and proxy
+//! credential principal resolution (issue #103).
 
+use madhyamas_core::{ProxyAuthValidator, ProxyCredentials, ProxyPrincipal};
 use madhyamas_enterprise::auth::hash_api_key;
 use madhyamas_enterprise::store::ApiKeyRecord;
 use madhyamas_enterprise::{ApiKey, AuthConfig, AuthManager, Scope};
@@ -150,4 +152,101 @@ fn test_scope_matching() {
     assert!(Scope::matches(&traffic_read, &Scope::parse("traffic:*")));
     assert!(Scope::matches(&traffic_read, &Scope::parse("*:read")));
     assert!(!Scope::matches(&traffic_read, &Scope::parse("mocks:read")));
+}
+
+// ---- Issue #103: ProxyAuthValidator resolves a principal ----
+
+/// A valid API key supplied as proxy credentials resolves to a principal
+/// carrying both the owning user id and the key record id (instead of the
+/// identity being discarded after validation).
+#[tokio::test]
+async fn test_proxy_validator_api_key_resolves_principal() {
+    let store = test_store().await;
+    let uid = seed_user(&store).await;
+    let mgr = test_manager().with_store(store.clone());
+
+    let api_key = ApiKey::generate(&uid, "proxy-key");
+    let record = ApiKeyRecord {
+        id: api_key.id.clone(),
+        user_id: uid.clone(),
+        name: api_key.name.clone(),
+        key_hash: hash_api_key(&api_key.key),
+        key_prefix: api_key.key.chars().take(12).collect(),
+        scopes: serde_json::to_string(&["traffic:read"]).unwrap(),
+        expires_at: None,
+        last_used_at: None,
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    store.create_api_key(&record).await.expect("persist key");
+
+    let principal = mgr
+        .validate(&ProxyCredentials::ApiKey(api_key.key.clone()))
+        .await
+        .expect("api-key credentials validate");
+    assert_eq!(principal.user_id.as_deref(), Some(uid.as_str()));
+    assert_eq!(principal.api_key_id.as_deref(), Some(api_key.id.as_str()));
+    assert!(principal.is_authenticated());
+    // The key material itself must not leak into the principal.
+    assert_ne!(principal.user_id.as_deref(), Some(api_key.key.as_str()));
+}
+
+/// A Bearer JWT supplied as proxy credentials resolves to the JWT subject
+/// with no API-key id.
+#[tokio::test]
+async fn test_proxy_validator_bearer_resolves_user_principal() {
+    let mgr = test_manager();
+    let token = mgr.generate_jwt("user-7", "admin").expect("generate jwt");
+
+    let principal = mgr
+        .validate(&ProxyCredentials::ProxyBearer(token))
+        .await
+        .expect("bearer credentials validate");
+    assert_eq!(principal.user_id.as_deref(), Some("user-7"));
+    assert!(
+        principal.api_key_id.is_none(),
+        "JWT principals carry no api-key id"
+    );
+    assert!(principal.is_authenticated());
+}
+
+/// Unknown credentials are rejected with an error (the 407 path in the
+/// engine), never a principal.
+#[tokio::test]
+async fn test_proxy_validator_rejects_unknown_api_key() {
+    let store = test_store().await;
+    seed_user(&store).await;
+    let mgr = test_manager().with_store(store);
+
+    let result = mgr
+        .validate(&ProxyCredentials::ApiKey(
+            "madhyamas_doesnotexist".to_string(),
+        ))
+        .await;
+    assert!(result.is_err(), "unknown api key must be rejected");
+}
+
+/// Basic credentials currently have no password backend, so they must be
+/// rejected rather than resolve a partial principal.
+#[tokio::test]
+async fn test_proxy_validator_basic_rejected_until_password_backend_lands() {
+    let mgr = test_manager();
+    let result = mgr
+        .validate(&ProxyCredentials::ProxyBasicAuth(
+            "alice:password123".to_string(),
+        ))
+        .await;
+    assert!(
+        result.is_err(),
+        "basic auth stays rejected until the password backend exists"
+    );
+}
+
+/// The OSS-tier contract: without a configured validator, connections stay
+/// on the unauthenticated principal.
+#[test]
+fn test_unauthenticated_principal_is_the_oss_default() {
+    let principal = ProxyPrincipal::unauthenticated();
+    assert_eq!(principal, ProxyPrincipal::default());
+    assert!(!principal.is_authenticated());
+    assert!(principal.user_id.is_none() && principal.api_key_id.is_none());
 }

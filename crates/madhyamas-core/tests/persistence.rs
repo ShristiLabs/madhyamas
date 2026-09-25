@@ -486,3 +486,29 @@ async fn test_pg_flush() {
     // flush() should not error even with no pending writes.
     store.flush().await.unwrap();
 }
+
+/// Issue #103: `client_addr` round-trips through the PostgreSQL store
+/// (INSERT ... ON CONFLICT + SELECT mapping). `#[ignore]`-gated like the
+/// other live-database tests (requires DATABASE_URL).
+#[tokio::test]
+#[ignore]
+async fn test_pg_client_addr_roundtrip() {
+    let store = pg_store().await;
+    let session = store
+        .create_session(Some("client-addr-session"))
+        .await
+        .unwrap();
+
+    // Entry without attribution stores NULL.
+    let plain = make_entry(&session.id);
+    store.store_request(&plain).await.unwrap();
+    let fetched_plain = store.get_by_id(&plain.id).await.unwrap().unwrap();
+    assert_eq!(fetched_plain.client_addr, None);
+
+    // Attributed entry round-trips.
+    let mut attributed = make_entry(&session.id);
+    attributed.client_addr = Some("203.0.113.9:51000".to_string());
+    store.store_request(&attributed).await.unwrap();
+    let fetched = store.get_by_id(&attributed.id).await.unwrap().unwrap();
+    assert_eq!(fetched.client_addr.as_deref(), Some("203.0.113.9:51000"));
+}

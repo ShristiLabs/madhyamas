@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS requests (
     is_passthrough INTEGER DEFAULT 0,
     http_version TEXT,
     script_intercepted INTEGER DEFAULT 0,
+    client_addr TEXT,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
@@ -312,6 +313,19 @@ impl TrafficStore {
             .await?;
         if !cols.iter().any(|c| c == "script_intercepted") {
             sqlx::query("ALTER TABLE requests ADD COLUMN script_intercepted INTEGER DEFAULT 0;")
+                .execute(&self.pool)
+                .await?;
+        }
+
+        // Migration: add client_addr column to requests table (issue #103).
+        // Nullable TEXT holding `ip:port`; NULL for entries captured before
+        // the attribution work or created outside a proxied connection.
+        let cols: Vec<String> = sqlx::query("PRAGMA table_info(requests)")
+            .map(|row: sqlx::sqlite::SqliteRow| row.try_get::<String, _>(1).unwrap_or_default())
+            .fetch_all(&self.pool)
+            .await?;
+        if !cols.iter().any(|c| c == "client_addr") {
+            sqlx::query("ALTER TABLE requests ADD COLUMN client_addr TEXT;")
                 .execute(&self.pool)
                 .await?;
         }
@@ -847,8 +861,8 @@ impl TrafficStore {
         let content_type = entry.request.content_type.as_ref();
 
         sqlx::query(
-            "INSERT OR REPLACE INTO requests (id, session_id, method, url, host, path, headers, body, content_type, timestamp, modified, notes, is_passthrough, http_version, script_intercepted)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO requests (id, session_id, method, url, host, path, headers, body, content_type, timestamp, modified, notes, is_passthrough, http_version, script_intercepted, client_addr)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&entry.id)
         .bind(&entry.session_id)
@@ -865,6 +879,7 @@ impl TrafficStore {
         .bind(entry.is_passthrough as i32)
         .bind(entry.request.http_version.as_deref())
         .bind(entry.script_intercepted as i32)
+        .bind(&entry.client_addr)
         .execute(&self.pool)
         .await?;
 
@@ -1000,7 +1015,7 @@ impl TrafficStore {
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, ",
         );
         qb.push(body_cols);
-        qb.push(", r.content_type, r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version FROM requests r LEFT JOIN responses rs ON r.id = rs.request_id WHERE r.session_id = ");
+        qb.push(", r.content_type, r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr, rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version FROM requests r LEFT JOIN responses rs ON r.id = rs.request_id WHERE r.session_id = ");
         qb.push_bind(session_id);
 
         // Phase 10b.3: cursor-based pagination — when a cursor is provided,
@@ -1096,7 +1111,7 @@ impl TrafficStore {
     pub async fn get_by_id(&self, id: &str) -> crate::Result<Option<TrafficEntry>> {
         let row: Option<TrafficRow> = sqlx::query_as::<_, TrafficRow>(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted,
+                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr,
                     rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.body AS resp_body, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
@@ -1428,7 +1443,7 @@ impl TrafficStore {
     ) -> crate::Result<Vec<TrafficEntry>> {
         let rows: Vec<TrafficRow> = sqlx::query_as::<_, TrafficRow>(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted,
+                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr,
                     rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.body AS resp_body, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
@@ -1698,6 +1713,7 @@ struct TrafficRow {
     is_passthrough: i32,
     http_version: Option<String>,
     script_intercepted: i32,
+    client_addr: Option<String>,
     status_code: Option<i32>,
     status_message: Option<String>,
     resp_headers: Option<String>,
@@ -1758,6 +1774,7 @@ fn row_to_entry(row: TrafficRow) -> TrafficEntry {
         response_size,
         is_passthrough: row.is_passthrough != 0,
         script_intercepted: row.script_intercepted != 0,
+        client_addr: row.client_addr,
     }
 }
 
@@ -1919,6 +1936,8 @@ pub(crate) fn convert_har_entry(
         response_size,
         is_passthrough: false,
         script_intercepted: false,
+        // HAR files do not carry the capturing proxy's client address.
+        client_addr: None,
     })
 }
 

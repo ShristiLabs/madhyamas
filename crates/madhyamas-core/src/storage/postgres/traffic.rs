@@ -56,7 +56,7 @@ const SIZE_CHECK_INTERVAL: usize = 100;
 /// executed individually.
 const SCHEMA_CORE_STMTS: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, name TEXT, created_at BIGINT, updated_at BIGINT)",
-    "CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, method TEXT NOT NULL, url TEXT NOT NULL, host TEXT NOT NULL, path TEXT NOT NULL, headers TEXT, body BYTEA, content_type TEXT, timestamp BIGINT, modified BOOLEAN DEFAULT FALSE, notes TEXT, is_passthrough BOOLEAN DEFAULT FALSE, http_version TEXT, script_intercepted BOOLEAN DEFAULT FALSE)",
+    "CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, method TEXT NOT NULL, url TEXT NOT NULL, host TEXT NOT NULL, path TEXT NOT NULL, headers TEXT, body BYTEA, content_type TEXT, timestamp BIGINT, modified BOOLEAN DEFAULT FALSE, notes TEXT, is_passthrough BOOLEAN DEFAULT FALSE, http_version TEXT, script_intercepted BOOLEAN DEFAULT FALSE, client_addr TEXT)",
     "CREATE TABLE IF NOT EXISTS responses (request_id TEXT PRIMARY KEY, status_code INTEGER NOT NULL, status_message TEXT, headers TEXT, body BYTEA, content_type TEXT, duration_ms BIGINT, http_version TEXT)",
     "CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_requests_url ON requests(url)",
@@ -93,6 +93,16 @@ const SCHEMA_OPTIMIZED_STMTS: &[&str] = &[
     // same pattern simultaneously.
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_focus_hosts_pattern ON focus_hosts (pattern)",
 ];
+
+/// Lightweight migrations for the `requests` table: columns that postdate
+/// the original schema, added via `ADD COLUMN IF NOT EXISTS` so existing
+/// databases converge without a separate migration tool (mirrors the
+/// SQLite `PRAGMA table_info` migrations in `traffic/store.rs`).
+/// `client_addr` (issue #103) is a nullable `ip:port` string captured from
+/// the connection's attribution context; NULL for pre-existing rows and
+/// entries created outside a proxied connection.
+const SCHEMA_REQUESTS_MIGRATIONS: &[&str] =
+    &["ALTER TABLE requests ADD COLUMN IF NOT EXISTS client_addr TEXT"];
 
 /// DDL for the tiered body storage table. Bodies >= 4KB are stored here
 /// instead of inline in the `requests`/`responses` tables. The `compressed`
@@ -245,6 +255,13 @@ impl PostgresTrafficStore {
                 // Log and continue — the table likely already exists
                 // (created by a concurrent instance).
                 tracing::debug!("Schema DDL (best-effort): {}", e);
+            }
+        }
+        // Column migrations for pre-existing `requests` tables (best-effort,
+        // same policy as the core DDL above).
+        for stmt in SCHEMA_REQUESTS_MIGRATIONS {
+            if let Err(e) = sqlx::query(stmt).execute(&mut *tx).await {
+                tracing::debug!("Requests column migration (best-effort): {}", e);
             }
         }
         for stmt in SCHEMA_TRAFFIC_BODIES_STMTS {
@@ -737,8 +754,8 @@ impl TrafficStoreBackend for PostgresTrafficStore {
         let content_type = entry.request.content_type.as_ref();
 
         sqlx::query(
-            "INSERT INTO requests (id, session_id, method, url, host, path, headers, body, content_type, timestamp, modified, notes, is_passthrough, http_version, script_intercepted)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            "INSERT INTO requests (id, session_id, method, url, host, path, headers, body, content_type, timestamp, modified, notes, is_passthrough, http_version, script_intercepted, client_addr)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
              ON CONFLICT (id) DO UPDATE SET
                 session_id = EXCLUDED.session_id, method = EXCLUDED.method,
                 url = EXCLUDED.url, host = EXCLUDED.host, path = EXCLUDED.path,
@@ -747,7 +764,8 @@ impl TrafficStoreBackend for PostgresTrafficStore {
                 modified = EXCLUDED.modified, notes = EXCLUDED.notes,
                 is_passthrough = EXCLUDED.is_passthrough,
                 http_version = EXCLUDED.http_version,
-                script_intercepted = EXCLUDED.script_intercepted",
+                script_intercepted = EXCLUDED.script_intercepted,
+                client_addr = EXCLUDED.client_addr",
         )
         .bind(&entry.id)
         .bind(&entry.session_id)
@@ -764,6 +782,7 @@ impl TrafficStoreBackend for PostgresTrafficStore {
         .bind(entry.is_passthrough)
         .bind(entry.request.http_version.as_deref())
         .bind(entry.script_intercepted)
+        .bind(&entry.client_addr)
         .execute(&self.pool)
         .await?;
 
@@ -916,7 +935,7 @@ impl TrafficStoreBackend for PostgresTrafficStore {
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, ",
         );
         qb.push(body_cols);
-        qb.push(", r.content_type, r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version FROM requests r LEFT JOIN responses rs ON r.id = rs.request_id WHERE r.session_id = ");
+        qb.push(", r.content_type, r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr, rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version FROM requests r LEFT JOIN responses rs ON r.id = rs.request_id WHERE r.session_id = ");
         qb.push_bind(session_id);
 
         // Phase 10b.3: cursor-based pagination — when a cursor is provided,
@@ -1038,7 +1057,7 @@ impl TrafficStoreBackend for PostgresTrafficStore {
     async fn get_by_id(&self, id: &str) -> crate::Result<Option<TrafficEntry>> {
         let row: Option<TrafficRow> = sqlx::query_as::<_, TrafficRow>(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted,
+                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr,
                     rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.body AS resp_body, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
@@ -1346,7 +1365,7 @@ impl TrafficStoreBackend for PostgresTrafficStore {
     async fn get_traffic_by_session(&self, session_id: &str) -> crate::Result<Vec<TrafficEntry>> {
         let rows: Vec<TrafficRow> = sqlx::query_as::<_, TrafficRow>(
             "SELECT r.id, r.session_id, r.method, r.url, r.host, r.path, r.headers, r.body, r.content_type,
-                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted,
+                    r.timestamp, r.modified, r.notes, r.is_passthrough, r.http_version, r.script_intercepted, r.client_addr,
                     rs.status_code, rs.status_message, rs.headers AS resp_headers, rs.body AS resp_body, rs.content_type AS resp_content_type, rs.duration_ms, rs.http_version AS resp_http_version
              FROM requests r
              LEFT JOIN responses rs ON r.id = rs.request_id
@@ -1631,6 +1650,7 @@ struct TrafficRow {
     is_passthrough: bool,
     http_version: Option<String>,
     script_intercepted: bool,
+    client_addr: Option<String>,
     status_code: Option<i32>,
     status_message: Option<String>,
     resp_headers: Option<String>,
@@ -1695,6 +1715,7 @@ fn row_to_entry(row: TrafficRow) -> TrafficEntry {
         response_size,
         is_passthrough: row.is_passthrough,
         script_intercepted: row.script_intercepted,
+        client_addr: row.client_addr,
     }
 }
 

@@ -99,5 +99,9 @@ flate2.workspace = true
 base64.workspace = true
 sqlx.workspace = true
 chrono.workspace = true
+# Integration tests construct `Pipeline` directly (issue #103 attribution
+# tests); reqwest is already a regular dependency, so this adds nothing to
+# the dependency graph.
+reqwest.workspace = true
 # Shared fixtures for integration tests under tests/
 madhyamas-test-utils.workspace = true

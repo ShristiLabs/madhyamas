@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use madhyamas_api::auth::{AuthError, AuthMethod, AuthProvider, Identity};
-use madhyamas_core::ProxyAuthValidator;
 use madhyamas_core::ProxyCredentials;
+use madhyamas_core::{ProxyAuthValidator, ProxyPrincipal};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -616,26 +616,39 @@ impl AuthProvider for AuthManager {
 /// - `Basic` → username:password via `authenticate_password`
 /// - `Bearer` → JWT via `validate_token`
 /// - `ApiKey` → API key via `validate_api_key`
+///
+/// Since issue #103 the resolved [`ProxyPrincipal`] (user id and, for API
+/// keys, the key record id) is returned so the engine can attribute the
+/// connection instead of discarding the identity after validation.
 #[async_trait]
 impl ProxyAuthValidator for AuthManager {
-    async fn validate(&self, credentials: &ProxyCredentials) -> Result<(), String> {
+    async fn validate(&self, credentials: &ProxyCredentials) -> Result<ProxyPrincipal, String> {
         match credentials {
             ProxyCredentials::ProxyBasicAuth(creds) => {
                 let (username, password) = creds.split_once(':').unwrap_or((creds, ""));
                 self.authenticate_password(username, password)
                     .await
-                    .map(|_| ())
+                    .map(|user_id| ProxyPrincipal {
+                        user_id: Some(user_id),
+                        api_key_id: None,
+                    })
                     .map_err(|e| e.to_string())
             }
             ProxyCredentials::ProxyBearer(token) => self
                 .validate_token(token)
                 .await
-                .map(|_| ())
+                .map(|identity| ProxyPrincipal {
+                    user_id: Some(identity.user_id),
+                    api_key_id: identity.api_key_id,
+                })
                 .map_err(|e| e.to_string()),
             ProxyCredentials::ApiKey(key) => self
                 .validate_api_key(key)
                 .await
-                .map(|_| ())
+                .map(|auth| ProxyPrincipal {
+                    user_id: Some(auth.user_id),
+                    api_key_id: Some(auth.key_id),
+                })
                 .map_err(|e| e.to_string()),
         }
     }

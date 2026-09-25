@@ -1,16 +1,18 @@
 //! Integration tests for the public proxy API: SOCKS5 method negotiation
-//! and end-to-end handshakes, pipeline body decompression, and proxy
-//! config defaults.
+//! and end-to-end handshakes, pipeline body decompression, attribution
+//! (`client_addr` stamping on captured entries), and proxy config defaults.
 
 use std::time::Duration;
 
 use madhyamas_core::config::ProxyConfig;
+use madhyamas_core::proxy::attribution::{AttributionContext, ListenerKind};
 use madhyamas_core::proxy::pipeline::Pipeline;
 use madhyamas_core::proxy::socks::{
     handle_socks5_connection, select_method, Greeting, SocksHost, SocksReply, ATYP_IPV4,
     CMD_CONNECT, METHOD_NO_ACCEPTABLE, METHOD_NO_AUTH, METHOD_USER_PASS, SOCKS_VERSION,
 };
-use madhyamas_core::traffic::TrafficStore;
+use madhyamas_core::traffic::{HttpMethod, RequestData, TrafficStore};
+use madhyamas_core::ProxyPrincipal;
 
 // ============================================================================
 // SOCKS5 — method negotiation
@@ -129,16 +131,21 @@ async fn handshake_no_auth_then_connect_to_local_listener() {
     let (traffic_tx, _) = tokio::sync::broadcast::channel(16);
     let db = std::env::temp_dir().join(format!("madhyamas-socks-test-{}.db", uuid::Uuid::new_v4()));
     let store = TrafficStore::new(db.to_str().unwrap()).await.unwrap();
+    // Keep a handle to the store so the captured entry can be inspected
+    // after the handshake (issue #103: client_addr attribution).
+    let assert_store = store.clone();
 
     let server_task = tokio::spawn(async move {
-        let (sock, _) = proxy_listener.accept().await.unwrap();
-        handle_socks5_connection(sock, &*store, &traffic_tx, false, None, None)
+        let (sock, peer) = proxy_listener.accept().await.unwrap();
+        let attribution = AttributionContext::new(ListenerKind::Socks, Some(peer));
+        handle_socks5_connection(sock, &*store, &traffic_tx, false, None, None, attribution)
             .await
             .unwrap();
     });
 
     // Client side: connect to the SOCKS listener and perform the handshake.
     let mut client = TcpStream::connect(proxy_addr).await.unwrap();
+    let client_local = client.local_addr().unwrap();
     // Greeting: no-auth only
     client.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
     let mut method_reply = [0u8; 2];
@@ -172,6 +179,22 @@ async fn handshake_no_auth_then_connect_to_local_listener() {
     target_task.await.unwrap();
     // The server task runs the relay; give it a moment to drain.
     let _ = tokio::time::timeout(Duration::from_secs(5), server_task).await;
+
+    // Issue #103: the tunnel's traffic entry must carry the client's
+    // address, taken from the connection's attribution context.
+    let session_id = assert_store.current_session_id();
+    let entries = assert_store
+        .get_traffic_by_session(&session_id)
+        .await
+        .expect("list captured entries");
+    assert_eq!(entries.len(), 1, "one SOCKS tunnel entry expected");
+    assert!(entries[0].is_passthrough);
+    assert_eq!(
+        entries[0].client_addr,
+        Some(client_local.to_string()),
+        "captured entry must be attributed to the connecting client"
+    );
+
     let _ = std::fs::remove_file(&db);
 }
 
@@ -193,7 +216,7 @@ async fn handshake_rejects_when_auth_required_but_not_offered() {
     let store = TrafficStore::new(db.to_str().unwrap()).await.unwrap();
 
     let server_task = tokio::spawn(async move {
-        let (sock, _) = proxy_listener.accept().await.unwrap();
+        let (sock, peer) = proxy_listener.accept().await.unwrap();
         // Expect this to error out (no acceptable method).
         let _ = handle_socks5_connection(
             sock,
@@ -202,6 +225,7 @@ async fn handshake_rejects_when_auth_required_but_not_offered() {
             true, // require auth
             Some("user"),
             Some("pass"),
+            AttributionContext::new(ListenerKind::Socks, Some(peer)),
         )
         .await;
     });
@@ -245,7 +269,7 @@ async fn handshake_user_pass_auth_success() {
     let store = TrafficStore::new(db.to_str().unwrap()).await.unwrap();
 
     let server_task = tokio::spawn(async move {
-        let (sock, _) = proxy_listener.accept().await.unwrap();
+        let (sock, peer) = proxy_listener.accept().await.unwrap();
         handle_socks5_connection(
             sock,
             &*store,
@@ -253,6 +277,7 @@ async fn handshake_user_pass_auth_success() {
             true,
             Some("alice"),
             Some("secret"),
+            AttributionContext::new(ListenerKind::Socks, Some(peer)),
         )
         .await
         .unwrap();
@@ -312,7 +337,7 @@ async fn handshake_user_pass_auth_wrong_password_rejected() {
     let store = TrafficStore::new(db.to_str().unwrap()).await.unwrap();
 
     let server_task = tokio::spawn(async move {
-        let (sock, _) = proxy_listener.accept().await.unwrap();
+        let (sock, peer) = proxy_listener.accept().await.unwrap();
         let _ = handle_socks5_connection(
             sock,
             &*store,
@@ -320,6 +345,7 @@ async fn handshake_user_pass_auth_wrong_password_rejected() {
             true,
             Some("alice"),
             Some("secret"),
+            AttributionContext::new(ListenerKind::Socks, Some(peer)),
         )
         .await;
     });
@@ -340,6 +366,181 @@ async fn handshake_user_pass_auth_wrong_password_rejected() {
 
     server_task.await.unwrap();
     let _ = std::fs::remove_file(&db);
+}
+
+// ============================================================================
+// Attribution (issue #103)
+// ============================================================================
+
+/// The OSS default: with no proxy auth validator configured, connections
+/// resolve to the unauthenticated principal (no user, no API key).
+#[test]
+fn proxy_principal_defaults_to_unauthenticated() {
+    let principal = ProxyPrincipal::unauthenticated();
+    assert_eq!(principal, ProxyPrincipal::default());
+    assert!(principal.user_id.is_none());
+    assert!(principal.api_key_id.is_none());
+    assert!(!principal.is_authenticated());
+}
+
+/// A request processed through the pipeline with an attribution context
+/// must produce a stored entry carrying the context's `client_addr`
+/// (issue #103: captured entries are attributed to their origin).
+#[tokio::test]
+async fn pipeline_stamps_client_addr_on_captured_entry() {
+    use std::collections::HashMap;
+
+    use madhyamas_test_utils::spawn_mock_server;
+
+    // A local "upstream" so the pipeline completes a full forward cycle.
+    let (upstream_url, _upstream_rx) = spawn_mock_server().await;
+    let upstream_authority = upstream_url
+        .strip_prefix("http://")
+        .unwrap_or(&upstream_url)
+        .to_string();
+
+    let store = TrafficStore::in_memory().await.expect("in-memory store");
+    let (traffic_tx, _) = tokio::sync::broadcast::channel(16);
+    let client_addr: std::net::SocketAddr = "127.0.0.1:51531".parse().unwrap();
+
+    // Build the pipeline the way the engine does for an HTTP connection,
+    // attaching the attribution context built at accept time.
+    let no_proxy_client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("test http client");
+    let pipeline = Pipeline::new(
+        ProxyConfig::default(),
+        no_proxy_client,
+        &*store,
+        &traffic_tx,
+        None,
+        None,
+        None,
+        None,
+        None,
+        #[cfg(feature = "grpc")]
+        None,
+        #[cfg(feature = "scripting")]
+        None,
+        #[cfg(feature = "plugins")]
+        None,
+        None,
+        None,
+        None,
+    )
+    .with_attribution(AttributionContext::new(
+        ListenerKind::Http,
+        Some(client_addr),
+    ));
+
+    let mut request = RequestData {
+        method: HttpMethod::Get,
+        url: format!("{upstream_url}/attribution"),
+        host: upstream_authority,
+        path: "/attribution".to_string(),
+        headers: HashMap::new(),
+        body: None,
+        content_type: None,
+        http_version: Some("HTTP/1.1".to_string()),
+    };
+
+    // The pipeline writes the serialized response to the client stream;
+    // a duplex pipe stands in for the client socket.
+    let (mut client_stream, _client_read_side) = tokio::io::duplex(64 * 1024);
+    pipeline
+        .process_request(&mut request, &mut client_stream)
+        .await
+        .expect("process request through pipeline");
+
+    let session_id = store.current_session_id();
+    let entries = store
+        .get_traffic_by_session(&session_id)
+        .await
+        .expect("list captured entries");
+    assert_eq!(entries.len(), 1, "exactly one entry should be captured");
+    assert_eq!(
+        entries[0].client_addr,
+        Some("127.0.0.1:51531".to_string()),
+        "captured entry must carry the attribution context's client_addr"
+    );
+    assert!(
+        entries[0].response.is_some(),
+        "mock upstream should have produced a response"
+    );
+}
+
+/// Without an attribution context the pipeline behaves exactly as before
+/// issue #103: entries are stored with no client address.
+#[tokio::test]
+async fn pipeline_without_attribution_stores_no_client_addr() {
+    use std::collections::HashMap;
+
+    use madhyamas_test_utils::spawn_mock_server;
+
+    let (upstream_url, _upstream_rx) = spawn_mock_server().await;
+    let upstream_authority = upstream_url
+        .strip_prefix("http://")
+        .unwrap_or(&upstream_url)
+        .to_string();
+
+    let store = TrafficStore::in_memory().await.expect("in-memory store");
+    let (traffic_tx, _) = tokio::sync::broadcast::channel(16);
+
+    let no_proxy_client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("test http client");
+    // No with_attribution call: the pipeline keeps its default
+    // (unknown-origin) context.
+    let pipeline = Pipeline::new(
+        ProxyConfig::default(),
+        no_proxy_client,
+        &*store,
+        &traffic_tx,
+        None,
+        None,
+        None,
+        None,
+        None,
+        #[cfg(feature = "grpc")]
+        None,
+        #[cfg(feature = "scripting")]
+        None,
+        #[cfg(feature = "plugins")]
+        None,
+        None,
+        None,
+        None,
+    );
+
+    let mut request = RequestData {
+        method: HttpMethod::Get,
+        url: format!("{upstream_url}/no-attribution"),
+        host: upstream_authority,
+        path: "/no-attribution".to_string(),
+        headers: HashMap::new(),
+        body: None,
+        content_type: None,
+        http_version: Some("HTTP/1.1".to_string()),
+    };
+
+    let (mut client_stream, _client_read_side) = tokio::io::duplex(64 * 1024);
+    pipeline
+        .process_request(&mut request, &mut client_stream)
+        .await
+        .expect("process request through pipeline");
+
+    let session_id = store.current_session_id();
+    let entries = store
+        .get_traffic_by_session(&session_id)
+        .await
+        .expect("list captured entries");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].client_addr, None,
+        "entries without attribution context store no client address"
+    );
 }
 
 // ============================================================================

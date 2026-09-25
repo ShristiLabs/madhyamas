@@ -1,7 +1,16 @@
 # Enterprise Implementation Status
 
 ## Current Phase
-Phase 2: Storage Migration (rusqlite -> sqlx) (next)
+Milestone "Credential-Based Device & Agent Scoping" — issue-by-issue orchestration
+(current: #103 attribution foundation, 1 of 9)
+
+## Milestone Progress
+| Issue | Title | Developer | Tester | Reviewer | Regression | Committer | Status |
+|---|---|---|---|---|---|---|---|
+| #103 | Attribution foundation: resolve CONNECT principal and persist client_addr | done | done (15 cases) | approved (0 blockers, 4 low) | pass (all checks) | dispatched | committing |
+
+## Earlier Phases (13-phase plan — COMPLETE)
+Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration.
 
 ## Phase Progress
 | Sub-phase | Issue | Developer | Tester | Reviewer | Regression | Committer | Status |
@@ -46,6 +55,48 @@ Phase 2: Storage Migration (rusqlite -> sqlx) (next)
 | 12b+12c+12d Customer+Stripe+Admin | #66,67,68 | done | skipped | approved | done (JWT auth, customer portal React frontend, Stripe Checkout+webhooks, admin portal, revenue dashboard, 604 tests) | committed (039a8ad) | done |
 
 ## Agent Log
+
+### 2026-09-18 — enterprise-regression (#103)
+- Frontend: pass (needed one-time `npm ci` — tsc was missing in this checkout; environment, not regression)
+- fmt --check: pass; clippy -D warnings: pass (0)
+- OSS build (--no-default-features, release): pass, 27.07 MB; enterprise build (release): pass, 35.69 MB; enterprise crate standalone: pass
+- cargo test --all-features: 692 passed / 0 failed / 28 ignored (live-db/redis-gated incl. new PG client_addr test)
+- Docs: check-docs.sh pass, check-docs-coverage.sh pass
+- OSS isolation: 0 cfg enterprise gates in core/api; jsonwebtoken absent from core deps; 0 madhyamas_enterprise symbols in OSS binary
+- Smoke: enterprise binary /health + /api/health OK; LIVE OSS CHECK: proxied request through OSS binary stored client_addr 127.0.0.1:59582 while pre-migration rows read NULL (migration semantics confirmed on a real DB)
+- Reminder for committer: Cargo.lock is flipped to local licensing-core path patch — restore before staging
+- Verdict: ALL CHECKS PASSED — safe to commit
+- Status: completed
+
+### 2026-09-18 — enterprise-reviewer (#103)
+- Verdict: approved (0 blockers, 0 high, 4 low/informational)
+- Verified: inherent-method resolution for validate_api_key (auth.rs:354 ApiKeyAuth vs AuthProvider Identity — compile-proven via auth.key_id); all 5 production TrafficEntry::new sites stamped; SQL column/placeholder/bind counts symmetric across SQLite (16) and PG (16, ON CONFLICT updated); serde(default) backward-compat; HAR import None; no key material logged (record IDs only); parameterized SQL; OSS isolation clean (no enterprise imports/cfg in core)
+- Low notes: engine.rs:610 `let _ = &principal;` retention marker (style, clippy-clean); ws_connections + TrafficEntrySnapshot intentionally exclude client_addr (out of listed scope); docs ER drive-by adds missing script_intercepted row (disclosed)
+- fmt --check: pass; clippy (no -D): 0 warnings
+- Status: completed
+
+### 2026-09-18 — enterprise-tester (#103)
+- Added 15 test cases: attribution.rs inline (4: v4/v6 formatting, None, Default, device-slot-empty); tests/proxy.rs (+3 new: principal OSS default, pipeline stamps client_addr with real mock upstream, pipeline without attribution stores None; extended SOCKS e2e handshake to assert stored client_addr == client local addr); tests/traffic.rs (+2: SQLite roundtrip, legacy-schema migration backfills column via PRAGMA+ALTER); tests/persistence.rs (+1 #[ignore] PG roundtrip per live-db convention); enterprise tests/auth.rs (+5: api-key principal incl. key-id + no-key-material-leak, bearer principal, unknown key rejected, basic rejected, OSS default)
+- Dev-dep: reqwest added to madhyamas-core [dev-dependencies] (graph-neutral; needed to construct Pipeline in tests)
+- RESULTS: core+enterprise 624 passed / 0 failed; clippy -D warnings clean; fmt clean
+- GAP (documented): PG roundtrip is #[ignore]-gated — no local Docker/PG in this environment (Docker daemon down); runs under MADHYAMAS_PG_TEST_URL per existing convention. Engine-level TLS-failure/passthrough entry stamps and handle_connection principal match not directly exercised (no full-engine test harness exists; paths share the stamping line tested via pipeline; consistent with pre-existing engine test coverage)
+- Status: completed
+
+### 2026-09-18 — enterprise-developer (#103)
+- Implemented: ProxyPrincipal (core struct, user_id + api_key_id Options) + ProxyAuthValidator::validate now returns it; AttributionContext (device_id/client_addr/listener) in new proxy/attribution.rs; threaded accept loops -> handle_connection -> https tunnel (TLS-failure entry, passthrough entry), h2, tls request, http proxy (pipeline with_attribution), SOCKS handler (entry stamp)
+- Persistence: TrafficEntry.client_addr (Option<String>, serde default) + SQLite DDL/PRAGMA migration/INSERT/3 SELECTs/TrafficRow/row_to_entry + PostgreSQL DDL/ADD COLUMN IF NOT EXISTS migration/INSERT/3 SELECTs/row mapping
+- Enterprise: AuthManager impl returns principal (Basic->user_id, Bearer->Identity.user_id, ApiKey->user_id+key_id); no key material logged
+- Tests updated: tests/proxy.rs 4 SOCKS call sites pass AttributionContext; docs/PERSISTENCE.md ER + migration note
+- BUILD_OSS: pass; BUILD_ENTERPRISE (clippy all-targets all-features -D warnings): pass 0 warnings; FMT: pass; TESTS: 678 passed / 0 failed
+- Gotcha noted: Cargo.lock flipped to local licensing-core path patch — committer must `git checkout -- Cargo.lock` before staging
+- Status: completed
+
+### 2026-09-18 — orchestrator (milestone kickoff, #103)
+- Issue #103 exists (created by maintainer) — enterprise-issues step skipped
+- Labeled issue `status:in-progress`
+- Verified code facts: `ProxyAuthValidator` trait at engine.rs:53-57 returns `Result<(), String>`; enterprise impl auth.rs:620-642; `client_addr` dropped at engine.rs:500 / socks.rs accept loop; `RequestData`/`TrafficEntry` (types.rs:68-93, 210-242) have no client fields; SQLite migration pattern = tolerated-duplicate ALTER (store.rs:271-315); Postgres = `ADD COLUMN IF NOT EXISTS` stmt list (postgres/traffic.rs:57-106)
+- Dispatching enterprise-developer for #103
+- Status: dispatched
 
 ### Orchestrator started
 - Phase 0 dispatched to enterprise-developer

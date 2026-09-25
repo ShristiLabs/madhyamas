@@ -731,3 +731,116 @@ async fn test_lazy_body_loading() {
     assert_eq!(entries2.len(), 1);
     assert!(entries2[0].request.body.is_some());
 }
+
+// ── client_addr attribution (issue #103) ──────────────────────────────────
+
+#[tokio::test]
+async fn test_client_addr_roundtrip() {
+    let store = in_memory_traffic_store().await;
+    let session_id = store.current_session_id();
+
+    // Entries constructed without attribution (e.g. replay, import) keep
+    // a NULL client_addr; attributed entries round-trip through
+    // INSERT/SELECT.
+    let plain = make_entry(&session_id, "plain.example", "/a", None);
+    assert_eq!(plain.client_addr, None);
+    store.store_request(&plain).await.expect("store plain");
+
+    let mut attributed = make_entry(&session_id, "attributed.example", "/b", None);
+    attributed.client_addr = Some("192.168.1.24:51424".to_string());
+    store
+        .store_request(&attributed)
+        .await
+        .expect("store attributed");
+
+    let fetched_plain = store
+        .get_by_id(&plain.id)
+        .await
+        .expect("get plain")
+        .expect("plain entry exists");
+    assert_eq!(fetched_plain.client_addr, None);
+
+    let fetched_attributed = store
+        .get_by_id(&attributed.id)
+        .await
+        .expect("get attributed")
+        .expect("attributed entry exists");
+    assert_eq!(
+        fetched_attributed.client_addr.as_deref(),
+        Some("192.168.1.24:51424")
+    );
+}
+
+/// Opening the store on a database whose `requests` table predates issue
+/// #103 must add the `client_addr` column via the startup migration, and
+/// the column must be immediately usable.
+#[tokio::test]
+async fn test_client_addr_column_backfilled_on_legacy_schema() {
+    use sqlx::Row;
+
+    let dir = tmpdir("client-addr-migration");
+    let db_path = dir.path().join("traffic.db");
+    let db_str = db_path.to_str().expect("utf-8 temp path").to_string();
+
+    // Create a legacy requests table without client_addr (the schema as
+    // of before issue #103).
+    {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect(&format!("sqlite:{db_str}?mode=rwc"))
+            .await
+            .expect("open raw legacy pool");
+        sqlx::query(
+            "CREATE TABLE requests (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                method TEXT NOT NULL,
+                url TEXT NOT NULL,
+                host TEXT NOT NULL,
+                path TEXT NOT NULL,
+                headers TEXT,
+                body BLOB,
+                content_type TEXT,
+                timestamp INTEGER,
+                modified INTEGER DEFAULT 0,
+                notes TEXT,
+                is_passthrough INTEGER DEFAULT 0,
+                http_version TEXT,
+                script_intercepted INTEGER DEFAULT 0,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            );",
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy requests table");
+        pool.close().await;
+    }
+
+    // Opening the store runs the idempotent column migrations.
+    let store = TrafficStore::new(&db_str)
+        .await
+        .expect("open store on legacy db");
+    let cols: Vec<String> = sqlx::query("PRAGMA table_info(requests)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.try_get::<String, _>(1).unwrap_or_default())
+        .fetch_all(store.pool())
+        .await
+        .expect("inspect requests columns");
+    assert!(
+        cols.iter().any(|c| c == "client_addr"),
+        "client_addr must be added by the startup migration, got columns: {cols:?}"
+    );
+
+    // The migrated column is writable/readable.
+    let session_id = store.current_session_id();
+    let mut entry = make_entry(&session_id, "legacy.example", "/m", None);
+    entry.client_addr = Some("10.1.2.3:40000".to_string());
+    store
+        .store_request(&entry)
+        .await
+        .expect("store on migrated db");
+    let fetched = store
+        .get_by_id(&entry.id)
+        .await
+        .expect("get from migrated db")
+        .expect("entry exists");
+    assert_eq!(fetched.client_addr.as_deref(), Some("10.1.2.3:40000"));
+}

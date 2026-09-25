@@ -28,6 +28,7 @@ use crate::intercept::{
 use crate::performance::{MemoryManager, MemoryPressure, MetricsCollector};
 #[cfg(feature = "plugins")]
 use crate::plugin::{PluginContext, PluginHook, PluginManager};
+use crate::proxy::attribution::AttributionContext;
 #[cfg(feature = "scripting")]
 use crate::scripting::{ScriptContext, ScriptHook, ScriptRuntime};
 use crate::storage::TrafficStoreBackend;
@@ -82,6 +83,12 @@ pub struct Pipeline<'a> {
     metrics_collector: Option<&'a Arc<MetricsCollector>>,
     /// Optional memory manager for tracking traffic memory pressure.
     memory_manager: Option<&'a Arc<MemoryManager>>,
+    /// Attribution metadata (client address, listener, device slot) for
+    /// the connection being processed (issue #103). Stamped onto every
+    /// traffic entry the pipeline constructs. Defaults to an unknown
+    /// origin when the pipeline is built outside a proxied connection
+    /// (e.g. tests).
+    attribution: AttributionContext,
 }
 
 impl<'a> Pipeline<'a> {
@@ -123,7 +130,19 @@ impl<'a> Pipeline<'a> {
             extension_manager,
             metrics_collector,
             memory_manager,
+            attribution: AttributionContext::default(),
         }
+    }
+
+    /// Attach the connection's attribution context (issue #103).
+    ///
+    /// Called by the engine with the context built at accept time; every
+    /// traffic entry constructed by this pipeline is stamped with it
+    /// (currently the `client_addr`; the `device_id` slot is populated by
+    /// later credential-onboarding issues).
+    pub fn with_attribution(mut self, attribution: AttributionContext) -> Self {
+        self.attribution = attribution;
+        self
     }
 
     /// Record a response in the metrics collector (if attached). Accounts for
@@ -239,6 +258,7 @@ impl<'a> Pipeline<'a> {
         let mut entry = TrafficEntry::new(&session_id, request_data.clone());
         entry.id = corr.request_id.to_string();
         entry.script_intercepted = script_intercepted;
+        entry.client_addr = self.attribution.client_addr_string();
         self.traffic_store.store_request(&entry).await?;
         self.traffic_store
             .store_response(&entry.id, response)
@@ -594,6 +614,7 @@ impl<'a> Pipeline<'a> {
         let mut entry = TrafficEntry::new(&session_id, request_data.clone());
         entry.id = request_id.clone();
         entry.script_intercepted = script_intercepted;
+        entry.client_addr = self.attribution.client_addr_string();
         if should_capture {
             self.traffic_store.store_request(&entry).await?;
             // Broadcast to WebSocket clients

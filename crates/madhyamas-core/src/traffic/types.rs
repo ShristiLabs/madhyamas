@@ -239,6 +239,13 @@ pub struct TrafficEntry {
     /// execute.  The traffic list uses this to show a script badge.
     #[serde(default)]
     pub script_intercepted: bool,
+    /// Address of the directly-connected client (`ip:port`) that produced
+    /// this entry (issue #103). Populated from the connection's
+    /// attribution context for entries captured through the proxy or
+    /// SOCKS5 listeners; `None` for entries created before the field
+    /// existed or outside a proxied connection (e.g. HAR import).
+    #[serde(default)]
+    pub client_addr: Option<String>,
 }
 
 fn serialize_datetime<S>(dt: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
@@ -264,6 +271,7 @@ impl TrafficEntry {
             response_size: None,
             is_passthrough: false,
             script_intercepted: false,
+            client_addr: None,
         }
     }
 

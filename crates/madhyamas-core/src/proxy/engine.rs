@@ -17,6 +17,7 @@ use crate::mirror::MirrorWriter;
 use crate::performance::{MemoryManager, MetricsCollector, PerformanceMonitor};
 #[cfg(feature = "plugins")]
 use crate::plugin::PluginManager;
+use crate::proxy::attribution::{AttributionContext, ListenerKind};
 use crate::proxy::pipeline::{Pipeline, RequestOutcome};
 #[cfg(feature = "scripting")]
 use crate::scripting::ScriptRuntime;
@@ -38,6 +39,39 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
+/// Identity resolved from proxy credentials at CONNECT (issue #103).
+///
+/// A plain core struct so the OSS build never references enterprise
+/// types. The enterprise tier constructs it from its auth managers;
+/// without a validator configured (the OSS default) connections stay
+/// [`ProxyPrincipal::unauthenticated`]. The principal is retained in
+/// memory for the connection's lifetime; persisting identity on traffic
+/// entries lands with device principals (see
+/// `docs/CREDENTIAL_ONBOARDING.md`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProxyPrincipal {
+    /// ID of the user the credential resolves to (Basic username, JWT
+    /// subject, or the API key's owner). `None` when unauthenticated.
+    pub user_id: Option<String>,
+    /// ID of the API-key record when authentication was via
+    /// `X-API-Key` or an API-key bearer credential. `None` for
+    /// Basic/Bearer credentials and unauthenticated connections.
+    pub api_key_id: Option<String>,
+}
+
+impl ProxyPrincipal {
+    /// The principal used when no credentials were resolved — the OSS
+    /// default, since the OSS tier never configures a validator.
+    pub fn unauthenticated() -> Self {
+        Self::default()
+    }
+
+    /// Whether the principal identifies an authenticated user.
+    pub fn is_authenticated(&self) -> bool {
+        self.user_id.is_some()
+    }
+}
+
 /// Trait for validating proxy-level authentication (Phase 9.6).
 ///
 /// When `--proxy-auth` is enabled, the proxy engine calls
@@ -46,14 +80,18 @@ use tracing::{debug, info, warn};
 /// request. If validation fails, the proxy returns `407 Proxy
 /// Authentication Required`.
 ///
+/// Since issue #103 the resolved [`ProxyPrincipal`] is returned (not
+/// discarded), so the connection can be attributed to its identity.
+///
 /// The enterprise crate implements this trait via its `AuthManager` (JWT
 /// + API key validation). In the OSS tier, no validator is set and proxy
 /// auth is not enforced.
 #[async_trait::async_trait]
 pub trait ProxyAuthValidator: Send + Sync {
-    /// Validate proxy credentials. Returns `Ok(())` if the credentials are
-    /// valid, or an error message describing why they were rejected.
-    async fn validate(&self, credentials: &ProxyCredentials) -> Result<(), String>;
+    /// Validate proxy credentials. Returns the resolved
+    /// [`ProxyPrincipal`] if the credentials are valid, or an error
+    /// message describing why they were rejected.
+    async fn validate(&self, credentials: &ProxyCredentials) -> Result<ProxyPrincipal, String>;
 }
 
 /// Credentials extracted from a proxy request for auth validation
@@ -492,12 +530,17 @@ impl ProxyEngine {
             }
 
             let engine = self.clone();
+            // Issue #103: the client address is captured here (it is
+            // otherwise only used for the IP ACL above) and threaded
+            // through connection handling so captured traffic entries can
+            // be attributed to their origin.
+            let attribution = AttributionContext::new(ListenerKind::Http, Some(client_addr));
             tokio::spawn(async move {
                 // Track active connections for metrics.
                 if let Some(metrics) = engine.metrics_collector.get() {
                     metrics.connection_opened();
                 }
-                if let Err(e) = engine.handle_connection(client_socket).await {
+                if let Err(e) = engine.handle_connection(client_socket, attribution).await {
                     debug!("Connection error from {}: {}", client_addr, e);
                 }
                 if let Some(metrics) = engine.metrics_collector.get() {
@@ -508,7 +551,11 @@ impl ProxyEngine {
     }
 
     /// Handle an incoming connection
-    async fn handle_connection(&self, mut client_socket: TcpStream) -> crate::Result<()> {
+    async fn handle_connection(
+        &self,
+        mut client_socket: TcpStream,
+        attribution: AttributionContext,
+    ) -> crate::Result<()> {
         // Peek first to determine request type without consuming
         let mut peek_buf = [0u8; 1024];
         let n = client_socket
@@ -526,23 +573,41 @@ impl ProxyEngine {
         // configured, extract credentials from the request headers and
         // validate them before processing. Unauthenticated requests
         // receive a 407 response.
-        if let Some(validator) = self.proxy_auth_validator.get() {
-            if let Err(msg) = self.check_proxy_auth(&request_str, validator).await {
-                let response = format!(
-                    "HTTP/1.1 407 Proxy Authentication Required\r\n\
-                     Proxy-Authenticate: Basic realm=\"madhyamas\"\r\n\
-                     Content-Type: application/json\r\n\
-                     Content-Length: {}\r\n\
-                     Connection: close\r\n\
-                     \r\n\
-                     {{\"error\":\"proxy_auth_required\",\"message\":\"{}\"}}",
-                    msg.len(),
-                    msg
-                );
-                let _ = client_socket.write_all(response.as_bytes()).await;
-                return Ok(());
-            }
-        }
+        //
+        // Issue #103: the resolved principal is retained for the
+        // connection's lifetime (and identified in the debug log). It is
+        // not yet persisted on traffic entries — that lands with device
+        // principals in the later credential-onboarding issues. Without a
+        // validator (the OSS default) the connection stays unauthenticated.
+        let principal = match self.proxy_auth_validator.get() {
+            Some(validator) => match self.check_proxy_auth(&request_str, validator).await {
+                Ok(principal) => {
+                    debug!(
+                        user_id = ?principal.user_id,
+                        api_key_id = ?principal.api_key_id,
+                        "Proxy connection authenticated"
+                    );
+                    principal
+                }
+                Err(msg) => {
+                    let response = format!(
+                        "HTTP/1.1 407 Proxy Authentication Required\r\n\
+                         Proxy-Authenticate: Basic realm=\"madhyamas\"\r\n\
+                         Content-Type: application/json\r\n\
+                         Content-Length: {}\r\n\
+                         Connection: close\r\n\
+                         \r\n\
+                         {{\"error\":\"proxy_auth_required\",\"message\":\"{}\"}}",
+                        msg.len(),
+                        msg
+                    );
+                    let _ = client_socket.write_all(response.as_bytes()).await;
+                    return Ok(());
+                }
+            },
+            None => ProxyPrincipal::unauthenticated(),
+        };
+        let _ = &principal; // retained for the connection; consumed by later issues
 
         if request_str.starts_with("CONNECT ") {
             // For CONNECT, we must consume the full CONNECT request from the buffer
@@ -559,7 +624,8 @@ impl ProxyEngine {
 
             let connect_str = String::from_utf8_lossy(&buf[..n]);
             // HTTPS tunneling
-            self.handle_https_tunnel(client_socket, &connect_str).await
+            self.handle_https_tunnel(client_socket, &connect_str, attribution)
+                .await
         } else {
             // For HTTP, read the full request data
             let mut buf = vec![0u8; 65536];
@@ -573,19 +639,21 @@ impl ProxyEngine {
             }
 
             // Regular HTTP proxy
-            self.handle_http_proxy(client_socket, &buf[..n]).await
+            self.handle_http_proxy(client_socket, &buf[..n], attribution)
+                .await
         }
     }
 
     /// Extract and validate proxy auth credentials from the raw request
     /// string (Phase 9.6). Checks `Proxy-Authorization` and `X-API-Key`
-    /// headers. Returns `Ok(())` when authenticated, or `Err(message)`
-    /// when credentials are missing or invalid.
+    /// headers. Returns the resolved [`ProxyPrincipal`] when
+    /// authenticated, or `Err(message)` when credentials are missing or
+    /// invalid.
     async fn check_proxy_auth(
         &self,
         request_str: &str,
         validator: &Arc<dyn ProxyAuthValidator>,
-    ) -> Result<(), String> {
+    ) -> Result<ProxyPrincipal, String> {
         let headers = parse_connect_headers(request_str);
         // Try Proxy-Authorization header first.
         if let Some(auth_val) = headers
@@ -615,6 +683,7 @@ impl ProxyEngine {
         &self,
         mut client_socket: TcpStream,
         request_str: &str,
+        attribution: AttributionContext,
     ) -> crate::Result<()> {
         // Parse CONNECT request: "CONNECT host:port HTTP/1.1"
         let first_line = request_str.lines().next().unwrap_or("");
@@ -647,7 +716,13 @@ impl ProxyEngine {
         if self.config.read().should_passthrough(host) {
             info!("SSL passthrough for {}:{}", host, port);
             return self
-                .handle_passthrough_tunnel(client_socket, host, port, &connect_headers)
+                .handle_passthrough_tunnel(
+                    client_socket,
+                    host,
+                    port,
+                    &connect_headers,
+                    &attribution,
+                )
                 .await;
         }
 
@@ -680,7 +755,7 @@ impl ProxyEngine {
                 // Record a traffic entry so the failed attempt is visible.
                 // Include the CONNECT request headers for debugging context.
                 let session_id = self.traffic_store.current_session_id();
-                let entry = TrafficEntry::new(
+                let mut entry = TrafficEntry::new(
                     &session_id,
                     RequestData {
                         method: crate::traffic::HttpMethod::Connect,
@@ -693,6 +768,7 @@ impl ProxyEngine {
                         http_version: Some("HTTP/1.1".to_string()),
                     },
                 );
+                entry.client_addr = attribution.client_addr_string();
                 let _ = self.traffic_store.store_request(&entry).await;
                 let _ = self
                     .traffic_store
@@ -749,7 +825,9 @@ impl ProxyEngine {
                 // Hand the TLS stream to the HTTP/2 frame parser. This path
                 // multiplexes streams through the same interception pipeline
                 // used by HTTP/1.1, and is required for gRPC interception.
-                return self.handle_h2_connection(tls_stream, host, port).await;
+                return self
+                    .handle_h2_connection(tls_stream, host, port, attribution)
+                    .await;
             }
             Some("http/1.1") => {
                 debug!("ALPN negotiated http/1.1 for {}:{}", host, port);
@@ -763,7 +841,8 @@ impl ProxyEngine {
         }
 
         // Now we can intercept the actual HTTP request over TLS
-        self.handle_tls_request(&mut tls_stream, host, port).await
+        self.handle_tls_request(&mut tls_stream, host, port, &attribution)
+            .await
     }
 
     /// Handle an HTTPS CONNECT request in SSL passthrough mode.
@@ -781,6 +860,7 @@ impl ProxyEngine {
         host: &str,
         port: u16,
         connect_headers: &std::collections::HashMap<String, String>,
+        attribution: &AttributionContext,
     ) -> crate::Result<()> {
         // Send 200 Connection Established so the client starts TLS
         let response = "HTTP/1.1 200 Connection Established\r\n\r\n";
@@ -805,6 +885,7 @@ impl ProxyEngine {
             },
         );
         entry.is_passthrough = true;
+        entry.client_addr = attribution.client_addr_string();
         let _ = self.traffic_store.store_request(&entry).await;
         let _ = self.traffic_tx.send(entry.clone());
 
@@ -1096,9 +1177,10 @@ impl ProxyEngine {
         tls_stream: &mut tokio_rustls::server::TlsStream<TcpStream>,
         host: &str,
         port: u16,
+        attribution: &AttributionContext,
     ) -> crate::Result<()> {
         let mut buf = vec![0u8; 65536];
-        let pipeline = self.pipeline();
+        let pipeline = self.pipeline().with_attribution(attribution.clone());
         // One correlation id per client connection: every request on this
         // keep-alive connection carries the same connection_id in logs.
         let connection_id = uuid::Uuid::new_v4().to_string();
@@ -1187,6 +1269,7 @@ impl ProxyEngine {
         tls_stream: tokio_rustls::server::TlsStream<TcpStream>,
         host: &str,
         port: u16,
+        attribution: AttributionContext,
     ) -> crate::Result<()> {
         // Perform the HTTP/2 server handshake (client preface + settings
         // exchange) on the TLS stream. The h2 crate owns framing/flow-control
@@ -1234,6 +1317,7 @@ impl ProxyEngine {
             let extension_manager = self.extension_manager.get().cloned();
             let metrics_collector = self.metrics_collector.get().cloned();
             let memory_manager = self.memory_manager.get().cloned();
+            let attribution = attribution.clone();
 
             let host_owned = host.to_string();
 
@@ -1258,7 +1342,8 @@ impl ProxyEngine {
                     extension_manager.as_ref(),
                     metrics_collector.as_ref(),
                     memory_manager.as_ref(),
-                );
+                )
+                .with_attribution(attribution);
 
                 if let Err(e) =
                     process_h2_stream(request, &mut respond, &host_owned, port, &pipeline).await
@@ -1290,6 +1375,7 @@ impl ProxyEngine {
         &self,
         mut client_socket: TcpStream,
         initial_data: &[u8],
+        attribution: AttributionContext,
     ) -> crate::Result<()> {
         let request_str = String::from_utf8_lossy(initial_data);
         let first_line = request_str.lines().next().unwrap_or("");
@@ -1312,7 +1398,7 @@ impl ProxyEngine {
 
         info!("HTTP {} {}", method, url);
 
-        let pipeline = self.pipeline();
+        let pipeline = self.pipeline().with_attribution(attribution);
 
         // Create request data
         let mut request_data = pipeline.parse_http_request(initial_data, host, port)?;

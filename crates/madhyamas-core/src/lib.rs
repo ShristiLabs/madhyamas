@@ -65,7 +65,10 @@ pub use traffic::{
 pub use tls::CertificateManager;
 
 // Re-exports from proxy
-pub use proxy::{ProxyAuthValidator, ProxyCredentials, ProxyEngine};
+pub use proxy::{
+    AttributionContext, ListenerKind, ProxyAuthValidator, ProxyCredentials, ProxyEngine,
+    ProxyPrincipal,
+};
 
 // Re-exports from websocket
 pub use websocket::{
