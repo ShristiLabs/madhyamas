@@ -2,12 +2,13 @@
 
 ## Current Phase
 Milestone "Credential-Based Device & Agent Scoping" — issue-by-issue orchestration
-(current: #103 attribution foundation, 1 of 9)
+(current: #104 device principals, 2 of 9)
 
 ## Milestone Progress
 | Issue | Title | Developer | Tester | Reviewer | Regression | Committer | Status |
 |---|---|---|---|---|---|---|---|
-| #103 | Attribution foundation: resolve CONNECT principal and persist client_addr | done | done (15 cases) | approved (0 blockers, 4 low) | pass (all checks) | dispatched | committing |
+| #103 | Attribution foundation: resolve CONNECT principal and persist client_addr | done | done (15 cases) | approved (0 blockers, 4 low) | pass (all checks) | committed (2f88bdc) | done |
+| #104 | Device principals: registration, per-device credentials, devices API and Devices panel | done | done (24 cases) | approved (0 blockers, 0 high, 5 low) | pass (all checks + 17-step smoke) | — | commit |
 
 ## Earlier Phases (13-phase plan — COMPLETE)
 Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration.
@@ -55,6 +56,68 @@ Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration
 | 12b+12c+12d Customer+Stripe+Admin | #66,67,68 | done | skipped | approved | done (JWT auth, customer portal React frontend, Stripe Checkout+webhooks, admin portal, revenue dashboard, 604 tests) | committed (039a8ad) | done |
 
 ## Agent Log
+
+### 2026-09-18 — enterprise-regression (#104)
+- Frontend: pass; fmt --check: pass; clippy -D warnings: 0
+- OSS release build (--no-default-features): pass, 27.07 MB (identical to #103 baseline); OSS binary symbol scan: 0 madhyamas_enterprise, 0 mdy_dev_, 0 devices/device_keys/DeviceRegistered strings
+- Enterprise release build: pass, 35.81 MB; device symbols present; enterprise crate standalone: pass
+- cargo test --all-features: 716 passed / 0 failed / 29 ignored (baseline 692/28 + 24 new + 1 PG-gated)
+- Docs: check-docs.sh pass, check-docs-coverage.sh pass
+- OSS isolation: 0 cfg(feature=enterprise) in core/api src; jsonwebtoken absent from core deps
+- LIVE SMOKE (full definition-of-done on the release binary, ephemeral HOME, --enable-auth + bootstrap admin): device created via POST /api/devices with mdy_dev_ show-once key; listed; SAME KEY REJECTED ON REST (401 via X-API-Key); CONNECT with key as Basic password -> 200 Connection Established; last_seen stamped in list after the device CONNECT; rotate -> fresh key, old key 407 at CONNECT, new key 200; unauthenticated CONNECT passes by default; revoke -> status revoked + key 407 at CONNECT; audit records device_registered/device_key_rotated/device_revoked (1 each, single-type filters); DELETE 200; restart with --require-proxy-auth -> unauthenticated CONNECT 407. 17/17 (one initial "FAIL" was the smoke script sending a comma-list event_types filter where the handler parses a single value — re-verified with per-type queries, implementation correct)
+- Cargo.lock was flipped to licensing-core path-source (confirmed) — RESTORED via git checkout; working tree clean of lock changes
+- Verdict: ALL CHECKS PASSED — safe to commit
+- Status: completed
+
+### 2026-09-18 — enterprise-reviewer (#104)
+- Verdict: approved (0 blockers, 0 high, 5 low/informational)
+- Verified: engine 407 semantics (Invalid always, Missing only when strict); attribution.device_id set after validation before tunnel/pipeline dispatch; revoked key/device rejected on all 4 credential routes incl. ?api_key= query; ownership owner-or-admin on mutations, owner-scoped list; no key material in errors/logs/Debug/audit (tests assert it); SQL fully parameterized; AtomicBool Relaxed OK (set-once-at-startup); rotate fails closed (revoke-then-mint); OSS isolation clean (no enterprise cfg/import in core+api; --no-default-features builds; new engine paths inert without validator); web panel React-escaped, no localStorage/QR, isEnterprise-gated lazy chunk; docs accurate (mad_->madhyamas_ fix genuine)
+- Low notes: 407 Content-Length msg.len() vs full body (pre-existing pattern, mitigated by Connection: close); rotate can leave device keyless on mint failure (recoverable, fails closed); no name length cap (matches api-keys precedent); admin list/mutate asymmetry; malformed Proxy-Authorization falls to Missing (pre-existing)
+- fmt --check: pass; clippy -D warnings: 0
+- Status: completed
+
+### 2026-09-18 — enterprise-tester (#104)
+- Added 24 test cases + 1 PG-gated case:
+  - core tests/proxy.rs (+4): device slot defaults None, device-only principal authenticated, ProxyAuthError Missing-vs-Invalid semantics (eq/clone), engine strict-mode flag default-true + settable (real ProxyEngine + temp CertificateManager)
+  - enterprise tests/devices.rs (new, 20): generator prefix/entropy/uniqueness, is_device_key classification (incl. mdy_agent_ and "mdy_dev" edge), REST rejection of mdy_dev_ at validate_api_key (connect-only message, no key leak), validate_device_key happy/revoked-key/revoked-device/unknown/no-store, last_seen heartbeat poll, validator routing (ApiKey/Bearer/Basic-password/Basic-username -> device principal; user key -> device_id None; revoked -> Err), store CRUD (owner scoping, newest-first, delete, metadata, status/last_seen), key lifecycle (hash lookup, last_used, revoke keeps row flagged, cascade revokes only that device's active keys), audit roundtrip for the 3 new event types
+  - enterprise tests/store.rs (+1 #[ignore] PG): full device+key lifecycle on PostgreSQL per MADHYAMAS_PG_TEST_URL convention
+- Dev-dep: parking_lot added to madhyamas-core [dev-dependencies] (regular dep already; zero graph impact — same pattern as the reqwest dev-dep note)
+- RESULTS: full workspace 716 passed / 0 failed / 29 ignored (was 692/28); clippy -D warnings: 0; fmt: pass
+- GAPS (documented): engine handle_connection 407-vs-pass mapping for Missing/Invalid not directly exercised (no engine accept-loop harness exists; consistent with the #103 gap — validator-Err path IS tested enterprise-side, flag semantics tested engine-side); web panel has no unit-test infra (tsc/vite build verified); PG test ignored-gated (Docker daemon down in this environment)
+- Status: completed
+
+### 2026-09-18 — enterprise-developer (#104)
+- Core: ProxyPrincipal + device_id (is_authenticated = user OR device); new ProxyAuthError {Missing, Invalid} exported from core; engine proxy_auth_required AtomicBool (default true, preserves Phase 9.6) + set_proxy_auth_required/proxy_auth_required; handle_connection now 407s Invalid always, 407s Missing only when strict, populates attribution.device_id from principal.device_id, removed `let _ = &principal;` marker; attribution.rs docs updated
+- Enterprise stores: devices + device_keys tables in SQLite + PG (DDL, all CRUD, revoke_device_keys_for_device, last_seen/last_used stamps); DeviceRecord/DeviceKeyRecord FromRow types; EnterpriseStore trait +11 device methods
+- Enterprise auth: DEVICE_KEY_PREFIX mdy_dev_, is_device_key, generate_device_key, DeviceKeyAuth; validate_api_key early-rejects mdy_dev_ (REST/MCP/CLI connect-only); validate_device_key (revoked key/device checks, fire-and-forget last_seen heartbeat); ProxyAuthValidator routes mdy_dev_ via X-API-Key/Bearer/Basic-either-half; AuthConfig.require_proxy_auth (default false)
+- Audit: DeviceRegistered/DeviceKeyRotated/DeviceRevoked + all 5 label/parse maps (types.rs, sqlite.rs, postgres.rs, handlers.rs, api-sink collapse to Custom)
+- REST: GET/POST /api/devices, DELETE /api/devices/{id}, POST /api/devices/{id}/rotate + /revoke; ownership (owner-or-admin, 403/404); show-once DeviceWithKey; audit events
+- main.rs: --require-proxy-auth + MADHYAMAS_REQUIRE_PROXY_AUTH; enterprise attaches validator UNCONDITIONALLY with strict = proxy_auth || require_proxy_auth; AuthConfig wired
+- Web: DevicesPanel.tsx (list w/ Live-60s/Pending/Revoked status + 15s refetch, name-first create dialog, show-once credential dialog with manual-apply Host/Port/Username/Password copy rows from /api/config, rotate/revoke/delete); admin.ts wrappers; App.tsx + NavRail Smartphone icon
+- Docs: API_ENTERPRISE.md (Devices section, audit types, mdy_dev_ format, require_proxy_auth policy; fixed stale mad_ prefix to madhyamas_), ENTERPRISE_STARTUP_FLOW.md (flag row + Step 12 rewritten)
+- BUILD_OSS: pass; BUILD_ENTERPRISE (clippy all-targets all-features -D warnings): pass 0 warnings; FMT: pass; TESTS: 692/0/28 (baseline match); WEB: built (DevicesPanel chunk); docs checks pass
+- Gotcha: Cargo.lock flipped to local licensing-core path patch (build ran with [patch] active) — committer must `git checkout -- Cargo.lock` before staging
+- Status: completed
+
+### 2026-09-18 — orchestrator (milestone kickoff, #104)
+- Issue #104 exists (created by maintainer) — enterprise-issues step skipped; labeled `status:in-progress`
+- Verified code facts post-#103 (commit 2f88bdc):
+  - `ProxyPrincipal { user_id, api_key_id }` at engine.rs:52; `impl ProxyAuthValidator for AuthManager` at enterprise auth.rs:624; engine attaches validator only when `--proxy-auth` (main.rs:1750-1755); 407 on ANY validation failure incl. missing creds (engine.rs:582-610, `let _ = &principal;` marker at :610)
+  - `AttributionContext.device_id` exists and is always None (attribution.rs:40)
+  - Stores: SQLite DDL consts + `?` binds (sqlite.rs:49-102), PG DDL consts + `$N` binds (postgres.rs:56-109); `ApiKeyRecord` FromRow; trait at store/mod.rs:50
+  - Middleware X-API-Key path funnels through `AuthManager::validate_api_key` (middleware.rs:266) — prefix rejection belongs there (covers header + query-param paths and MCP/CLI)
+  - Show-once pattern: handlers.rs create_api_key :705 (hash + 12-char prefix persisted, plaintext returned once)
+  - Web: ApiKeysPanel.tsx pattern, admin.ts wrappers, App.tsx lazy chunks + `isEnterprise` gating; manual-apply host/port precedent = AppHeader.tsx:68 / CertificateHelper.tsx:93 fetch `/api/config` `{host, proxy_port}`
+  - Sole `with_proxy_auth_validator` caller is main.rs:1754
+- Design resolutions (from issue text + maintainer brief): dedicated `devices` + `device_keys` tables (issue proposal "keys keep referencing it"); `ProxyPrincipal` gains `device_id`; invalid/revoked credential => 407 in BOTH modes (DoD: "revoke kills proxy access" unconditional) while MISSING creds 407 only when `require_proxy_auth` on; enterprise attaches validator unconditionally (attribution), strict = `--proxy-auth` OR new `--require-proxy-auth`; Basic-auth manual apply scans username OR password for `mdy_dev_` prefix
+- Dispatching enterprise-developer for #104
+- Status: dispatched
+
+### 2026-09-18 — enterprise-committer (#103)
+- Restored Cargo.lock (discarded local licensing-core path-patch flip); staged 17 files by name (16 modified + attribution.rs new)
+- Commit: 2f88bdc "feat(core): resolve CONNECT principal and persist client_addr" — body references docs/CREDENTIAL_ONBOARDING.md and "Implements #103 (1 of 9)"; no AI attribution
+- 17 files changed, 883 insertions(+), 63 deletions(-); working tree clean after commit
+- Status: completed
 
 ### 2026-09-18 — enterprise-regression (#103)
 - Frontend: pass (needed one-time `npm ci` — tsc was missing in this checkout; environment, not regression)

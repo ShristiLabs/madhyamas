@@ -4,7 +4,9 @@
 //! `MADHYAMAS_PG_TEST_URL`). They are marked `#[ignore]`; run explicitly:
 //! `cargo test --all-features -- --ignored`.
 
-use madhyamas_enterprise::store::{EnterpriseStore, PostgresEnterpriseStore};
+use madhyamas_enterprise::store::{
+    DeviceKeyRecord, DeviceRecord, EnterpriseStore, PostgresEnterpriseStore,
+};
 use madhyamas_enterprise::{
     ApiKeyRecord, AuditEvent, AuditEventType, AuditFilter, User, UserRole, UserStatus,
 };
@@ -120,4 +122,84 @@ async fn test_pg_enterprise_api_key() {
         .is_none());
 
     store.delete_user(&user_id).await.unwrap();
+}
+
+/// Device + device-key lifecycle on PostgreSQL (issue #104): register,
+/// owner-scoped list, key hash lookup, revocation (single + cascade),
+/// last-seen stamp, delete.
+#[tokio::test]
+#[ignore]
+async fn test_pg_enterprise_devices() {
+    let store = make_store().await;
+    let owner = format!("owner_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+
+    let device = DeviceRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "PG test phone".to_string(),
+        owner_user_id: owner.clone(),
+        install_uuid: None,
+        mac_address: None,
+        status: "active".to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        last_seen: None,
+    };
+    store.create_device(&device).await.unwrap();
+
+    let got = store.get_device(&device.id).await.unwrap().unwrap();
+    assert_eq!(got.name, "PG test phone");
+    assert_eq!(got.owner_user_id, owner);
+
+    let listed = store.list_devices(&owner).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, device.id);
+
+    let key = DeviceKeyRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        device_id: device.id.clone(),
+        key_hash: format!("devhash_{}", uuid::Uuid::new_v4()),
+        key_prefix: "mdy_dev_".to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        revoked_at: None,
+        last_used_at: None,
+    };
+    store.create_device_key(&key).await.unwrap();
+
+    let fetched_key = store
+        .get_device_key_by_hash(&key.key_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched_key.device_id, device.id);
+
+    store.update_device_last_seen(&device.id).await.unwrap();
+    assert!(store
+        .get_device(&device.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .last_seen
+        .is_some());
+
+    store
+        .revoke_device_keys_for_device(&device.id)
+        .await
+        .unwrap();
+    let revoked_key = store
+        .get_device_key_by_hash(&key.key_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(revoked_key.revoked_at.is_some());
+
+    store
+        .update_device_status(&device.id, "revoked")
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_device(&device.id).await.unwrap().unwrap().status,
+        "revoked"
+    );
+
+    store.delete_device(&device.id).await.unwrap();
+    assert!(store.get_device(&device.id).await.unwrap().is_none());
 }

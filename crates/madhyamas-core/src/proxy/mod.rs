@@ -7,4 +7,6 @@ pub mod socks;
 pub mod upstream_proxy;
 
 pub use attribution::{AttributionContext, ListenerKind};
-pub use engine::{ProxyAuthValidator, ProxyCredentials, ProxyEngine, ProxyPrincipal};
+pub use engine::{
+    ProxyAuthError, ProxyAuthValidator, ProxyCredentials, ProxyEngine, ProxyPrincipal,
+};

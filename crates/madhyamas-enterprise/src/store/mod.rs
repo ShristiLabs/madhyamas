@@ -16,7 +16,10 @@ pub mod types;
 
 pub use postgres::PostgresEnterpriseStore;
 pub use sqlite::SqliteEnterpriseStore;
-pub use types::{ApiKeyRecord, AuditEventRecord, AuditStats, AuthSession, UserRecord, UserUpdate};
+pub use types::{
+    ApiKeyRecord, AuditEventRecord, AuditStats, AuthSession, DeviceKeyRecord, DeviceRecord,
+    UserRecord, UserUpdate,
+};
 
 use async_trait::async_trait;
 
@@ -64,6 +67,32 @@ pub trait EnterpriseStore: Send + Sync {
     async fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKeyRecord>>;
     async fn revoke_api_key(&self, id: &str) -> Result<()>;
     async fn update_api_key_last_used(&self, id: &str) -> Result<()>;
+
+    /// Register a device principal (issue #104).
+    async fn create_device(&self, device: &DeviceRecord) -> Result<()>;
+    /// Fetch a device by ID.
+    async fn get_device(&self, id: &str) -> Result<Option<DeviceRecord>>;
+    /// List devices owned by `owner_user_id`, newest first.
+    async fn list_devices(&self, owner_user_id: &str) -> Result<Vec<DeviceRecord>>;
+    /// Delete a device row (its keys should be revoked first).
+    async fn delete_device(&self, id: &str) -> Result<()>;
+    /// Update a device's lifecycle status (`active` / `revoked`).
+    async fn update_device_status(&self, id: &str, status: &str) -> Result<()>;
+    /// Stamp a device's `last_seen` to now — called from proxy-auth
+    /// events (device CONNECT).
+    async fn update_device_last_seen(&self, id: &str) -> Result<()>;
+    /// Persist a per-device credential (hash + prefix; the plaintext is
+    /// shown once at creation and never stored).
+    async fn create_device_key(&self, key: &DeviceKeyRecord) -> Result<()>;
+    /// Look up a device credential by its key hash.
+    async fn get_device_key_by_hash(&self, hash: &str) -> Result<Option<DeviceKeyRecord>>;
+    /// Deactivate a device credential (rotation/revocation).
+    async fn revoke_device_key(&self, id: &str) -> Result<()>;
+    /// Deactivate all of a device's credentials at once (device
+    /// revocation/deletion).
+    async fn revoke_device_keys_for_device(&self, device_id: &str) -> Result<()>;
+    /// Stamp a device credential's `last_used_at` to now.
+    async fn update_device_key_last_used(&self, id: &str) -> Result<()>;
 
     async fn create_session(&self, session: &AuthSession) -> Result<()>;
     async fn get_session(&self, id: &str) -> Result<Option<AuthSession>>;

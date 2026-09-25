@@ -33,6 +33,12 @@ pub enum AuditEventType {
     ApiKeyCreated,
     /// API key revoked
     ApiKeyRevoked,
+    /// Device registered with its initial credential (issue #104)
+    DeviceRegistered,
+    /// Device credential rotated — old key deactivated, new key issued
+    DeviceKeyRotated,
+    /// Device revoked or deleted — its credentials no longer authenticate
+    DeviceRevoked,
     /// Traffic exported
     TrafficExported,
     /// Session created
@@ -368,7 +374,14 @@ impl From<AuditEventType> for ApiAuditEventType {
             AuditEventType::BreakpointCreated => ApiAuditEventType::BreakpointCreated,
             AuditEventType::BreakpointDeleted => ApiAuditEventType::BreakpointDeleted,
             AuditEventType::ConfigChanged => ApiAuditEventType::ConfigChanged,
-            AuditEventType::Custom => ApiAuditEventType::Custom,
+            // Device lifecycle events are enterprise-domain (issue #104);
+            // they have no API-trait counterpart and collapse to `Custom`
+            // on the shared sink (they carry their identity in the
+            // description/metadata).
+            AuditEventType::DeviceRegistered
+            | AuditEventType::DeviceKeyRotated
+            | AuditEventType::DeviceRevoked
+            | AuditEventType::Custom => ApiAuditEventType::Custom,
         }
     }
 }

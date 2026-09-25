@@ -235,14 +235,22 @@ the `audit_events` table with a hash chain for tamper-evidence.
 
 ### Step 12 — Attach proxy auth validator
 
-**Source:** `main.rs:1621–1631`
+**Source:** `main.rs` (enterprise init block)
 
-When `--proxy-auth` / `MADHYAMAS_PROXY_AUTH` is enabled, the `AuthManager`
-Arc is attached to the already-running `ProxyEngine` via
-`with_proxy_auth_validator()`, setting a `OnceLock` that takes effect
-immediately for all subsequent CONNECT/HTTP requests — no restart needed.
-Unauthenticated proxy requests receive `407 Proxy Authentication Required`.
-When off, the proxy remains open.
+In the enterprise tier the `AuthManager` Arc is always attached to the
+already-running `ProxyEngine` via `with_proxy_auth_validator()` (a `OnceLock`
+that takes effect immediately for all subsequent CONNECT/HTTP requests — no
+restart needed), so connections carrying per-device credentials
+(`mdy_dev_...`, issue #104) are attributed to their device. Strictness is a
+policy set with `set_proxy_auth_required()`:
+
+- `--proxy-auth` or `--require-proxy-auth` enabled → unauthenticated proxy
+  requests receive `407 Proxy Authentication Required`.
+- Default (both off) → unauthenticated proxy traffic passes and is captured
+  to the unattributed scope, while supplied-but-invalid credentials (e.g. a
+  revoked device key) are still rejected with `407`.
+
+The OSS build never attaches a validator; the proxy remains open.
 
 ### Step 13 — Inject traits into AppState
 
@@ -476,6 +484,7 @@ Flags are declared `global = true` so they work with any subcommand.
 | `--redis-url` | `MADHYAMAS_REDIS_URL` | *(none)* | Redis URL for multi-instance coordination. `redis://` (TCP), `rediss://` (TLS). |
 | `--redis-ca-cert` | `MADHYAMAS_REDIS_CA_CERT` | *(none)* | PEM CA cert for `rediss://` TLS verification. Omit → system CA store. |
 | `--proxy-auth` | `MADHYAMAS_PROXY_AUTH` | `false` | Require auth for proxy CONNECT/HTTP. Unauthenticated → `407`. |
+| `--require-proxy-auth` | `MADHYAMAS_REQUIRE_PROXY_AUTH` | `false` | Proxy auth policy (issue #104): when off, unauthenticated proxy traffic passes unattributed (credentials are still validated for attribution); when on, unauthenticated → `407`. Invalid/revoked credentials → `407` in both modes. |
 | `--ca-cert-file` | `MADHYAMAS_CA_CERT_FILE` | *(none)* | PEM CA cert file for HTTPS interception (shared CA for multi-instance). |
 | `--ca-key-file` | `MADHYAMAS_CA_KEY_FILE` | *(none)* | PEM CA private key file. Paired with `--ca-cert-file`. |
 | `--base-path` | `MADHYAMAS_BASE_PATH` | `/` | Base path for API + web UI (LB context-path routing). |

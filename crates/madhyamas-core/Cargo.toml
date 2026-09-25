@@ -103,5 +103,9 @@ chrono.workspace = true
 # tests); reqwest is already a regular dependency, so this adds nothing to
 # the dependency graph.
 reqwest.workspace = true
+# Integration tests construct `ProxyEngine` (issue #104 strict-mode flag),
+# whose config lives in an `Arc<parking_lot::RwLock<ProxyConfig>>`; already
+# a regular dependency, so this adds nothing to the dependency graph.
+parking_lot.workspace = true
 # Shared fixtures for integration tests under tests/
 madhyamas-test-utils.workspace = true

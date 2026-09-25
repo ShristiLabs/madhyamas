@@ -5,15 +5,17 @@
 //! construction points (the intercept pipeline, the CONNECT/TLS-failure
 //! and passthrough entries, and the SOCKS5 tunnel entry). Today only
 //! [`AttributionContext::client_addr`] is stamped onto captured entries;
-//! the `device_id` slot is forward compatibility for device principals
-//! (credential-based onboarding, see `docs/CREDENTIAL_ONBOARDING.md`) and
-//! stays `None` until that work lands.
+//! the `device_id` slot is populated by the engine for device-
+//! authenticated connections (issue #104) and is what per-device traffic
+//! filters and device-scoped intercept rules will consume in later
+//! credential-onboarding issues.
 //!
 //! Tier placement: the struct lives in core and is inert in the OSS
 //! tier — the proxy listener performs no authentication there, so the
 //! context only ever carries the client address and listener kind. The
 //! enterprise tier additionally resolves a [`super::ProxyPrincipal`] from
-//! proxy credentials at CONNECT (see `ProxyAuthValidator`).
+//! proxy credentials at CONNECT (see `ProxyAuthValidator`) and copies a
+//! resolved device identity into [`AttributionContext::device_id`].
 
 use std::net::SocketAddr;
 
@@ -33,10 +35,12 @@ pub enum ListenerKind {
 /// connection can be attributed to its origin.
 #[derive(Debug, Clone)]
 pub struct AttributionContext {
-    /// Device principal for the connection. Always `None` today; the slot
-    /// exists so device-scoped intercept rules and per-device traffic
-    /// filters (later issues in the credential-onboarding milestone) can
-    /// populate it without re-threading this context.
+    /// Device principal for the connection. Populated by the engine after
+    /// proxy-auth validation when the credential resolves to a device
+    /// (issue #104); `None` for unauthenticated and user-authenticated
+    /// connections. Later issues in the credential-onboarding milestone
+    /// (per-device traffic filters, device-scoped intercept rules) consume
+    /// it without re-threading this context.
     pub device_id: Option<String>,
     /// Address of the directly-connected client. This is the address the
     /// proxy accepted, which may differ from the device identity when
@@ -120,11 +124,8 @@ mod tests {
         let ctx = AttributionContext::new(ListenerKind::Socks, Some(addr));
         assert_eq!(ctx.listener, ListenerKind::Socks);
         assert_eq!(ctx.client_addr, Some(addr));
-        // Forward-compat slot only: populated by the device-principal
-        // issues that follow #103.
-        assert!(
-            ctx.device_id.is_none(),
-            "device_id must stay None until device principals land"
-        );
+        // The constructor never infers a device: the engine fills the
+        // slot from the resolved proxy principal (issue #104).
+        assert!(ctx.device_id.is_none());
     }
 }

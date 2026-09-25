@@ -544,6 +544,84 @@ async fn pipeline_without_attribution_stores_no_client_addr() {
 }
 
 // ============================================================================
+// Issue #104 — device principals and the proxy-auth policy flag
+// ============================================================================
+
+/// The OSS default and the derived default keep the device slot empty;
+/// only device credentials (enterprise tier) populate it.
+#[test]
+fn proxy_principal_device_slot_defaults_to_none() {
+    let principal = ProxyPrincipal::unauthenticated();
+    assert_eq!(principal, ProxyPrincipal::default());
+    assert!(principal.device_id.is_none());
+    assert!(!principal.is_authenticated());
+}
+
+/// A principal carrying only a device identity counts as authenticated
+/// (device keys are real principals, not half-authenticated ones).
+#[test]
+fn proxy_principal_device_only_is_authenticated() {
+    let principal = ProxyPrincipal {
+        user_id: None,
+        api_key_id: Some("dk-1".to_string()),
+        device_id: Some("dev-1".to_string()),
+    };
+    assert!(principal.is_authenticated());
+    assert!(principal.user_id.is_none());
+}
+
+/// The engine distinguishes why proxy auth failed: `Missing` (no
+/// credential headers — 407 only in strict mode) vs `Invalid` (rejected
+/// credential — always 407).
+#[test]
+fn proxy_auth_error_distinguishes_missing_from_invalid() {
+    use madhyamas_core::ProxyAuthError;
+
+    assert_eq!(ProxyAuthError::Missing, ProxyAuthError::Missing);
+    let invalid = ProxyAuthError::Invalid("Device key revoked".to_string());
+    assert_ne!(ProxyAuthError::Missing, invalid);
+    assert_ne!(invalid, ProxyAuthError::Invalid("other".to_string()));
+    // Clone round-trips (the engine moves the message into the 407 body).
+    let cloned = invalid.clone();
+    assert_eq!(cloned, invalid);
+}
+
+/// The strict-mode flag defaults to `true` (the Phase 9.6 `--proxy-auth`
+/// semantics of attaching a validator) and can be relaxed to `false`
+/// (issue #104: unauthenticated traffic passes unattributed).
+#[tokio::test]
+async fn engine_proxy_auth_required_defaults_true_and_is_settable() {
+    use madhyamas_core::{CertificateManager, ProxyEngine};
+
+    let cert_dir = tempfile::TempDir::new().expect("temp dir for certs");
+    let cert_path = cert_dir.path().join("ca.pem");
+
+    let store = TrafficStore::in_memory().await.expect("in-memory store");
+    let cert_manager = CertificateManager::new(cert_path.to_str().expect("utf8 path"))
+        .await
+        .expect("certificate manager");
+    let engine = ProxyEngine::new(
+        std::sync::Arc::new(parking_lot::RwLock::new(ProxyConfig::default())),
+        cert_manager,
+        store as std::sync::Arc<dyn madhyamas_core::TrafficStoreBackend + Send + Sync>,
+    )
+    .await
+    .expect("engine");
+
+    assert!(
+        engine.proxy_auth_required(),
+        "strict mode must default to true (Phase 9.6 semantics)"
+    );
+    engine.set_proxy_auth_required(false);
+    assert!(
+        !engine.proxy_auth_required(),
+        "strict mode must be relaxable for the #104 default policy"
+    );
+    engine.set_proxy_auth_required(true);
+    assert!(engine.proxy_auth_required());
+}
+
+// ============================================================================
 // Pipeline — body decompression
 // ============================================================================
 

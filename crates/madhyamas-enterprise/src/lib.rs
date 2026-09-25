@@ -34,9 +34,13 @@ pub mod store;
 pub mod user;
 
 pub use audit::{AuditEvent, AuditEventType, AuditFilter, AuditLogger};
-pub use auth::{ApiKey, ApiKeyAuth, AuthConfig, AuthManager, JwtClaims, RefreshTokenClaims, Scope};
+pub use auth::{
+    ApiKey, ApiKeyAuth, AuthConfig, AuthManager, DeviceKeyAuth, JwtClaims, RefreshTokenClaims,
+    Scope, DEVICE_KEY_PREFIX,
+};
 pub use credentials::{hash_password, validate_password_complexity, verify_password};
 pub use enterprise_error::EnterpriseError;
+pub use handlers::{Device, DeviceWithKey};
 pub use license::{License, LicenseClaims, LicenseError, LicenseFile, LicenseVerifier};
 pub use rbac::{Permission, RbacManager, Resource, ResourceType};
 pub use redis_state::{
@@ -46,7 +50,7 @@ pub use redis_state::{
 pub use router::create_enterprise_router;
 pub use secrets::{EnterpriseSecretStore, SecretAuditAdapter};
 pub use security::{is_private_ip, validate_callback_url};
-pub use store::{ApiKeyRecord, AuditStats, AuthSession, UserUpdate};
+pub use store::{ApiKeyRecord, AuditStats, AuthSession, DeviceKeyRecord, DeviceRecord, UserUpdate};
 pub use store::{EnterpriseStore, PostgresEnterpriseStore, SqliteEnterpriseStore, StoreError};
 pub use user::{User, UserRole, UserStatus};
 

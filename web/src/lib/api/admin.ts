@@ -5,7 +5,7 @@
  * and multi-instance management. All calls go through the shared API
  * client which handles auth headers and 401 refresh.
  */
-import { apiGet, apiPost, apiPut, apiDeleteVoid, apiGetRaw } from "./client"
+import { apiGet, apiPost, apiPostVoid, apiPut, apiDeleteVoid, apiGetRaw } from "./client"
 
 // ============================================================================
 // Users
@@ -200,6 +200,53 @@ export function createApiKeyApi(data: CreateApiKeyPayload): Promise<ApiKeyEntry>
 
 export function revokeApiKeyApi(id: string): Promise<void> {
   return apiDeleteVoid(`/auth/api-keys/${id}`)
+}
+
+// ============================================================================
+// Devices (enterprise, issue #104)
+// ============================================================================
+
+export interface DeviceEntry {
+  id: string
+  name: string
+  owner_user_id: string
+  install_uuid: string | null
+  mac_address: string | null
+  status: string
+  created_at: number
+  last_seen: number | null
+}
+
+export interface DeviceWithKey {
+  device: DeviceEntry
+  /** Plaintext mdy_dev_ credential — shown once at creation/rotation. */
+  key: string
+}
+
+export interface CreateDevicePayload {
+  name: string
+  install_uuid?: string
+  mac_address?: string
+}
+
+export function listDevicesApi(): Promise<DeviceEntry[]> {
+  return apiGet<DeviceEntry[]>("/devices")
+}
+
+export function createDeviceApi(data: CreateDevicePayload): Promise<DeviceWithKey> {
+  return apiPost<DeviceWithKey>("/devices", data)
+}
+
+export function rotateDeviceKeyApi(id: string): Promise<DeviceWithKey> {
+  return apiPost<DeviceWithKey>(`/devices/${id}/rotate`, {})
+}
+
+export function revokeDeviceApi(id: string): Promise<void> {
+  return apiPostVoid(`/devices/${id}/revoke`, {})
+}
+
+export function deleteDeviceApi(id: string): Promise<void> {
+  return apiDeleteVoid(`/devices/${id}`)
 }
 
 // ============================================================================

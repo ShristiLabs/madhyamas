@@ -112,6 +112,38 @@ pub struct AuthSession {
     pub revoked: bool,
 }
 
+/// Database row for the `devices` table (issue #104). A device is the
+/// principal a per-device credential (`mdy_dev_...`) resolves to; its
+/// `last_seen` is refreshed from proxy-auth events (device CONNECT).
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeviceRecord {
+    pub id: String,
+    pub name: String,
+    pub owner_user_id: String,
+    pub install_uuid: Option<String>,
+    pub mac_address: Option<String>,
+    /// Lifecycle status: `active` or `revoked`. A revoked device's keys
+    /// are deactivated and its credentials no longer authenticate.
+    pub status: String,
+    pub created_at: String,
+    pub last_seen: Option<String>,
+}
+
+/// Database row for the `device_keys` table (issue #104). Each row is one
+/// per-device credential; `key_hash` stores the SHA-256 of the plaintext
+/// `mdy_dev_...` key and `key_prefix` a non-secret preview. Rotation
+/// deactivates the old row (`revoked_at` set) and inserts a new one.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeviceKeyRecord {
+    pub id: String,
+    pub device_id: String,
+    pub key_hash: String,
+    pub key_prefix: String,
+    pub created_at: String,
+    pub revoked_at: Option<String>,
+    pub last_used_at: Option<String>,
+}
+
 /// Database row for the `audit_events` table.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct AuditEventRecord {
@@ -176,6 +208,9 @@ fn event_type_label(t: AuditEventType) -> String {
         AuditEventType::Logout => "logout".to_string(),
         AuditEventType::ApiKeyCreated => "api_key_created".to_string(),
         AuditEventType::ApiKeyRevoked => "api_key_revoked".to_string(),
+        AuditEventType::DeviceRegistered => "device_registered".to_string(),
+        AuditEventType::DeviceKeyRotated => "device_key_rotated".to_string(),
+        AuditEventType::DeviceRevoked => "device_revoked".to_string(),
         AuditEventType::TrafficExported => "traffic_exported".to_string(),
         AuditEventType::SessionCreated => "session_created".to_string(),
         AuditEventType::SessionDeleted => "session_deleted".to_string(),
@@ -194,6 +229,9 @@ fn parse_event_type(label: &str) -> AuditEventType {
         "logout" => AuditEventType::Logout,
         "api_key_created" => AuditEventType::ApiKeyCreated,
         "api_key_revoked" => AuditEventType::ApiKeyRevoked,
+        "device_registered" => AuditEventType::DeviceRegistered,
+        "device_key_rotated" => AuditEventType::DeviceKeyRotated,
+        "device_revoked" => AuditEventType::DeviceRevoked,
         "traffic_exported" => AuditEventType::TrafficExported,
         "session_created" => AuditEventType::SessionCreated,
         "session_deleted" => AuditEventType::SessionDeleted,

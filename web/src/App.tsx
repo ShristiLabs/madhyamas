@@ -29,6 +29,7 @@ const AuditPanel = lazy(() => import("@/features/admin/AuditPanel").then((m) => 
 const MetricsPanel = lazy(() => import("@/features/admin/MetricsPanel").then((m) => ({ default: m.MetricsPanel })))
 const LicensePanel = lazy(() => import("@/features/admin/LicensePanel").then((m) => ({ default: m.LicensePanel })))
 const ApiKeysPanel = lazy(() => import("@/features/admin/ApiKeysPanel").then((m) => ({ default: m.ApiKeysPanel })))
+const DevicesPanel = lazy(() => import("@/features/admin/DevicesPanel").then((m) => ({ default: m.DevicesPanel })))
 const InstancesPanel = lazy(() => import("@/features/admin/InstancesPanel").then((m) => ({ default: m.InstancesPanel })))
 const SessionTimeoutWarning = lazy(() => import("@/features/auth/SessionTimeoutWarning").then((m) => ({ default: m.SessionTimeoutWarning })))
 
@@ -95,6 +96,7 @@ const ADMIN_VIEWS: NavView[] = [
   { id: "metrics", label: "Metrics", icon: "BarChart3" },
   { id: "license", label: "License", icon: "KeyRound" },
   { id: "apikeys", label: "API Keys", icon: "Key" },
+  { id: "devices", label: "Devices", icon: "Smartphone" },
   { id: "instances", label: "Instances", icon: "Server" },
 ]
 
@@ -139,6 +141,7 @@ function AppShell() {
               {isEnterprise && activeView === "metrics" && <MetricsPanel />}
               {isEnterprise && activeView === "license" && <LicensePanel />}
               {isEnterprise && activeView === "apikeys" && <ApiKeysPanel />}
+              {isEnterprise && activeView === "devices" && <DevicesPanel />}
               {isEnterprise && activeView === "instances" && <InstancesPanel />}
             </Suspense>
           </ErrorBoundary>

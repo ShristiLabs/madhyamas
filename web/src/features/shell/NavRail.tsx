@@ -17,6 +17,7 @@ import {
   KeyRound,
   Key,
   Server,
+  Smartphone,
   type LucideIcon,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -49,6 +50,7 @@ const ICONS: Record<string, LucideIcon> = {
   KeyRound,
   Key,
   Server,
+  Smartphone,
 }
 
 interface NavRailProps {

@@ -89,6 +89,14 @@ pub fn create_enterprise_router(
         .route("/auth/api-keys", get(handlers::get_api_keys))
         .route("/auth/api-keys", post(handlers::create_api_key))
         .route("/auth/api-keys/{id}", delete(handlers::revoke_api_key))
+        // Device management (issue #104): per-device credentials are
+        // connect-only; these routes manage the device registry. A
+        // `mdy_dev_` key is rejected by the auth middleware.
+        .route("/devices", get(handlers::get_devices))
+        .route("/devices", post(handlers::create_device))
+        .route("/devices/{id}", delete(handlers::delete_device))
+        .route("/devices/{id}/rotate", post(handlers::rotate_device_key))
+        .route("/devices/{id}/revoke", post(handlers::revoke_device))
         // User Management (admin-only via RBAC)
         .merge(user_routes)
         // RBAC

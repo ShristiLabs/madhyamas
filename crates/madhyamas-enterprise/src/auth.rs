@@ -36,6 +36,16 @@ pub struct AuthConfig {
     /// Session idle timeout in seconds (default 30 minutes). A session whose
     /// `last_activity` is older than this is considered expired and revoked.
     pub session_idle_timeout_secs: u64,
+    /// Require authentication on the proxy listener (issue #104). When
+    /// `true`, CONNECT/HTTP proxy requests without credentials are
+    /// rejected with `407`. When `false` (the default), missing
+    /// credentials let the connection proceed unauthenticated — its
+    /// traffic is captured to the unattributed scope — while supplied
+    /// but invalid credentials (unknown, expired, revoked) are still
+    /// rejected. Distinct from the engine-level `--proxy-auth` flag,
+    /// which forces the strict behavior.
+    #[serde(default)]
+    pub require_proxy_auth: bool,
 }
 
 impl Default for AuthConfig {
@@ -49,6 +59,7 @@ impl Default for AuthConfig {
             refresh_interval_secs: 300,        // 5 minutes
             refresh_token_secs: 7 * 24 * 3600, // 7 days
             session_idle_timeout_secs: 1800,   // 30 minutes
+            require_proxy_auth: false,
         }
     }
 }
@@ -73,6 +84,7 @@ impl AuthConfig {
             refresh_interval_secs: 300,
             refresh_token_secs: 7 * 24 * 3600,
             session_idle_timeout_secs: 1800,
+            require_proxy_auth: false,
         }
     }
 }
@@ -214,6 +226,42 @@ pub fn hash_api_key(key: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Prefix of per-device credentials (issue #104). The distinct prefix
+/// lets the REST middleware and the proxy-auth resolver classify a key
+/// without a database hit: `mdy_dev_` keys are connect-only and must
+/// never authenticate REST/MCP/CLI requests.
+pub const DEVICE_KEY_PREFIX: &str = "mdy_dev_";
+
+/// Whether the given token is a per-device credential.
+pub fn is_device_key(token: &str) -> bool {
+    token.trim().starts_with(DEVICE_KEY_PREFIX)
+}
+
+/// Generate a new per-device credential: `mdy_dev_` + 32 hex chars
+/// (issue #104). The plaintext is returned exactly once at creation
+/// (show-once semantics, like API keys); only its SHA-256 hash is
+/// persisted.
+pub fn generate_device_key() -> String {
+    format!(
+        "{}{}",
+        DEVICE_KEY_PREFIX,
+        uuid::Uuid::new_v4().simple().to_string().replace('-', "")
+    )
+}
+
+/// Result of validating a per-device credential: carries the device it
+/// resolves to, its owner, and the key record ID for audit logging and
+/// last-seen tracking (issue #104).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceKeyAuth {
+    /// Device the credential belongs to.
+    pub device_id: String,
+    /// Owning user ID (from the device record).
+    pub owner_user_id: String,
+    /// Device-key record ID (for audit logging / last-used updates).
+    pub key_id: String,
+}
+
 /// JWT Claims
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtClaims {
@@ -345,13 +393,27 @@ impl AuthManager {
         self.config.require_auth
     }
 
+    /// Whether the proxy listener must require authentication (issue
+    /// #104). Drives the engine's strict-mode flag at startup.
+    pub fn require_proxy_auth(&self) -> bool {
+        self.config.require_proxy_auth
+    }
+
     /// Validate an API key against the persistent store.
     ///
     /// Hashes the input with SHA-256, looks up the record by hash, checks
     /// expiry, fire-and-forgets a `last_used` update, and returns the owner
     /// user ID plus granted scopes. Returns `AuthFailed` if the key is
-    /// unknown, expired, or no store is configured.
+    /// unknown, expired, or no store is configured. Per-device credentials
+    /// (`mdy_dev_...`) are rejected here outright — they are connect-only
+    /// and must never authenticate REST/MCP/CLI requests (issue #104).
     pub async fn validate_api_key(&self, key: &str) -> Result<ApiKeyAuth, EnterpriseError> {
+        if is_device_key(key) {
+            return Err(EnterpriseError::AuthFailed {
+                message: "Device keys are connect-only and cannot be used for API access"
+                    .to_string(),
+            });
+        }
         let store = self
             .store
             .as_ref()
@@ -391,6 +453,69 @@ impl AuthManager {
             scopes,
             key_id,
         })
+    }
+
+    /// Validate a per-device credential (`mdy_dev_...`) against the
+    /// persistent store (issue #104).
+    ///
+    /// Hashes the input with SHA-256, looks up the device-key record by
+    /// hash, rejects revoked keys and keys whose parent device is
+    /// revoked, fire-and-forgets `last_seen`/`last_used` updates (the
+    /// device heartbeat derived from proxy-auth events), and returns the
+    /// device identity. Returns `AuthFailed` when the key is unknown or
+    /// revoked, the device is revoked, or no store is configured.
+    pub async fn validate_device_key(&self, key: &str) -> Result<DeviceKeyAuth, EnterpriseError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| EnterpriseError::AuthFailed {
+                message: "Device key validation requires a persistent store".to_string(),
+            })?;
+        let hash = hash_api_key(key);
+        let record = store
+            .get_device_key_by_hash(&hash)
+            .await
+            .map_err(|e| EnterpriseError::AuthFailed {
+                message: format!("Device key lookup failed: {e}"),
+            })?
+            .ok_or_else(|| EnterpriseError::AuthFailed {
+                message: "Invalid device key".to_string(),
+            })?;
+        if record.revoked_at.is_some() {
+            return Err(EnterpriseError::AuthFailed {
+                message: "Device key revoked".to_string(),
+            });
+        }
+        let device = store
+            .get_device(&record.device_id)
+            .await
+            .map_err(|e| EnterpriseError::AuthFailed {
+                message: format!("Device lookup failed: {e}"),
+            })?
+            .ok_or_else(|| EnterpriseError::AuthFailed {
+                message: "Device key references a missing device".to_string(),
+            })?;
+        if device.status != "active" {
+            return Err(EnterpriseError::AuthFailed {
+                message: "Device revoked".to_string(),
+            });
+        }
+        let auth = DeviceKeyAuth {
+            device_id: device.id,
+            owner_user_id: device.owner_user_id,
+            key_id: record.id,
+        };
+        // Fire-and-forget heartbeat: the device's last_seen (panel
+        // liveness) and the key's last_used are derived from proxy-auth
+        // events — don't block the CONNECT on them.
+        let store_clone = Arc::clone(store);
+        let device_id = auth.device_id.clone();
+        let kid = auth.key_id.clone();
+        tokio::spawn(async move {
+            let _ = store_clone.update_device_last_seen(&device_id).await;
+            let _ = store_clone.update_device_key_last_used(&kid).await;
+        });
+        Ok(auth)
     }
 
     /// Generate a JWT access token for a user using HMAC-SHA256 signing.
@@ -620,37 +745,80 @@ impl AuthProvider for AuthManager {
 /// Since issue #103 the resolved [`ProxyPrincipal`] (user id and, for API
 /// keys, the key record id) is returned so the engine can attribute the
 /// connection instead of discarding the identity after validation.
+///
+/// Issue #104 adds device principals: any credential carrying a
+/// `mdy_dev_...` token resolves to its device instead of a user. The
+/// token is accepted as the `X-API-Key`/Bearer value, or in either half
+/// of a Basic credential — manual proxy-auth fields on iOS/OEM-Android
+/// place the key in the password field with an arbitrary username.
 #[async_trait]
 impl ProxyAuthValidator for AuthManager {
     async fn validate(&self, credentials: &ProxyCredentials) -> Result<ProxyPrincipal, String> {
         match credentials {
             ProxyCredentials::ProxyBasicAuth(creds) => {
                 let (username, password) = creds.split_once(':').unwrap_or((creds, ""));
+                // A device key in either Basic half routes to device-key
+                // validation (manual-apply flow, issue #104).
+                if is_device_key(username) {
+                    return self.device_principal(username).await;
+                }
+                if is_device_key(password) {
+                    return self.device_principal(password).await;
+                }
                 self.authenticate_password(username, password)
                     .await
                     .map(|user_id| ProxyPrincipal {
                         user_id: Some(user_id),
                         api_key_id: None,
+                        device_id: None,
                     })
                     .map_err(|e| e.to_string())
             }
-            ProxyCredentials::ProxyBearer(token) => self
-                .validate_token(token)
-                .await
-                .map(|identity| ProxyPrincipal {
-                    user_id: Some(identity.user_id),
-                    api_key_id: identity.api_key_id,
-                })
-                .map_err(|e| e.to_string()),
-            ProxyCredentials::ApiKey(key) => self
-                .validate_api_key(key)
-                .await
-                .map(|auth| ProxyPrincipal {
-                    user_id: Some(auth.user_id),
-                    api_key_id: Some(auth.key_id),
-                })
-                .map_err(|e| e.to_string()),
+            ProxyCredentials::ProxyBearer(token) => {
+                if is_device_key(token) {
+                    return self.device_principal(token).await;
+                }
+                self.validate_token(token)
+                    .await
+                    .map(|identity| ProxyPrincipal {
+                        user_id: Some(identity.user_id),
+                        api_key_id: identity.api_key_id,
+                        device_id: None,
+                    })
+                    .map_err(|e| e.to_string())
+            }
+            ProxyCredentials::ApiKey(key) => {
+                if is_device_key(key) {
+                    return self.device_principal(key).await;
+                }
+                self.validate_api_key(key)
+                    .await
+                    .map(|auth| ProxyPrincipal {
+                        user_id: Some(auth.user_id),
+                        api_key_id: Some(auth.key_id),
+                        device_id: None,
+                    })
+                    .map_err(|e| e.to_string())
+            }
         }
+    }
+}
+
+impl AuthManager {
+    /// Resolve a `mdy_dev_` token to a device principal (issue #104).
+    /// The device owns the connection: `device_id` identifies it,
+    /// `api_key_id` carries the key record for audit, and `user_id`
+    /// stays `None` so device traffic is attributed to the device, not
+    /// folded into the owner's user principal.
+    async fn device_principal(&self, key: &str) -> Result<ProxyPrincipal, String> {
+        self.validate_device_key(key.trim())
+            .await
+            .map(|auth| ProxyPrincipal {
+                user_id: None,
+                api_key_id: Some(auth.key_id),
+                device_id: Some(auth.device_id),
+            })
+            .map_err(|e| e.to_string())
     }
 }
 

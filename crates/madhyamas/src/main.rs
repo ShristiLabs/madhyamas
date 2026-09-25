@@ -360,6 +360,16 @@ struct Args {
     #[arg(long, env = "MADHYAMAS_PROXY_AUTH", global = true)]
     proxy_auth: bool,
 
+    /// Require authentication on the proxy listener (issue #104). When
+    /// enabled (enterprise tier), CONNECT/HTTP proxy requests without
+    /// credentials receive `407 Proxy Authentication Required`. When
+    /// disabled (the default), unauthenticated proxy traffic passes and
+    /// is captured to the unattributed scope, while supplied-but-invalid
+    /// credentials (e.g. a revoked device key) are still rejected.
+    /// Implies the credential validation of `--proxy-auth`.
+    #[arg(long, env = "MADHYAMAS_REQUIRE_PROXY_AUTH", global = true)]
+    require_proxy_auth: bool,
+
     /// Expected instance ID for license replay prevention (Phase 9.14).
     /// When provided, the license file's `instance_id` must match this
     /// value or the license is rejected at startup. When omitted, any
@@ -1707,6 +1717,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                 enabled: args.enable_auth,
                 require_auth: args.enable_auth,
                 jwt_secret: jwt_secret.clone(),
+                require_proxy_auth: args.require_proxy_auth || args.proxy_auth,
                 ..madhyamas_enterprise::AuthConfig::default()
             })
             .with_store(store.clone()),
@@ -1742,16 +1753,33 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
                 Err(e) => tracing::warn!("Failed to init enterprise secrets store: {}", e),
             }
         }
-        // Phase 9.6: attach proxy auth validator when --proxy-auth is
-        // enabled. The proxy engine is already running (started earlier),
-        // but the validator is stored in a OnceLock that hasn't been set
-        // yet — so this takes effect immediately for all subsequent
-        // connections.
-        if args.proxy_auth {
-            tracing::info!("Proxy auth enabled: CONNECT/HTTP requests require credentials");
-            // with_proxy_auth_validator sets a OnceLock on the underlying
-            // ProxyEngine (shared via Arc). The returned Arc is dropped.
+        // Phase 9.6 / issue #104: attach the proxy auth validator
+        // unconditionally in the enterprise tier so connections carrying
+        // per-device credentials (`mdy_dev_...`) are attributed to their
+        // device. Strictness is a policy: `--proxy-auth` (Phase 9.6) or
+        // `--require-proxy-auth` (issue #104) rejects unauthenticated
+        // connections with 407; by default missing credentials pass and
+        // the traffic is captured to the unattributed scope. Supplied but
+        // invalid credentials (unknown, expired, revoked) are always
+        // rejected. The proxy engine is already running (started
+        // earlier), but the validator is stored in a OnceLock that
+        // hasn't been set yet — so this takes effect immediately for all
+        // subsequent connections.
+        {
+            let strict = args.proxy_auth || args.require_proxy_auth;
             let _ = proxy_engine.clone().with_proxy_auth_validator(auth.clone());
+            proxy_engine.set_proxy_auth_required(strict);
+            if strict {
+                tracing::info!(
+                    "Proxy auth required: unauthenticated CONNECT/HTTP requests receive 407"
+                );
+            } else {
+                tracing::info!(
+                    "Proxy credential validation enabled (attribution); \
+                     unauthenticated traffic passes unattributed \
+                     (enable --require-proxy-auth to reject with 407)"
+                );
+            }
         }
         let api_state = api_state
             .with_auth_provider(auth.clone())

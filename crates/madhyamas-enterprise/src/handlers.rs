@@ -760,6 +760,251 @@ pub async fn revoke_api_key(
 }
 
 // ============================================================================
+// Device Management Handlers (issue #104)
+// ============================================================================
+
+/// A registered device principal, as returned by the devices API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Device {
+    pub id: String,
+    pub name: String,
+    pub owner_user_id: String,
+    pub install_uuid: Option<String>,
+    pub mac_address: Option<String>,
+    /// `active` or `revoked`.
+    pub status: String,
+    /// Unix seconds.
+    pub created_at: i64,
+    /// Unix seconds of the last proxy-auth event for this device
+    /// (device CONNECT heartbeat), if any.
+    pub last_seen: Option<i64>,
+}
+
+impl From<crate::store::DeviceRecord> for Device {
+    fn from(r: crate::store::DeviceRecord) -> Self {
+        Self {
+            id: r.id,
+            name: r.name,
+            owner_user_id: r.owner_user_id,
+            install_uuid: r.install_uuid,
+            mac_address: r.mac_address,
+            status: r.status,
+            created_at: rfc3339_to_unix(&r.created_at),
+            last_seen: r.last_seen.as_deref().and_then(rfc3339_to_unix_opt),
+        }
+    }
+}
+
+fn rfc3339_to_unix(s: &str) -> i64 {
+    rfc3339_to_unix_opt(s).unwrap_or(0)
+}
+
+fn rfc3339_to_unix_opt(s: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc).timestamp())
+}
+
+/// A device together with its show-once credential — returned by create
+/// and rotate. The plaintext `mdy_dev_...` key is displayed exactly once
+/// (mirroring API-key creation) and never persisted or shown again.
+#[derive(Debug, Serialize)]
+pub struct DeviceWithKey {
+    pub device: Device,
+    /// Plaintext per-device credential — shown once, never stored.
+    pub key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateDeviceRequest {
+    /// Human-readable device name (required so traffic views are
+    /// readable from the first captured entry).
+    pub name: String,
+    #[serde(default)]
+    pub install_uuid: Option<String>,
+    #[serde(default)]
+    pub mac_address: Option<String>,
+}
+
+/// List the current user's registered devices.
+pub async fn get_devices(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+) -> Result<Json<Vec<Device>>, StatusCode> {
+    let records = store
+        .list_devices(&claims.user_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(records.into_iter().map(Device::from).collect()))
+}
+
+/// Register a device and mint its initial per-device credential.
+/// The plaintext key is returned exactly once (show-once semantics).
+pub async fn create_device(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+    Json(req): Json<CreateDeviceRequest>,
+) -> Result<Json<DeviceWithKey>, StatusCode> {
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let now = chrono::Utc::now();
+    let record = crate::store::DeviceRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.to_string(),
+        owner_user_id: claims.user_id.clone(),
+        install_uuid: req.install_uuid,
+        mac_address: req.mac_address,
+        status: "active".to_string(),
+        created_at: now.to_rfc3339(),
+        last_seen: None,
+    };
+    store
+        .create_device(&record)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let key = mint_device_key(&store, &record.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit.log(
+        AuditEvent::new(AuditEventType::DeviceRegistered, "Device registered")
+            .with_user(claims.user_id.clone())
+            .with_metadata("device_id", serde_json::json!(record.id))
+            .with_metadata("device_name", serde_json::json!(record.name)),
+    );
+    Ok(Json(DeviceWithKey {
+        device: Device::from(record),
+        key,
+    }))
+}
+
+/// Rotate a device's credential: the previous key is deactivated and a
+/// new one is minted. The plaintext key is returned exactly once.
+pub async fn rotate_device_key(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+    Path(device_id): Path<String>,
+) -> Result<Json<DeviceWithKey>, StatusCode> {
+    let device = load_owned_device(&store, &claims, &device_id).await?;
+    store
+        .revoke_device_keys_for_device(&device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let key = mint_device_key(&store, &device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit.log(
+        AuditEvent::new(AuditEventType::DeviceKeyRotated, "Device key rotated")
+            .with_user(claims.user_id.clone())
+            .with_metadata("device_id", serde_json::json!(device.id)),
+    );
+    Ok(Json(DeviceWithKey {
+        device: Device::from(device),
+        key,
+    }))
+}
+
+/// Revoke a device: its credentials are deactivated and its status flips
+/// to `revoked`, so subsequent CONNECTs with its key are rejected.
+pub async fn revoke_device(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+    Path(device_id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let device = load_owned_device(&store, &claims, &device_id).await?;
+    store
+        .revoke_device_keys_for_device(&device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .update_device_status(&device.id, "revoked")
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit.log(
+        AuditEvent::new(AuditEventType::DeviceRevoked, "Device revoked")
+            .with_user(claims.user_id.clone())
+            .with_metadata("device_id", serde_json::json!(device.id))
+            .with_metadata("deleted", serde_json::json!(false)),
+    );
+    Ok(StatusCode::OK)
+}
+
+/// Delete a device: revokes its credentials (audit `DeviceRevoked`) and
+/// removes the device record.
+pub async fn delete_device(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+    Path(device_id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let device = load_owned_device(&store, &claims, &device_id).await?;
+    store
+        .revoke_device_keys_for_device(&device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .delete_device(&device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit.log(
+        AuditEvent::new(AuditEventType::DeviceRevoked, "Device deleted")
+            .with_user(claims.user_id.clone())
+            .with_metadata("device_id", serde_json::json!(device.id))
+            .with_metadata("deleted", serde_json::json!(true)),
+    );
+    Ok(StatusCode::OK)
+}
+
+/// Mint and persist a new `mdy_dev_` credential for `device_id`,
+/// returning the plaintext once.
+async fn mint_device_key(
+    store: &Arc<dyn EnterpriseStore>,
+    device_id: &str,
+) -> std::result::Result<String, crate::store::StoreError> {
+    let key = crate::auth::generate_device_key();
+    let record = crate::store::DeviceKeyRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        device_id: device_id.to_string(),
+        key_hash: crate::auth::hash_api_key(&key),
+        key_prefix: key.chars().take(12).collect(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        revoked_at: None,
+        last_used_at: None,
+    };
+    store.create_device_key(&record).await?;
+    Ok(key)
+}
+
+/// Load a device and enforce ownership: the owner or an admin may act on
+/// it, anyone else gets `403`; a missing device is `404`.
+async fn load_owned_device(
+    store: &Arc<dyn EnterpriseStore>,
+    claims: &crate::middleware::AuthUser,
+    device_id: &str,
+) -> Result<crate::store::DeviceRecord, StatusCode> {
+    let device = store
+        .get_device(device_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let is_owner = device.owner_user_id == claims.user_id;
+    let is_admin = claims.role == "admin";
+    if !is_owner && !is_admin {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    Ok(device)
+}
+
+// ============================================================================
 // User Management Handlers
 // ============================================================================
 
@@ -1137,6 +1382,9 @@ fn parse_event_type(label: &str) -> AuditEventType {
         "logout" => AuditEventType::Logout,
         "api_key_created" => AuditEventType::ApiKeyCreated,
         "api_key_revoked" => AuditEventType::ApiKeyRevoked,
+        "device_registered" => AuditEventType::DeviceRegistered,
+        "device_key_rotated" => AuditEventType::DeviceKeyRotated,
+        "device_revoked" => AuditEventType::DeviceRevoked,
         "traffic_exported" => AuditEventType::TrafficExported,
         "session_created" => AuditEventType::SessionCreated,
         "session_deleted" => AuditEventType::SessionDeleted,

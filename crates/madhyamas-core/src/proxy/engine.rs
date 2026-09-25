@@ -51,12 +51,20 @@ use tracing::{debug, info, warn};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProxyPrincipal {
     /// ID of the user the credential resolves to (Basic username, JWT
-    /// subject, or the API key's owner). `None` when unauthenticated.
+    /// subject, or the API key's owner). `None` when unauthenticated or
+    /// when the credential resolves to a device principal instead.
     pub user_id: Option<String>,
     /// ID of the API-key record when authentication was via
     /// `X-API-Key` or an API-key bearer credential. `None` for
     /// Basic/Bearer credentials and unauthenticated connections.
     pub api_key_id: Option<String>,
+    /// ID of the device the credential resolves to (issue #104). Set
+    /// when authentication was via a per-device credential; the
+    /// connection is then attributed to the device, and `user_id`
+    /// stays `None` so device traffic is not folded into a user
+    /// principal. `None` for user credentials and unauthenticated
+    /// connections.
+    pub device_id: Option<String>,
 }
 
 impl ProxyPrincipal {
@@ -66,10 +74,27 @@ impl ProxyPrincipal {
         Self::default()
     }
 
-    /// Whether the principal identifies an authenticated user.
+    /// Whether the principal identifies an authenticated user or device.
     pub fn is_authenticated(&self) -> bool {
-        self.user_id.is_some()
+        self.user_id.is_some() || self.device_id.is_some()
     }
+}
+
+/// Why proxy authentication failed at CONNECT/HTTP (issue #104).
+///
+/// The distinction matters for the `require_proxy_auth` policy: an
+/// *invalid* credential (unknown, expired, or revoked) is always
+/// rejected with `407`, while a *missing* credential is only rejected
+/// when the strict mode is enabled — otherwise the connection proceeds
+/// unauthenticated so its traffic is captured to the unattributed
+/// scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProxyAuthError {
+    /// No `Proxy-Authorization` or `X-API-Key` header was supplied.
+    Missing,
+    /// A credential was supplied but rejected (unknown, expired, or
+    /// revoked). Carries the human-readable rejection reason.
+    Invalid(String),
 }
 
 /// Trait for validating proxy-level authentication (Phase 9.6).
@@ -158,6 +183,14 @@ pub struct ProxyEngine {
     /// `407 Proxy Authentication Required`. `None` in OSS mode or when
     /// `--proxy-auth` is not enabled.
     proxy_auth_validator: OnceLock<Arc<dyn ProxyAuthValidator>>,
+    /// Whether proxy authentication is strictly required (issue #104).
+    /// When `true` (the default, preserving the Phase 9.6
+    /// `--proxy-auth` semantics), a connection without credentials is
+    /// rejected with `407`. When `false`, missing credentials let the
+    /// connection proceed unauthenticated (traffic captured to the
+    /// unattributed scope) while invalid credentials are still
+    /// rejected.
+    proxy_auth_required: std::sync::atomic::AtomicBool,
 }
 
 impl ProxyEngine {
@@ -253,6 +286,7 @@ impl ProxyEngine {
             traffic_tx,
             running: RwLock::new(false),
             proxy_auth_validator: OnceLock::new(),
+            proxy_auth_required: std::sync::atomic::AtomicBool::new(true),
         }))
     }
 
@@ -421,6 +455,23 @@ impl ProxyEngine {
         self
     }
 
+    /// Set whether proxy authentication is strictly required (issue
+    /// #104). With `false`, connections without credentials proceed
+    /// unauthenticated (their traffic is captured to the unattributed
+    /// scope) while supplied-but-rejected credentials still yield `407`.
+    /// With `true` (the engine default), missing credentials also yield
+    /// `407` — the Phase 9.6 `--proxy-auth` behavior.
+    pub fn set_proxy_auth_required(&self, required: bool) {
+        self.proxy_auth_required
+            .store(required, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether proxy authentication is strictly required.
+    pub fn proxy_auth_required(&self) -> bool {
+        self.proxy_auth_required
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Get the metrics collector, if attached.
     pub fn metrics_collector(&self) -> Option<&Arc<MetricsCollector>> {
         self.metrics_collector.get()
@@ -554,7 +605,7 @@ impl ProxyEngine {
     async fn handle_connection(
         &self,
         mut client_socket: TcpStream,
-        attribution: AttributionContext,
+        mut attribution: AttributionContext,
     ) -> crate::Result<()> {
         // Peek first to determine request type without consuming
         let mut peek_buf = [0u8; 1024];
@@ -569,27 +620,34 @@ impl ProxyEngine {
 
         let request_str = String::from_utf8_lossy(&peek_buf[..n]);
 
-        // Phase 9.6: proxy auth check. When a proxy auth validator is
-        // configured, extract credentials from the request headers and
-        // validate them before processing. Unauthenticated requests
-        // receive a 407 response.
+        // Phase 9.6 / issue #104: proxy auth check. When a proxy auth
+        // validator is configured, extract credentials from the request
+        // headers and validate them before processing. Supplied-but-
+        // rejected credentials always receive a 407 response (so
+        // revoking a credential cuts off the client). Missing
+        // credentials receive a 407 only when strict mode is enabled
+        // (`require_proxy_auth` / `--proxy-auth`); otherwise the
+        // connection proceeds unauthenticated and its traffic is
+        // captured to the unattributed scope.
         //
-        // Issue #103: the resolved principal is retained for the
-        // connection's lifetime (and identified in the debug log). It is
-        // not yet persisted on traffic entries — that lands with device
-        // principals in the later credential-onboarding issues. Without a
-        // validator (the OSS default) the connection stays unauthenticated.
+        // Issue #103/#104: the resolved principal is retained for the
+        // connection's lifetime; a device principal populates the
+        // attribution context's `device_id` so every entry constructed
+        // for the connection is attributed to that device. Without a
+        // validator (the OSS default) the connection stays
+        // unauthenticated.
         let principal = match self.proxy_auth_validator.get() {
             Some(validator) => match self.check_proxy_auth(&request_str, validator).await {
                 Ok(principal) => {
                     debug!(
                         user_id = ?principal.user_id,
                         api_key_id = ?principal.api_key_id,
+                        device_id = ?principal.device_id,
                         "Proxy connection authenticated"
                     );
                     principal
                 }
-                Err(msg) => {
+                Err(ProxyAuthError::Invalid(msg)) => {
                     let response = format!(
                         "HTTP/1.1 407 Proxy Authentication Required\r\n\
                          Proxy-Authenticate: Basic realm=\"madhyamas\"\r\n\
@@ -604,10 +662,37 @@ impl ProxyEngine {
                     let _ = client_socket.write_all(response.as_bytes()).await;
                     return Ok(());
                 }
+                Err(ProxyAuthError::Missing) => {
+                    if self.proxy_auth_required() {
+                        let msg = "No proxy credentials provided";
+                        let response = format!(
+                            "HTTP/1.1 407 Proxy Authentication Required\r\n\
+                             Proxy-Authenticate: Basic realm=\"madhyamas\"\r\n\
+                             Content-Type: application/json\r\n\
+                             Content-Length: {}\r\n\
+                             Connection: close\r\n\
+                             \r\n\
+                             {{\"error\":\"proxy_auth_required\",\"message\":\"{}\"}}",
+                            msg.len(),
+                            msg
+                        );
+                        let _ = client_socket.write_all(response.as_bytes()).await;
+                        return Ok(());
+                    }
+                    debug!(
+                        "Proxy connection unauthenticated (require_proxy_auth off); \
+                         capturing to unattributed scope"
+                    );
+                    ProxyPrincipal::unauthenticated()
+                }
             },
             None => ProxyPrincipal::unauthenticated(),
         };
-        let _ = &principal; // retained for the connection; consumed by later issues
+        // Issue #104: device-authenticated connections carry the device
+        // identity on the attribution context for the connection's
+        // lifetime (user-key attribution lands with entry persistence,
+        // issue #105).
+        attribution.device_id = principal.device_id.clone();
 
         if request_str.starts_with("CONNECT ") {
             // For CONNECT, we must consume the full CONNECT request from the buffer
@@ -647,13 +732,14 @@ impl ProxyEngine {
     /// Extract and validate proxy auth credentials from the raw request
     /// string (Phase 9.6). Checks `Proxy-Authorization` and `X-API-Key`
     /// headers. Returns the resolved [`ProxyPrincipal`] when
-    /// authenticated, or `Err(message)` when credentials are missing or
-    /// invalid.
+    /// authenticated, [`ProxyAuthError::Missing`] when no credentials
+    /// were supplied, or [`ProxyAuthError::Invalid`] when a supplied
+    /// credential was rejected.
     async fn check_proxy_auth(
         &self,
         request_str: &str,
         validator: &Arc<dyn ProxyAuthValidator>,
-    ) -> Result<ProxyPrincipal, String> {
+    ) -> Result<ProxyPrincipal, ProxyAuthError> {
         let headers = parse_connect_headers(request_str);
         // Try Proxy-Authorization header first.
         if let Some(auth_val) = headers
@@ -662,7 +748,10 @@ impl ProxyEngine {
             .map(|(_, v)| v)
         {
             if let Some(credentials) = parse_proxy_authorization(auth_val) {
-                return validator.validate(&credentials).await;
+                return validator
+                    .validate(&credentials)
+                    .await
+                    .map_err(ProxyAuthError::Invalid);
             }
         }
         // Try X-API-Key header.
@@ -673,9 +762,10 @@ impl ProxyEngine {
         {
             return validator
                 .validate(&ProxyCredentials::ApiKey(key_val.clone()))
-                .await;
+                .await
+                .map_err(ProxyAuthError::Invalid);
         }
-        Err("No proxy credentials provided".to_string())
+        Err(ProxyAuthError::Missing)
     }
 
     /// Handle HTTPS CONNECT request

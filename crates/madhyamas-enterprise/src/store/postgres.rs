@@ -1,9 +1,10 @@
 //! PostgreSQL-backed [`EnterpriseStore`] implementation using [`sqlx::PgPool`].
 //!
 //! The constructor runs idempotent `CREATE TABLE IF NOT EXISTS` DDL for the
-//! four enterprise tables (`users`, `api_keys`, `auth_sessions`,
-//! `audit_events`). All queries use runtime SQL strings with `$N`
-//! placeholders so the crate compiles without a database at build time.
+//! enterprise tables (`users`, `api_keys`, `devices`, `device_keys`,
+//! `auth_sessions`, `audit_events`, `secrets`). All queries use runtime SQL
+//! strings with `$N` placeholders so the crate compiles without a database at
+//! build time.
 
 use std::collections::HashMap;
 
@@ -13,8 +14,8 @@ use sqlx::PgPool;
 
 use super::types::{AuditEventRecord, UserRecord};
 use super::{
-    ApiKeyRecord, AuditEvent, AuditFilter, AuditStats, AuthSession, EnterpriseStore, Result,
-    UserUpdate,
+    ApiKeyRecord, AuditEvent, AuditFilter, AuditStats, AuthSession, DeviceKeyRecord, DeviceRecord,
+    EnterpriseStore, Result, UserUpdate,
 };
 use crate::user::User;
 
@@ -40,6 +41,8 @@ impl PostgresEnterpriseStore {
             .await?;
         sqlx::query(SCHEMA_USERS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_API_KEYS).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_DEVICES).execute(&mut *tx).await?;
+        sqlx::query(SCHEMA_DEVICE_KEYS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_AUTH_SESSIONS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_AUDIT_EVENTS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_SECRETS).execute(&mut *tx).await?;
@@ -76,6 +79,27 @@ const SCHEMA_API_KEYS: &str = "CREATE TABLE IF NOT EXISTS api_keys (
     expires_at TEXT,
     last_used_at TEXT,
     created_at TEXT NOT NULL
+)";
+
+const SCHEMA_DEVICES: &str = "CREATE TABLE IF NOT EXISTS devices (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    owner_user_id TEXT NOT NULL,
+    install_uuid TEXT,
+    mac_address TEXT,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_seen TEXT
+)";
+
+const SCHEMA_DEVICE_KEYS: &str = "CREATE TABLE IF NOT EXISTS device_keys (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    key_hash TEXT UNIQUE NOT NULL,
+    key_prefix TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    revoked_at TEXT,
+    last_used_at TEXT
 )";
 
 const SCHEMA_AUTH_SESSIONS: &str = "CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -341,6 +365,130 @@ impl EnterpriseStore for PostgresEnterpriseStore {
         Ok(())
     }
 
+    async fn create_device(&self, device: &DeviceRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO devices \
+             (id, name, owner_user_id, install_uuid, mac_address, status, created_at, last_seen) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(&device.id)
+        .bind(&device.name)
+        .bind(&device.owner_user_id)
+        .bind(&device.install_uuid)
+        .bind(&device.mac_address)
+        .bind(&device.status)
+        .bind(&device.created_at)
+        .bind(&device.last_seen)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn get_device(&self, id: &str) -> Result<Option<DeviceRecord>> {
+        let row: Option<DeviceRecord> =
+            sqlx::query_as::<_, DeviceRecord>("SELECT * FROM devices WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row)
+    }
+
+    async fn list_devices(&self, owner_user_id: &str) -> Result<Vec<DeviceRecord>> {
+        let rows: Vec<DeviceRecord> = sqlx::query_as::<_, DeviceRecord>(
+            "SELECT * FROM devices WHERE owner_user_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(owner_user_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn delete_device(&self, id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM devices WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn update_device_status(&self, id: &str, status: &str) -> Result<()> {
+        sqlx::query("UPDATE devices SET status = $1 WHERE id = $2")
+            .bind(status)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn update_device_last_seen(&self, id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE devices SET last_seen = $1 WHERE id = $2")
+            .bind(&now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn create_device_key(&self, key: &DeviceKeyRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO device_keys \
+             (id, device_id, key_hash, key_prefix, created_at, revoked_at, last_used_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(&key.id)
+        .bind(&key.device_id)
+        .bind(&key.key_hash)
+        .bind(&key.key_prefix)
+        .bind(&key.created_at)
+        .bind(&key.revoked_at)
+        .bind(&key.last_used_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn get_device_key_by_hash(&self, hash: &str) -> Result<Option<DeviceKeyRecord>> {
+        let row: Option<DeviceKeyRecord> =
+            sqlx::query_as::<_, DeviceKeyRecord>("SELECT * FROM device_keys WHERE key_hash = $1")
+                .bind(hash)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row)
+    }
+
+    async fn revoke_device_key(&self, id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE device_keys SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL")
+            .bind(&now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn revoke_device_keys_for_device(&self, device_id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "UPDATE device_keys SET revoked_at = $1 WHERE device_id = $2 AND revoked_at IS NULL",
+        )
+        .bind(&now)
+        .bind(device_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_device_key_last_used(&self, id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE device_keys SET last_used_at = $1 WHERE id = $2")
+            .bind(&now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     async fn create_session(&self, session: &AuthSession) -> Result<()> {
         sqlx::query(
             "INSERT INTO auth_sessions \
@@ -559,6 +707,9 @@ fn event_type_label(t: crate::audit::AuditEventType) -> String {
         Logout => "logout",
         ApiKeyCreated => "api_key_created",
         ApiKeyRevoked => "api_key_revoked",
+        DeviceRegistered => "device_registered",
+        DeviceKeyRotated => "device_key_rotated",
+        DeviceRevoked => "device_revoked",
         TrafficExported => "traffic_exported",
         SessionCreated => "session_created",
         SessionDeleted => "session_deleted",
