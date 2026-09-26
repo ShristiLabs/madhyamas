@@ -24,6 +24,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.madhyamas.vpn.config.ProxyConfig
 import com.madhyamas.vpn.vpn.CertInstallActivity
+import com.madhyamas.vpn.vpn.ConnectState
 import com.madhyamas.vpn.vpn.getInstalledApps
 import com.madhyamas.vpn.vpn.AppInfo
 
@@ -44,6 +45,13 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Cold start from a madhyamas://connect deep link (QR scan).
+        // Skipped on configuration-change recreation (savedInstanceState
+        // non-null) so a token is never redeemed twice by a rotation.
+        if (savedInstanceState == null) {
+            handleConnectIntent(intent)
+        }
+
         setContent {
             MaterialTheme(
                 colorScheme = lightColorScheme()
@@ -58,6 +66,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Warm start (singleTop): a fresh QR scan while the app is open.
+        handleConnectIntent(intent)
+    }
+
+    private fun handleConnectIntent(intent: Intent?) {
+        val raw = intent?.dataString ?: return
+        ViewModelProvider(this).get(MainViewModel::class.java).handleDeepLink(raw)
+    }
+
     @Composable
     private fun MadhyamasApp() {
         val viewModel: MainViewModel = viewModel()
@@ -65,6 +84,11 @@ class MainActivity : ComponentActivity() {
         val status by viewModel.status.collectAsState()
         val stats by viewModel.stats.collectAsState()
         val error by viewModel.error.collectAsState()
+        val pairing by viewModel.pairing.collectAsState()
+        val enrolling by viewModel.enrolling.collectAsState()
+        val pairingError by viewModel.pairingError.collectAsState()
+        val lastConnectState by viewModel.lastConnectState.collectAsState()
+        val authRejected by viewModel.authRejected.collectAsState()
 
         var showSettings by remember { mutableStateOf(false) }
         var showAppSelector by remember { mutableStateOf(false) }
@@ -93,6 +117,11 @@ class MainActivity : ComponentActivity() {
                 status = status,
                 stats = stats,
                 error = error,
+                pairing = pairing,
+                enrolling = enrolling,
+                pairingError = pairingError,
+                lastConnectState = lastConnectState,
+                authRejected = authRejected,
                 onToggleVpn = {
                     if (status == VpnStatus.CONNECTED || status == VpnStatus.CONNECTING) {
                         viewModel.stopVpn()
@@ -107,11 +136,16 @@ class MainActivity : ComponentActivity() {
                 onAppSelector = { showAppSelector = true },
                 onInstallCert = {
                     val intent = Intent(this@MainActivity, CertInstallActivity::class.java).apply {
-                        putExtra(CertInstallActivity.EXTRA_API_HOST, config.apiHost)
-                        putExtra(CertInstallActivity.EXTRA_API_PORT, config.apiPort)
+                        if (config.apiBaseUrl != null) {
+                            putExtra(CertInstallActivity.EXTRA_API_BASE_URL, config.apiBaseUrl)
+                        } else {
+                            putExtra(CertInstallActivity.EXTRA_API_HOST, config.apiHost)
+                            putExtra(CertInstallActivity.EXTRA_API_PORT, config.apiPort)
+                        }
                     }
                     startActivity(intent)
-                }
+                },
+                onForget = viewModel::forget
             )
         }
     }
@@ -124,10 +158,16 @@ private fun MainScreen(
     status: VpnStatus,
     stats: VpnStats,
     error: String?,
+    pairing: PairingSnapshot?,
+    enrolling: Boolean,
+    pairingError: String?,
+    lastConnectState: ConnectState?,
+    authRejected: Boolean,
     onToggleVpn: () -> Unit,
     onSettings: () -> Unit,
     onAppSelector: () -> Unit,
-    onInstallCert: () -> Unit
+    onInstallCert: () -> Unit,
+    onForget: () -> Unit
 ) {
     Scaffold(
         topBar = {
@@ -148,6 +188,18 @@ private fun MainScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Pairing state (credential half of the companion)
+            PairingCard(
+                pairing = pairing,
+                enrolling = enrolling,
+                pairingError = pairingError,
+                lastConnectState = if (status == VpnStatus.CONNECTED) lastConnectState else null,
+                authRejected = authRejected,
+                onForget = onForget
+            )
+
+            Spacer(Modifier.height(16.dp))
+
             // Status indicator
             val statusColor = when (status) {
                 VpnStatus.CONNECTED -> MaterialTheme.colorScheme.primary
@@ -289,6 +341,131 @@ private fun MainScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Pairing state card (issue #111): pending -> enrolled per the onboarding
+ * doc's pairing sequence, plus connection status for the enrolled state
+ * (capturing / 407-rejected / unreachable / TLS error) and a forget
+ * action that wipes the Keystore-sealed credential.
+ */
+@Composable
+private fun PairingCard(
+    pairing: PairingSnapshot?,
+    enrolling: Boolean,
+    pairingError: String?,
+    lastConnectState: ConnectState?,
+    authRejected: Boolean,
+    onForget: () -> Unit
+) {
+    if (pairingError != null) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer
+            )
+        ) {
+            Text(
+                "Pairing failed: $pairingError",
+                modifier = Modifier.padding(16.dp),
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            when {
+                enrolling -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "Redeeming enrollment token…",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                    Text(
+                        "Exchanging the one-time QR token for the device credential.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                pairing?.paired == true -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            pairing.deviceName ?: "Paired device",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            if (pairing.tls) "TLS" else "",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Text(
+                        "${pairing.host}:${pairing.port} — enrolled",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (authRejected) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Proxy rejected the device credential (407) — the device " +
+                                "may have been revoked. Generate a new QR code and re-pair.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    } else if (lastConnectState != null) {
+                        Spacer(Modifier.height(8.dp))
+                        val line = when (lastConnectState) {
+                            ConnectState.OK -> "Connected — capturing"
+                            ConnectState.REJECTED -> "Proxy rejected the device credential (407)"
+                            ConnectState.UNREACHABLE -> "Proxy unreachable"
+                            ConnectState.TLS_ERROR -> "TLS error connecting to the proxy"
+                            ConnectState.FAILED -> "Proxy connection failed"
+                        }
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (lastConnectState == ConnectState.OK)
+                                MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.error
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.Delete, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Forget Device")
+                    }
+                }
+                else -> {
+                    Text("Not paired", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Scan the QR code from the Madhyamas web UI (Devices → " +
+                            "Connect device) to pair this device, or configure " +
+                            "the proxy manually in Settings.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }

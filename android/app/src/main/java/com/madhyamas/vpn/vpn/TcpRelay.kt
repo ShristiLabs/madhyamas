@@ -4,9 +4,11 @@ import android.net.VpnService
 import android.util.Log
 import java.io.IOException
 import java.net.InetSocketAddress
-import java.net.Socket
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLSocket
 
 /**
  * Relays a single TCP connection between an Android app (via the VPN
@@ -14,8 +16,16 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Flow:
  *  1. Connect to the Madhyamas proxy at [proxyHost]:[proxyPort]
- *  2. Send: `CONNECT <dstIp>:<dstPort> HTTP/1.1\r\nHost: <dstIp>:<dstPort>\r\n\r\n`
- *  3. Wait for: `HTTP/1.1 200 Connection Established\r\n\r\n`
+ *     (TLS-wrapped when [useTls] is set — QR payload tls=1, issue #110)
+ *  2. Send the CONNECT request the companion AUTHORS itself, carrying
+ *     `Proxy-Authorization` from the stored device credential when paired
+ *     ([proxyAuthorization], issue #111). Because the companion
+ *     re-originates the connection, an app's own proxy-auth headers never
+ *     reach the proxy's CONNECT parser — the companion credential wins by
+ *     construction.
+ *  3. Wait for: `HTTP/1.1 200 Connection Established\r\n\r\n`. A 407 is
+ *     reported as [ConnectState.REJECTED] and the connection is closed —
+ *     never retried with the same credential.
  *  4. Relay data bidirectionally:
  *     - App → Proxy: data from VPN tunnel → proxy socket
  *     - Proxy → App: data from proxy socket → VPN tunnel
@@ -31,10 +41,13 @@ class TcpRelay(
     private val dstPort: Int,
     private val proxyHost: String,
     private val proxyPort: Int,
+    private val useTls: Boolean = false,
+    private val proxyAuthorization: String? = null,
     private val vpnService: VpnService,
     private val onClose: (Int) -> Unit,
     private val onBytesSent: (Int) -> Unit,
-    private val onBytesReceived: (Int) -> Unit
+    private val onBytesReceived: (Int) -> Unit,
+    private val onConnectResult: (ConnectState) -> Unit = {}
 ) {
     companion object {
         private const val TAG = "TcpRelay"
@@ -43,7 +56,8 @@ class TcpRelay(
     }
 
     private val running = AtomicBoolean(false)
-    private var proxySocket: Socket? = null
+    private val closed = AtomicBoolean(false)
+    private var proxySocket: java.net.Socket? = null
     private var proxyOutput: java.io.OutputStream? = null
     private var proxyInput: java.io.InputStream? = null
     private var relayThread: Thread? = null
@@ -64,41 +78,80 @@ class TcpRelay(
      * Connect to the Madhyamas proxy and establish a CONNECT tunnel.
      */
     private fun connectToProxy() {
-        val socket = Socket()
-        vpnService.protect(socket) // Prevent the socket from going through the VPN
-
-        socket.connect(InetSocketAddress(proxyHost, proxyPort), CONNECT_TIMEOUT_MS)
+        val socket = openProxySocket()
         socket.soTimeout = READ_TIMEOUT_MS
-        socket.tcpNoDelay = true
 
+        val input = socket.getInputStream()
+        val output = socket.getOutputStream()
         proxySocket = socket
-        proxyOutput = socket.getOutputStream()
-        proxyInput = socket.getInputStream()
+        proxyInput = input
+        proxyOutput = output
 
-        // Send HTTP CONNECT request
-        val connectReq = buildString {
-            append("CONNECT $dstIp:$dstPort HTTP/1.1\r\n")
-            append("Host: $dstIp:$dstPort\r\n")
-            append("Proxy-Connection: keep-alive\r\n")
-            append("\r\n")
+        when (val result = ProxyTunnelHandshake.perform(
+            output, input, dstIp, dstPort, proxyAuthorization
+        )) {
+            TunnelResult.Established -> {
+                running.set(true)
+                onConnectResult(ConnectState.OK)
+                Log.d(TAG, "Relay $id: CONNECT tunnel established to $dstIp:$dstPort via $proxyHost:$proxyPort")
+            }
+            TunnelResult.Rejected -> {
+                onConnectResult(ConnectState.REJECTED)
+                throw IOException("Proxy rejected the device credential (HTTP 407)")
+            }
+            is TunnelResult.Failed -> {
+                onConnectResult(ConnectState.FAILED)
+                throw IOException("Proxy CONNECT failed: ${result.statusLine}")
+            }
+            is TunnelResult.IoError -> {
+                onConnectResult(ConnectState.UNREACHABLE)
+                throw IOException("Proxy connection error: ${result.message}")
+            }
         }
-        proxyOutput?.write(connectReq.toByteArray())
-        proxyOutput?.flush()
+    }
 
-        // Read CONNECT response
-        val response = readLine(proxyInput!!)
-        if (response == null || !response.contains("200")) {
-            throw IOException("Proxy CONNECT failed: $response")
+    /**
+     * Opens the socket to the proxy: plain TCP, or TLS when the QR payload
+     * carried tls=1. The socket is protected from the VPN before
+     * connecting. TLS failures (handshake or hostname verification) are
+     * reported as [ConnectState.TLS_ERROR] and never fall back to
+     * plaintext.
+     */
+    private fun openProxySocket(): java.net.Socket {
+        val socket = ProxySockets.create(useTls)
+        vpnService.protect(socket) // Prevent the socket from going through the VPN
+        socket.tcpNoDelay = true
+        try {
+            socket.connect(InetSocketAddress(proxyHost, proxyPort), CONNECT_TIMEOUT_MS)
+        } catch (e: SSLException) {
+            reportTlsFailure(socket, e)
+        } catch (e: IOException) {
+            onConnectResult(ConnectState.UNREACHABLE)
+            throw e
         }
-
-        // Consume remaining headers until empty line
-        while (true) {
-            val line = readLine(proxyInput!!) ?: break
-            if (line.isEmpty()) break
+        if (socket is SSLSocket) {
+            try {
+                socket.startHandshake()
+            } catch (e: SSLException) {
+                reportTlsFailure(socket, e)
+            }
+            if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(proxyHost, socket.session)) {
+                reportTlsFailure(
+                    socket,
+                    IOException("TLS certificate for $proxyHost failed hostname verification")
+                )
+            }
         }
+        return socket
+    }
 
-        running.set(true)
-        Log.d(TAG, "Relay $id: CONNECT tunnel established to $dstIp:$dstPort via $proxyHost:$proxyPort")
+    private fun reportTlsFailure(socket: java.net.Socket, e: Exception): Nothing {
+        onConnectResult(ConnectState.TLS_ERROR)
+        try {
+            socket.close()
+        } catch (ignored: Exception) {
+        }
+        throw IOException("TLS connection to $proxyHost:$proxyPort failed: ${e.message}", e)
     }
 
     /**
@@ -147,8 +200,15 @@ class TcpRelay(
         }
     }
 
+    /**
+     * Idempotent teardown: always runs exactly once per relay, including
+     * on pre-establishment failures (407/TLS/unreachable) where `running`
+     * was never set — the proxy socket must be closed and [onClose] must
+     * fire so the service drops the relay from its map.
+     */
     fun close() {
-        if (!running.compareAndSet(true, false)) return
+        if (!closed.compareAndSet(false, true)) return
+        running.set(false)
         try {
             proxyInput?.close()
         } catch (e: Exception) {}
@@ -159,26 +219,5 @@ class TcpRelay(
             proxySocket?.close()
         } catch (e: Exception) {}
         onClose(id)
-    }
-
-    /**
-     * Read a line (terminated by \r\n) from an InputStream.
-     */
-    private fun readLine(input: java.io.InputStream): String? {
-        val sb = StringBuilder()
-        while (true) {
-            val b = input.read()
-            if (b == -1) return if (sb.isNotEmpty()) sb.toString() else null
-            if (b == 0x0D) { // \r
-                val next = input.read()
-                if (next == 0x0A) { // \n
-                    return sb.toString()
-                }
-                sb.append(b.toChar())
-                if (next != -1) sb.append(next.toChar())
-            } else {
-                sb.append(b.toChar())
-            }
-        }
     }
 }

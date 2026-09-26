@@ -66,6 +66,57 @@ echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
 3. Wait for Gradle sync to complete
 4. Run → Run 'app'
 
+## Pairing via QR code (deep link)
+
+On a Madhyamas Enterprise instance, the Devices panel's "Connect device"
+dialog shows a QR code encoding a `madhyamas://connect` link (see
+[docs/CREDENTIAL_ONBOARDING.md](../docs/CREDENTIAL_ONBOARDING.md)).
+Scanning it with the system camera opens the companion and pairs it —
+no manual entry:
+
+```
+madhyamas://connect?host=proxy.example.com&port=8888&tls=0
+  &token=mdy_enroll_...            (single-use, 15-minute enrollment token)
+  &name=Hari%27s%20Pixel
+  &ca=http://proxy.example.com:3001/api/cert/ca
+  &api=http://proxy.example.com:3001/api
+```
+
+What the companion does with the link:
+
+1. **Parse + prefill** — host, port, TLS flag, device name and API base
+   URL are stored as the app configuration. Malformed links surface a
+   clear error and change nothing.
+2. **Enrollment exchange** — a `token=` link is redeemed at
+   `POST {api}/devices/enroll` for the long-lived `mdy_dev_` device
+   credential (the token is single-use and expires; a scanned photo of
+   the QR goes stale). A `key=` link stores the carried credential
+   directly (manual mode).
+3. **Encrypted storage** — the credential is sealed with an
+   Android-Keystore AES/GCM key and only ciphertext is persisted
+   (EncryptedSharedPreferences is deprecated; this is the currently
+   recommended pattern). It survives app restarts; clearing app data
+   wipes it (expected).
+4. **Credential injection** — while the VPN runs, every CONNECT the
+   companion authors to the proxy carries
+   `Proxy-Authorization: Basic base64(key + ":")`, so the instance
+   attributes all captured traffic to the device (including
+   proxy-unaware apps). The companion re-originates the connections, so
+   its credential always wins over anything an app might send.
+5. **Status + failure surfacing** — the pairing card shows
+   *Connected — capturing*, *Proxy unreachable*, *TLS error*, or
+   *407 — credential rejected* (e.g. after the admin revokes the
+   device). Three consecutive 407s trip a circuit breaker: new app
+   connections fail fast instead of retrying a dead credential.
+   Re-pair with a fresh QR, or use *Forget Device* to wipe the stored
+   credential.
+
+`tls=1` links (the TLS-wrapped proxy listener, issue #110) connect to
+the proxy over TLS with standard certificate + hostname verification
+(the QR's `ca=` URL is the MITM CA for HTTPS interception, not the
+listener certificate). TLS failures are surfaced, never silently
+downgraded to plaintext.
+
 ## Usage
 
 ### 1. Start the Madhyamas proxy

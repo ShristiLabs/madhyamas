@@ -34,11 +34,15 @@ class CertInstallActivity : ComponentActivity() {
         private const val TAG = "CertInstall"
         const val EXTRA_API_HOST = "api_host"
         const val EXTRA_API_PORT = "api_port"
+
+        /** Full API base URL from the QR payload (takes precedence over host/port). */
+        const val EXTRA_API_BASE_URL = "api_base_url"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        val apiBaseUrl = intent.getStringExtra(EXTRA_API_BASE_URL)
         val apiHost = intent.getStringExtra(EXTRA_API_HOST) ?: "127.0.0.1"
         val apiPort = intent.getIntExtra(EXTRA_API_PORT, 3001)
 
@@ -47,18 +51,18 @@ class CertInstallActivity : ComponentActivity() {
                 apiHost = apiHost,
                 apiPort = apiPort,
                 onInstall = { host, port ->
-                    downloadAndInstallCert(host, port)
+                    downloadAndInstallCert(host, port, apiBaseUrl)
                 },
                 onFinish = { finish() }
             )
         }
     }
 
-    private fun downloadAndInstallCert(host: String, port: Int) {
+    private fun downloadAndInstallCert(host: String, port: Int, apiBaseUrl: String?) {
         lifecycleScope.launch {
             try {
                 val certBytes = withContext(Dispatchers.IO) {
-                    downloadCert(host, port)
+                    downloadCert(host, port, apiBaseUrl)
                 }
                 if (certBytes != null) {
                     launchCertInstaller(certBytes)
@@ -74,8 +78,13 @@ class CertInstallActivity : ComponentActivity() {
         }
     }
 
-    private fun downloadCert(host: String, port: Int): ByteArray? {
-        val url = URL("http://$host:$port/api/cert/ca")
+    private fun downloadCert(host: String, port: Int, apiBaseUrl: String?): ByteArray? {
+        // The QR's ca= URL is the MITM CA endpoint; when the payload carried
+        // an api base URL, derive the cert URL from it (honoring its scheme).
+        val url = URL(
+            apiBaseUrl?.trimEnd('/')?.removeSuffix("/api")?.let { "$it/api/cert/ca" }
+                ?: "http://$host:$port/api/cert/ca"
+        )
         val conn = url.openConnection() as HttpURLConnection
         return try {
             conn.connectTimeout = 5000

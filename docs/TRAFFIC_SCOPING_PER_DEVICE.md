@@ -110,7 +110,13 @@ injector** on the forwarding path — because the companion re-originates the
 TCP connections to the proxy, it authors the CONNECT itself and can attach
 `Proxy-Authorization` from the device credential (stored in the Android
 Keystore). Apps that ignore system proxy settings are covered too, since
-tun capture is transparent.
+tun capture is transparent. **Shipped (issue #111)**: the
+`madhyamas://connect` deep link (QR pairing), the enrollment-token
+exchange, Android-Keystore-sealed credential storage, per-CONNECT
+credential injection with a 407 circuit breaker, and `tls=1` honored for
+the proxy connection. Remaining follow-up: the per-app scoping end state
+from
+[TRAFFIC_SCOPING_PER_APP.md](TRAFFIC_SCOPING_PER_APP.md) Option C.
 
 ```mermaid
 flowchart TB

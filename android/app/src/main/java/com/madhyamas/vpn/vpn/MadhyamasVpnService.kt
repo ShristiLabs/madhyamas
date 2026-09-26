@@ -14,6 +14,10 @@ import androidx.core.app.NotificationCompat
 import com.madhyamas.vpn.MainActivity
 import com.madhyamas.vpn.MadhyamasApp
 import com.madhyamas.vpn.R
+import com.madhyamas.vpn.pairing.CredentialStore
+import com.madhyamas.vpn.pairing.KeystoreAead
+import com.madhyamas.vpn.pairing.PrefsKeyValueStore
+import com.madhyamas.vpn.pairing.ProxyAuth
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
@@ -55,6 +59,12 @@ class MadhyamasVpnService : VpnService() {
         const val EXTRA_PROXY_PORT = "proxy_port"
         const val EXTRA_ALLOWED_PACKAGES = "allowed_packages"
         const val EXTRA_DISALLOWED_PACKAGES = "disallowed_packages"
+        const val EXTRA_USE_TLS = "use_tls"
+
+        // After this many consecutive 407-rejected proxy handshakes with no
+        // success in between, new app connections fail fast instead of each
+        // one re-attempting a dead credential (no retry storm — issue #111).
+        private const val AUTH_REJECT_THRESHOLD = 3
 
         // Singleton instance for UI to check status
         @Volatile
@@ -71,10 +81,24 @@ class MadhyamasVpnService : VpnService() {
     // Proxy configuration
     private var proxyHost: String = "127.0.0.1"
     private var proxyPort: Int = 8888
+    private var useTls: Boolean = false
+
+    // Device credential injection (issue #111): built once per service
+    // start from the Keystore-sealed credential; attached to every CONNECT
+    // the companion authors. Null = unpaired/unauthenticated instance.
+    private var proxyAuthorization: String? = null
 
     // Package filtering
     private var allowedPackages: Set<String> = emptySet() // empty = all apps
     private var disallowedPackages: Set<String> = emptySet()
+
+    // Connection outcome surfacing (polled by the UI): the last per-relay
+    // proxy handshake result, plus the 407 circuit-breaker state.
+    @Volatile var lastConnectState: ConnectState? = null
+        private set
+    @Volatile var authRejected: Boolean = false
+        private set
+    private val consecutiveRejections = java.util.concurrent.atomic.AtomicInteger(0)
 
     // Stats
     @Volatile var totalConnections: Int = 0
@@ -93,6 +117,9 @@ class MadhyamasVpnService : VpnService() {
                 proxyPort = intent.getIntExtra(EXTRA_PROXY_PORT, proxyPort)
                 allowedPackages = intent.getStringArrayExtra(EXTRA_ALLOWED_PACKAGES)?.toSet() ?: emptySet()
                 disallowedPackages = intent.getStringArrayExtra(EXTRA_DISALLOWED_PACKAGES)?.toSet() ?: emptySet()
+                useTls = intent.getBooleanExtra(EXTRA_USE_TLS, false)
+                proxyAuthorization = loadProxyAuthorization()
+                resetAuthCircuit()
                 startVpn()
             }
             ACTION_STOP -> {
@@ -104,10 +131,58 @@ class MadhyamasVpnService : VpnService() {
                 proxyPort = intent.getIntExtra(EXTRA_PROXY_PORT, proxyPort)
                 allowedPackages = intent.getStringArrayExtra(EXTRA_ALLOWED_PACKAGES)?.toSet() ?: emptySet()
                 disallowedPackages = intent.getStringArrayExtra(EXTRA_DISALLOWED_PACKAGES)?.toSet() ?: emptySet()
+                useTls = intent.getBooleanExtra(EXTRA_USE_TLS, useTls)
                 // No need to restart VPN — relay reads config dynamically
             }
         }
         return START_STICKY
+    }
+
+    /**
+     * Reads the Keystore-sealed device credential (if paired) and builds
+     * the Proxy-Authorization header value for every authored CONNECT.
+     * Keystore operations happen once per service start, never per packet.
+     */
+    private fun loadProxyAuthorization(): String? {
+        return try {
+            val store = CredentialStore(
+                PrefsKeyValueStore(this),
+                KeystoreAead()
+            )
+            store.deviceKey()?.let { ProxyAuth.basicHeaderValue(it) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not load device credential: ${e.message}")
+            null
+        }
+    }
+
+    private fun resetAuthCircuit() {
+        consecutiveRejections.set(0)
+        authRejected = false
+        lastConnectState = null
+    }
+
+    /**
+     * Circuit breaker + status surfacing for per-relay proxy handshake
+     * outcomes. Three consecutive 407s with no success flip
+     * [authRejected]; new app connections then fail fast instead of
+     * hammering the proxy with a dead credential. Any success resets it.
+     */
+    private fun onRelayConnectResult(state: ConnectState) {
+        lastConnectState = state
+        when (state) {
+            ConnectState.OK -> {
+                consecutiveRejections.set(0)
+                authRejected = false
+            }
+            ConnectState.REJECTED -> {
+                if (consecutiveRejections.incrementAndGet() >= AUTH_REJECT_THRESHOLD) {
+                    authRejected = true
+                    Log.w(TAG, "Proxy rejected the device credential $AUTH_REJECT_THRESHOLD times — new connections fail fast until re-pair")
+                }
+            }
+            else -> {}
+        }
     }
 
     private fun startVpn() {
@@ -216,6 +291,13 @@ class MadhyamasVpnService : VpnService() {
 
                 when {
                     isSyn -> {
+                        if (authRejected) {
+                            // Circuit breaker open: the proxy has rejected the
+                            // device credential repeatedly (revoked device).
+                            // Fail fast — no new proxy attempts, no retry storm.
+                            Log.w(TAG, "Rejecting new connection $connKey — proxy refused the device credential")
+                            continue
+                        }
                         // New connection — create a relay
                         val relayId = connectionCounter.incrementAndGet()
                         val relay = TcpRelay(
@@ -225,13 +307,16 @@ class MadhyamasVpnService : VpnService() {
                             dstPort = dstPort,
                             proxyHost = proxyHost,
                             proxyPort = proxyPort,
+                            useTls = useTls,
+                            proxyAuthorization = proxyAuthorization,
                             vpnService = this,
                             onClose = { id ->
                                 activeRelays.remove(srcPort)
                                 activeConnections = activeRelays.size
                             },
                             onBytesSent = { n -> bytesSent += n },
-                            onBytesReceived = { n -> bytesReceived += n }
+                            onBytesReceived = { n -> bytesReceived += n },
+                            onConnectResult = ::onRelayConnectResult
                         )
                         activeRelays[srcPort] = relay
                         totalConnections++
@@ -370,6 +455,7 @@ class MadhyamasVpnService : VpnService() {
     private fun stopVpn() {
         running.set(false)
         instance = null
+        resetAuthCircuit()
 
         // Close all active relays
         for (relay in activeRelays.values) {

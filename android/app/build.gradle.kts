@@ -82,4 +82,9 @@ dependencies {
     // Debugging
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    // Unit tests (pure JVM): real org.json artifact replaces the android.jar
+    // stubs so JSONObject parsing is testable without an emulator.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20231013")
 }

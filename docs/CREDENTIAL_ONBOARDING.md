@@ -516,7 +516,7 @@ traffic view (filtered), revoke/re-issue actions.
 | `madhyamas-api` | `/api/devices` CRUD + last-seen + `/api/devices/{id}/agent-keys`; traffic `device_id` param with forced filtering for agent keys | small-medium |
 | web UI | Devices panel with per-device agent list + mint dialog (presets) + QR dialog (reuse `qrcode.react`) + per-device view + wizard step | medium |
 | `madhyamas-mcp` / `madhyamas-cli` | `--api-key` / `MADHYAMAS_API_KEY` env; MCP Streamable HTTP transport (already planned in [ENTERPRISE_AI_AGENTS.md](ENTERPRISE_AI_AGENTS.md)); **MCP tool list filtered by the key's scopes** with `annotations` carrying required scopes | per that doc |
-| companion (later phase) | Deep link, enrollment exchange, credential injection ([TRAFFIC_SCOPING_PER_DEVICE.md](TRAFFIC_SCOPING_PER_DEVICE.md)) | medium |
+| companion (later phase) | Deep link, enrollment exchange, credential injection ([TRAFFIC_SCOPING_PER_DEVICE.md](TRAFFIC_SCOPING_PER_DEVICE.md)) — **shipped (issue #111)**: `madhyamas://connect` deep link, token redemption at `POST /api/devices/enroll`, Android-Keystore-sealed credential storage, `Proxy-Authorization` injection on the companion-authored CONNECTs, 407 circuit breaker + in-app status, `tls=1` honored for the proxy connection. Follow-ups: per-app routing policy (`addAllowedApplication` scoping end state), iOS companion, a server-side `install_uuid` field on enroll (the endpoint accepts only `token` today, so the companion keeps the UUID local) | medium |
 | `madhyamas-core` (follow-up) | TLS-wrapped proxy listener option — **shipped (issue #110)**: `--proxy-tls-cert-file`/`--proxy-tls-key-file`, QR `tls=1` interlock, `proxy_tls` in `GET /api/config` | medium |
 
 Tier note: the two `madhyamas-core` intercept/store rows and the engine's
@@ -531,7 +531,7 @@ works manually; (2) QR + enrollment tokens + status loop; (3)
 device-derived agent keys with forced read filtering + feature-scope
 taxonomy/tool filtering (agent transport/auth already built — Phases
 8a/8b/9.6); (4) device-scoped intercept rules + pipeline attribution
-context (agent *modification*); (5) companion deep link + TLS listener.
+context (agent *modification*); (5) companion deep link + TLS listener — **complete: TLS listener shipped in #110, companion deep link + enrollment + credential injection shipped in #111 (milestone 9 of 9)**.
 
 ## Open questions (maintainers)
 
