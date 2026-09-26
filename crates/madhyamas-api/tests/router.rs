@@ -7,8 +7,9 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use madhyamas_api::handlers::{
-    delete_secret, get_log_status, list_secrets, set_secret, update_log_config,
-    PatchDebugLogConfigRequest, PatchLogConfigRequest, SetSecretRequest,
+    delete_secret, get_config, get_log_status, list_secrets, patch_config, set_secret,
+    update_log_config, PatchConfigRequest, PatchDebugLogConfigRequest, PatchLogConfigRequest,
+    SetSecretRequest,
 };
 use madhyamas_api::AppState;
 use madhyamas_core::log_rotation::RotatingFileWriter;
@@ -543,4 +544,71 @@ mod api_auth_middleware {
         let app = make_app("/", None).await;
         assert_eq!(status(&app, "/api/traffic").await, StatusCode::OK);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Listener-TLS exposure in the config endpoints (issue #110). The web UI
+// reads `proxy_tls` from GET /api/config to set the enrollment QR's tls=
+// flag and the manual-apply scheme hint; it is read-only (bind-time
+// property, not settable via PATCH).
+// ─────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn get_config_reports_proxy_tls_disabled_by_default() {
+    let (state, _dir) = make_state().await;
+    let state = Arc::new(state);
+    let (status, body) = respond(get_config(State(state)).await.into_response()).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["proxy_tls"], serde_json::Value::Bool(false));
+}
+
+#[tokio::test]
+async fn get_config_reports_proxy_tls_enabled_when_both_files_set() {
+    let store = TrafficStore::new(":memory:")
+        .await
+        .expect("in-memory store");
+    let cfg = ProxyConfig {
+        proxy_tls_cert_file: Some("/etc/certs/proxy.pem".to_string()),
+        proxy_tls_key_file: Some("/etc/certs/proxy.key".to_string()),
+        ..ProxyConfig::default()
+    };
+    let state =
+        Arc::new(AppState::new(store).with_proxy_config(Arc::new(parking_lot::RwLock::new(cfg))));
+
+    let (status, body) = respond(get_config(State(state)).await.into_response()).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["proxy_tls"], serde_json::Value::Bool(true));
+}
+
+/// The PATCH snapshot carries the (read-only) flag for symmetry with
+/// GET, and an empty patch body cannot change it — listener TLS is a
+/// bind-time property.
+#[tokio::test]
+async fn patch_config_snapshot_carries_read_only_proxy_tls() {
+    let store = TrafficStore::new(":memory:")
+        .await
+        .expect("in-memory store");
+    let cfg = ProxyConfig {
+        proxy_tls_cert_file: Some("/etc/certs/proxy.pem".to_string()),
+        proxy_tls_key_file: Some("/etc/certs/proxy.key".to_string()),
+        ..ProxyConfig::default()
+    };
+    let state =
+        Arc::new(AppState::new(store).with_proxy_config(Arc::new(parking_lot::RwLock::new(cfg))));
+
+    let req: PatchConfigRequest = serde_json::from_str("{}").unwrap();
+    let (status, body) = respond(
+        patch_config(State(state.clone()), Json(req))
+            .await
+            .into_response(),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["proxy_tls"], serde_json::Value::Bool(true));
+    // Still enabled in the live config after the patch.
+    let enabled = state
+        .proxy_config
+        .as_ref()
+        .map(|c| c.read().proxy_tls_enabled());
+    assert_eq!(enabled, Some(true));
 }

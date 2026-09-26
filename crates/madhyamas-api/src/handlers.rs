@@ -634,6 +634,7 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse
         "socks_port": config.socks_port(),
         "socks_auth_enabled": config.socks_auth_enabled(),
         "socks_auth_username": config.socks_auth_username,
+        "proxy_tls": config.proxy_tls_enabled(),
         "upstream_proxy": {
             "enabled": config.upstream_proxy.enabled,
             "protocol": config.upstream_proxy.protocol,
@@ -1056,6 +1057,11 @@ pub async fn patch_config(
 
     // Snapshot the updated config for the response (still holding the lock).
     // Note: auth_password is intentionally omitted to avoid leaking secrets.
+    // `proxy_tls` is reported for symmetry with GET /api/config (the web UI
+    // uses it for the enrollment QR `tls=` flag and the manual-apply scheme
+    // hint) but is NOT settable here: listener TLS is a bind-time property
+    // validated at startup — change it via --proxy-tls-cert-file/
+    // --proxy-tls-key-file (or the config file) and restart.
     let resp = serde_json::json!({
         "proxy_port": config.proxy_port,
         "api_port": config.api_port,
@@ -1075,6 +1081,7 @@ pub async fn patch_config(
         "socks_port": config.socks_port(),
         "socks_auth_enabled": config.socks_auth_enabled(),
         "socks_auth_username": config.socks_auth_username,
+        "proxy_tls": config.proxy_tls_enabled(),
         "upstream_proxy": {
             "enabled": config.upstream_proxy.enabled,
             "protocol": config.upstream_proxy.protocol,

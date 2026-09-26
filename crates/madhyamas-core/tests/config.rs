@@ -185,6 +185,64 @@ fn proxy_config_old_json_without_debug_logging_uses_defaults() {
     assert_eq!(cfg.debug_logging, DebugLogConfig::default());
 }
 
+/// Issue #110: the listener-TLS flag is enabled only when BOTH the
+/// certificate and key file paths are set — a one-sided configuration is
+/// never treated as "on" (the binary rejects it at startup instead).
+#[test]
+fn proxy_tls_enabled_requires_both_cert_and_key() {
+    let neither = ProxyConfig::default();
+    assert!(!neither.proxy_tls_enabled());
+
+    let cert_only = ProxyConfig {
+        proxy_tls_cert_file: Some("/etc/certs/proxy.pem".to_string()),
+        ..Default::default()
+    };
+    assert!(!cert_only.proxy_tls_enabled());
+
+    let key_only = ProxyConfig {
+        proxy_tls_key_file: Some("/etc/certs/proxy.key".to_string()),
+        ..Default::default()
+    };
+    assert!(!key_only.proxy_tls_enabled());
+
+    let both = ProxyConfig {
+        proxy_tls_cert_file: Some("/etc/certs/proxy.pem".to_string()),
+        proxy_tls_key_file: Some("/etc/certs/proxy.key".to_string()),
+        ..Default::default()
+    };
+    assert!(both.proxy_tls_enabled());
+}
+
+/// Issue #110: config files written before the field existed load with
+/// the listener disabled (serde default), so enabling TLS never happens
+/// by accident on upgrade.
+#[test]
+fn proxy_config_old_json_without_proxy_tls_uses_defaults() {
+    let mut v: serde_json::Value = serde_json::to_value(ProxyConfig::default()).unwrap();
+    let obj = v.as_object_mut().unwrap();
+    obj.remove("proxy_tls_cert_file");
+    obj.remove("proxy_tls_key_file");
+    let cfg: ProxyConfig = serde_json::from_value(v).unwrap();
+    assert!(cfg.proxy_tls_cert_file.is_none());
+    assert!(cfg.proxy_tls_key_file.is_none());
+    assert!(!cfg.proxy_tls_enabled());
+}
+
+/// Issue #110: set paths round-trip through serialize/deserialize.
+#[test]
+fn proxy_config_proxy_tls_roundtrip() {
+    let cfg = ProxyConfig {
+        proxy_tls_cert_file: Some("/etc/certs/proxy.pem".to_string()),
+        proxy_tls_key_file: Some("/etc/certs/proxy.key".to_string()),
+        ..ProxyConfig::default()
+    };
+    let json = serde_json::to_string(&cfg).unwrap();
+    let back: ProxyConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.proxy_tls_cert_file, cfg.proxy_tls_cert_file);
+    assert_eq!(back.proxy_tls_key_file, cfg.proxy_tls_key_file);
+    assert!(back.proxy_tls_enabled());
+}
+
 #[test]
 fn proxy_config_debug_logging_roundtrip() {
     let cfg = ProxyConfig {

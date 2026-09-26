@@ -458,18 +458,25 @@ device or its sibling agents.
 
 ### Transport security for device credentials
 
-The proxy listener is plaintext HTTP CONNECT — Basic credentials are
-base64 **in the clear** on any hostile network. Mitigations, in order:
+Without countermeasures the proxy listener is plaintext HTTP CONNECT —
+Basic/device credentials are base64 **in the clear** on any hostile
+network. Mitigations, in order:
 
 1. **Companion VPN path** — the tunnel encrypts to the proxy (when the
    companion speaks TLS to the server or via WSS-ish relay; verify).
-2. **TLS-wrapped proxy listener** — new core feature (rustls server
-   machinery already exists for MITM; a `tls: true` listener option for
-   the proxy port itself). Needed before device credentials are used on
-   untrusted networks at all.
-3. **Deployment guidance** — until then, document: device credentials
-   are for controlled networks (lab WiFi, VPN-fronted exposure), not raw
-   public internet.
+2. **TLS-wrapped proxy listener** — **shipped (issue #110)**. Start with
+   `--proxy-tls-cert-file` + `--proxy-tls-key-file` (or
+   `MADHYAMAS_PROXY_TLS_CERT_FILE` / `MADHYAMAS_PROXY_TLS_KEY_FILE`, or
+   config-file `proxy_tls_cert_file` / `proxy_tls_key_file`) and clients
+   use the proxy URL `https://host:port`; the CONNECT exchange — and the
+   `Proxy-Authorization` header with it — happens inside the TLS
+   tunnel. The enrollment QR carries `tls=1` on such instances (the
+   `proxy_tls` field of `GET /api/config` drives the flag and the
+   manual-values scheme hint). Required before device credentials are
+   used on untrusted networks.
+3. **Deployment guidance** — when the TLS listener cannot be used,
+   device credentials are for controlled networks (lab WiFi,
+   VPN-fronted exposure), not raw public internet.
 
 ### Device lifecycle
 
@@ -510,7 +517,7 @@ traffic view (filtered), revoke/re-issue actions.
 | web UI | Devices panel with per-device agent list + mint dialog (presets) + QR dialog (reuse `qrcode.react`) + per-device view + wizard step | medium |
 | `madhyamas-mcp` / `madhyamas-cli` | `--api-key` / `MADHYAMAS_API_KEY` env; MCP Streamable HTTP transport (already planned in [ENTERPRISE_AI_AGENTS.md](ENTERPRISE_AI_AGENTS.md)); **MCP tool list filtered by the key's scopes** with `annotations` carrying required scopes | per that doc |
 | companion (later phase) | Deep link, enrollment exchange, credential injection ([TRAFFIC_SCOPING_PER_DEVICE.md](TRAFFIC_SCOPING_PER_DEVICE.md)) | medium |
-| `madhyamas-core` (follow-up) | TLS-wrapped proxy listener option | medium |
+| `madhyamas-core` (follow-up) | TLS-wrapped proxy listener option — **shipped (issue #110)**: `--proxy-tls-cert-file`/`--proxy-tls-key-file`, QR `tls=1` interlock, `proxy_tls` in `GET /api/config` | medium |
 
 Tier note: the two `madhyamas-core` intercept/store rows and the engine's
 attribution-context row are the **inert primitives** from *Tier

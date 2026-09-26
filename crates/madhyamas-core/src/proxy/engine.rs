@@ -34,7 +34,7 @@ use parking_lot::RwLock;
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
@@ -196,6 +196,17 @@ pub struct ProxyEngine {
     /// unattributed scope) while invalid credentials are still
     /// rejected.
     proxy_auth_required: std::sync::atomic::AtomicBool,
+    /// TLS acceptor wrapping the proxy listener itself (issue #110 —
+    /// transport TLS, distinct from the MITM leaf-cert acceptor built in
+    /// [`Self::create_tls_server_config`]). When set, every accepted
+    /// socket completes a TLS handshake BEFORE any HTTP parsing; the
+    /// CONNECT parser then operates on the decrypted stream so
+    /// `Proxy-Authorization` credentials never cross the network in the
+    /// clear. Built once at startup by the binary from
+    /// [`crate::tls::load_listener_tls_acceptor`]; `None` (the OSS
+    /// default / option unset) keeps the plaintext listener exactly as
+    /// before.
+    proxy_tls_acceptor: OnceLock<Arc<tokio_rustls::TlsAcceptor>>,
 }
 
 impl ProxyEngine {
@@ -292,6 +303,7 @@ impl ProxyEngine {
             running: RwLock::new(false),
             proxy_auth_validator: OnceLock::new(),
             proxy_auth_required: std::sync::atomic::AtomicBool::new(true),
+            proxy_tls_acceptor: OnceLock::new(),
         }))
     }
 
@@ -460,6 +472,27 @@ impl ProxyEngine {
         self
     }
 
+    /// Wrap the proxy listener itself in TLS (issue #110). When attached,
+    /// accepted sockets complete a TLS handshake before any HTTP parsing
+    /// (the CONNECT parser then operates on the decrypted stream) so proxy
+    /// credentials are encrypted in transit. The acceptor must be built
+    /// once at startup via [`crate::tls::load_listener_tls_acceptor`]
+    /// (which validates the certificate and key files fail-closed); the
+    /// engine never re-reads the files. Handshake failures on the
+    /// listener are logged at debug and the socket closed without any
+    /// bytes written, so a plaintext CONNECT to a TLS port leaks no proxy
+    /// behavior. The MITM interception acceptor inside
+    /// [`Self::handle_https_tunnel`] is unaffected — transport TLS and
+    /// MITM TLS compose (clients then see two TLS layers, which is how
+    /// HTTPS proxies work).
+    pub fn with_proxy_tls_acceptor(
+        self: Arc<Self>,
+        acceptor: Arc<tokio_rustls::TlsAcceptor>,
+    ) -> Arc<Self> {
+        let _ = self.proxy_tls_acceptor.set(acceptor);
+        self
+    }
+
     /// Set whether proxy authentication is strictly required (issue
     /// #104). With `false`, connections without credentials proceed
     /// unauthenticated (their traffic is captured to the unattributed
@@ -596,13 +629,109 @@ impl ProxyEngine {
                 if let Some(metrics) = engine.metrics_collector.get() {
                     metrics.connection_opened();
                 }
-                if let Err(e) = engine.handle_connection(client_socket, attribution).await {
-                    debug!("Connection error from {}: {}", client_addr, e);
+                // Issue #110: when the listener TLS acceptor is attached,
+                // complete the transport TLS handshake BEFORE any HTTP
+                // parsing — the CONNECT parser then operates on the
+                // decrypted stream. A failed handshake (a plaintext
+                // CONNECT sent to the TLS port, or a TLS client that
+                // rejects our certificate) is logged at debug and the
+                // socket dropped without writing any bytes, so the
+                // failure mode discloses no proxy behavior.
+                match engine.proxy_tls_acceptor.get() {
+                    Some(acceptor) => match acceptor.accept(client_socket).await {
+                        Ok(tls_stream) => {
+                            if let Err(e) =
+                                engine.handle_connection_tls(tls_stream, attribution).await
+                            {
+                                debug!("Connection error from {}: {}", client_addr, e);
+                            }
+                        }
+                        Err(e) => {
+                            debug!(
+                                "Proxy listener TLS handshake failed from {}: {}",
+                                client_addr, e
+                            );
+                        }
+                    },
+                    None => {
+                        if let Err(e) = engine.handle_connection(client_socket, attribution).await {
+                            debug!("Connection error from {}: {}", client_addr, e);
+                        }
+                    }
                 }
                 if let Some(metrics) = engine.metrics_collector.get() {
                     metrics.connection_closed();
                 }
             });
+        }
+    }
+
+    /// Shared proxy-auth gate for accepted connections (Phase 9.6 /
+    /// issues #103/#104). Resolves the [`ProxyPrincipal`] from the
+    /// credentials in `request_str`; when the credential must be rejected
+    /// it writes the `407` response to `stream` and returns `None` (the
+    /// caller stops processing the connection). Used by both the
+    /// plaintext listener ([`Self::handle_connection`]) and the
+    /// TLS-wrapped listener ([`Self::handle_connection_tls`]).
+    /// `request_str` holds the first bytes of the request — peeked on
+    /// plaintext connections, read on TLS connections where peek is
+    /// unavailable.
+    async fn resolve_connection_principal<S: AsyncWrite + Unpin>(
+        &self,
+        request_str: &str,
+        stream: &mut S,
+    ) -> Option<ProxyPrincipal> {
+        match self.proxy_auth_validator.get() {
+            Some(validator) => match self.check_proxy_auth(request_str, validator).await {
+                Ok(principal) => {
+                    debug!(
+                        user_id = ?principal.user_id,
+                        api_key_id = ?principal.api_key_id,
+                        device_id = ?principal.device_id,
+                        "Proxy connection authenticated"
+                    );
+                    Some(principal)
+                }
+                Err(ProxyAuthError::Invalid(msg)) => {
+                    let response = format!(
+                        "HTTP/1.1 407 Proxy Authentication Required\r\n\
+                         Proxy-Authenticate: Basic realm=\"madhyamas\"\r\n\
+                         Content-Type: application/json\r\n\
+                         Content-Length: {}\r\n\
+                         Connection: close\r\n\
+                         \r\n\
+                         {{\"error\":\"proxy_auth_required\",\"message\":\"{}\"}}",
+                        msg.len(),
+                        msg
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    None
+                }
+                Err(ProxyAuthError::Missing) => {
+                    if self.proxy_auth_required() {
+                        let msg = "No proxy credentials provided";
+                        let response = format!(
+                            "HTTP/1.1 407 Proxy Authentication Required\r\n\
+                             Proxy-Authenticate: Basic realm=\"madhyamas\"\r\n\
+                             Content-Type: application/json\r\n\
+                             Content-Length: {}\r\n\
+                             Connection: close\r\n\
+                             \r\n\
+                             {{\"error\":\"proxy_auth_required\",\"message\":\"{}\"}}",
+                            msg.len(),
+                            msg
+                        );
+                        let _ = stream.write_all(response.as_bytes()).await;
+                        return None;
+                    }
+                    debug!(
+                        "Proxy connection unauthenticated (require_proxy_auth off); \
+                         capturing to unattributed scope"
+                    );
+                    Some(ProxyPrincipal::unauthenticated())
+                }
+            },
+            None => Some(ProxyPrincipal::unauthenticated()),
         }
     }
 
@@ -641,57 +770,12 @@ impl ProxyEngine {
         // for the connection is attributed to that device. Without a
         // validator (the OSS default) the connection stays
         // unauthenticated.
-        let principal = match self.proxy_auth_validator.get() {
-            Some(validator) => match self.check_proxy_auth(&request_str, validator).await {
-                Ok(principal) => {
-                    debug!(
-                        user_id = ?principal.user_id,
-                        api_key_id = ?principal.api_key_id,
-                        device_id = ?principal.device_id,
-                        "Proxy connection authenticated"
-                    );
-                    principal
-                }
-                Err(ProxyAuthError::Invalid(msg)) => {
-                    let response = format!(
-                        "HTTP/1.1 407 Proxy Authentication Required\r\n\
-                         Proxy-Authenticate: Basic realm=\"madhyamas\"\r\n\
-                         Content-Type: application/json\r\n\
-                         Content-Length: {}\r\n\
-                         Connection: close\r\n\
-                         \r\n\
-                         {{\"error\":\"proxy_auth_required\",\"message\":\"{}\"}}",
-                        msg.len(),
-                        msg
-                    );
-                    let _ = client_socket.write_all(response.as_bytes()).await;
-                    return Ok(());
-                }
-                Err(ProxyAuthError::Missing) => {
-                    if self.proxy_auth_required() {
-                        let msg = "No proxy credentials provided";
-                        let response = format!(
-                            "HTTP/1.1 407 Proxy Authentication Required\r\n\
-                             Proxy-Authenticate: Basic realm=\"madhyamas\"\r\n\
-                             Content-Type: application/json\r\n\
-                             Content-Length: {}\r\n\
-                             Connection: close\r\n\
-                             \r\n\
-                             {{\"error\":\"proxy_auth_required\",\"message\":\"{}\"}}",
-                            msg.len(),
-                            msg
-                        );
-                        let _ = client_socket.write_all(response.as_bytes()).await;
-                        return Ok(());
-                    }
-                    debug!(
-                        "Proxy connection unauthenticated (require_proxy_auth off); \
-                         capturing to unattributed scope"
-                    );
-                    ProxyPrincipal::unauthenticated()
-                }
-            },
-            None => ProxyPrincipal::unauthenticated(),
+        let principal = match self
+            .resolve_connection_principal(&request_str, &mut client_socket)
+            .await
+        {
+            Some(principal) => principal,
+            None => return Ok(()),
         };
         // Issue #104: device-authenticated connections carry the device
         // identity on the attribution context for the connection's
@@ -736,6 +820,55 @@ impl ProxyEngine {
         }
     }
 
+    /// Handle a connection accepted on the TLS-wrapped proxy listener
+    /// (issue #110) — the TLS counterpart of [`Self::handle_connection`].
+    /// The transport TLS handshake has already completed in the accept
+    /// loop before this runs, so every read here is of decrypted bytes
+    /// and every write (including 407 auth responses) is encrypted.
+    ///
+    /// TLS streams cannot `peek`, so the request type is detected from
+    /// the first `read` instead; the buffer size matches the plain
+    /// listener's HTTP branch so both listeners accept the same initial
+    /// request sizes. Everything after that first read (auth gate,
+    /// attribution, CONNECT/HTTP dispatch) is shared with the plain
+    /// listener through the generic handlers.
+    async fn handle_connection_tls(
+        &self,
+        mut client_stream: tokio_rustls::server::TlsStream<TcpStream>,
+        mut attribution: AttributionContext,
+    ) -> crate::Result<()> {
+        let mut buf = vec![0u8; 65536];
+        let n = client_stream
+            .read(&mut buf)
+            .await
+            .map_err(|e| Error::Proxy(format!("Failed to read request: {}", e)))?;
+
+        if n == 0 {
+            return Ok(());
+        }
+
+        let request_str = String::from_utf8_lossy(&buf[..n]).to_string();
+
+        // Same proxy-auth gate and attribution handling as the plain
+        // listener (see [`Self::resolve_connection_principal`]).
+        let Some(principal) = self
+            .resolve_connection_principal(&request_str, &mut client_stream)
+            .await
+        else {
+            return Ok(());
+        };
+        attribution.device_id = principal.device_id.clone();
+        attribution.device_name = principal.device_name.clone();
+
+        if request_str.starts_with("CONNECT ") {
+            self.handle_https_tunnel(client_stream, &request_str, attribution)
+                .await
+        } else {
+            self.handle_http_proxy(client_stream, &buf[..n], attribution)
+                .await
+        }
+    }
+
     /// Extract and validate proxy auth credentials from the raw request
     /// string (Phase 9.6). Checks `Proxy-Authorization` and `X-API-Key`
     /// headers. Returns the resolved [`ProxyPrincipal`] when
@@ -775,13 +908,23 @@ impl ProxyEngine {
         Err(ProxyAuthError::Missing)
     }
 
-    /// Handle HTTPS CONNECT request
-    async fn handle_https_tunnel(
+    /// Handle HTTPS CONNECT request.
+    ///
+    /// Generic over the client stream `S` so the same CONNECT handling
+    /// serves both listeners: the plaintext listener passes `TcpStream`
+    /// and the TLS-wrapped listener (issue #110) passes the already
+    /// decrypted transport-TLS stream. On the TLS listener the MITM
+    /// handshake below then produces a second TLS layer inside the
+    /// transport tunnel (double TLS — how HTTPS proxies work).
+    async fn handle_https_tunnel<S>(
         &self,
-        mut client_socket: TcpStream,
+        mut client_socket: S,
         request_str: &str,
         attribution: AttributionContext,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         // Parse CONNECT request: "CONNECT host:port HTTP/1.1"
         let first_line = request_str.lines().next().unwrap_or("");
         let parts: Vec<&str> = first_line.split_whitespace().collect();
@@ -958,14 +1101,21 @@ impl ProxyEngine {
     /// We still record a traffic entry (flagged as `is_passthrough`) so the
     /// connection is visible in the web UI, but we cannot inspect the
     /// request/response contents.
-    async fn handle_passthrough_tunnel(
+    ///
+    /// Generic over the client stream (see [`Self::handle_https_tunnel`]):
+    /// on the TLS-wrapped listener (issue #110) the relay runs between the
+    /// decrypted transport stream and the upstream socket.
+    async fn handle_passthrough_tunnel<S>(
         &self,
-        mut client_socket: TcpStream,
+        mut client_socket: S,
         host: &str,
         port: u16,
         connect_headers: &std::collections::HashMap<String, String>,
         attribution: &AttributionContext,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         // Send 200 Connection Established so the client starts TLS
         let response = "HTTP/1.1 200 Connection Established\r\n\r\n";
         client_socket.write_all(response.as_bytes()).await?;
@@ -1191,7 +1341,9 @@ impl ProxyEngine {
 
         // Bidirectional byte forwarding: client ↔ upstream
         // We split both sockets and copy in both directions simultaneously.
-        let (mut client_rx, mut client_tx) = client_socket.split();
+        // `tokio::io::split` works for any AsyncRead + AsyncWrite stream
+        // (the client side is generic — see the signature above).
+        let (mut client_rx, mut client_tx) = tokio::io::split(client_socket);
         let (mut upstream_rx, mut upstream_tx) = upstream_socket.split();
 
         let client_to_upstream = async {
@@ -1282,14 +1434,22 @@ impl ProxyEngine {
         Ok(Arc::new(config))
     }
 
-    /// Handle TLS-wrapped HTTP requests (loops for HTTP/1.1 keep-alive)
-    async fn handle_tls_request(
+    /// Handle TLS-wrapped HTTP requests (loops for HTTP/1.1 keep-alive).
+    ///
+    /// Generic over the underlying stream `S` (see
+    /// [`Self::handle_https_tunnel`]): the MITM TLS stream may sit
+    /// directly on a `TcpStream` or inside the transport-TLS tunnel of
+    /// the TLS-wrapped listener (issue #110).
+    async fn handle_tls_request<S>(
         &self,
-        tls_stream: &mut tokio_rustls::server::TlsStream<TcpStream>,
+        tls_stream: &mut tokio_rustls::server::TlsStream<S>,
         host: &str,
         port: u16,
         attribution: &AttributionContext,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         let mut buf = vec![0u8; 65536];
         let pipeline = self.pipeline().with_attribution(attribution.clone());
         // One correlation id per client connection: every request on this
@@ -1375,13 +1535,16 @@ impl ProxyEngine {
     /// Streams are handled in independent tasks so concurrent HTTP/2 requests
     /// (and gRPC calls) are processed in parallel — the defining feature of
     /// HTTP/2 multiplexing.
-    async fn handle_h2_connection(
+    async fn handle_h2_connection<S>(
         &self,
-        tls_stream: tokio_rustls::server::TlsStream<TcpStream>,
+        tls_stream: tokio_rustls::server::TlsStream<S>,
         host: &str,
         port: u16,
         attribution: AttributionContext,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         // Perform the HTTP/2 server handshake (client preface + settings
         // exchange) on the TLS stream. The h2 crate owns framing/flow-control
         // from here on.
@@ -1482,12 +1645,15 @@ impl ProxyEngine {
     }
 
     /// Handle regular HTTP proxy request
-    async fn handle_http_proxy(
+    async fn handle_http_proxy<S>(
         &self,
-        mut client_socket: TcpStream,
+        mut client_socket: S,
         initial_data: &[u8],
         attribution: AttributionContext,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         let request_str = String::from_utf8_lossy(initial_data);
         let first_line = request_str.lines().next().unwrap_or("");
         let parts: Vec<&str> = first_line.split_whitespace().collect();
@@ -1564,13 +1730,16 @@ impl ProxyEngine {
     }
 
     /// Handle WebSocket upgrade over TLS connection
-    async fn handle_websocket_upgrade_tls(
+    async fn handle_websocket_upgrade_tls<S>(
         &self,
-        client_stream: &mut tokio_rustls::server::TlsStream<TcpStream>,
+        client_stream: &mut tokio_rustls::server::TlsStream<S>,
         request_data: &RequestData,
         host: &str,
         port: u16,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         info!("WebSocket upgrade detected (TLS): {}", request_data.url);
 
         // Connect to upstream WebSocket server. When upstream proxy chaining
@@ -1682,13 +1851,16 @@ impl ProxyEngine {
     }
 
     /// Handle WebSocket upgrade over plain HTTP connection
-    async fn handle_websocket_upgrade_http(
+    async fn handle_websocket_upgrade_http<S>(
         &self,
-        client_socket: &mut TcpStream,
+        client_socket: &mut S,
         request_data: &RequestData,
         host: &str,
         port: u16,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         info!("WebSocket upgrade detected (HTTP): {}", request_data.url);
 
         // Connect to upstream WebSocket server. When upstream proxy chaining

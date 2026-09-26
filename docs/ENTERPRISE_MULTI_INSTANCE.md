@@ -806,6 +806,50 @@ in-memory leaf cert cache (by hostname). This is fine — the leaf
 certs are signed by the same CA, so clients trust them regardless of
 which instance generated them.
 
+#### TLS-wrapped proxy listener: cert distribution (issue #110)
+
+When the TLS-wrapped proxy listener is enabled
+(`MADHYAMAS_PROXY_TLS_CERT_FILE` / `MADHYAMAS_PROXY_TLS_KEY_FILE`),
+every instance behind the load balancer must present the **same
+listener certificate** — clients connect to one proxy address and
+must not see a different cert (or hostname/CN mismatch) per LB
+round-robin. Use the same pattern as the shared CA above, but since
+the listener cert/key are read-only small PEM files, a Kubernetes
+Secret (or Docker secret) is the natural fit:
+
+```yaml
+# Kubernetes: shared proxy listener TLS cert via Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: madhyamas-proxy-tls
+type: kubernetes.io/tls
+stringData:
+  tls.crt: <PEM certificate chain for the proxy hostname>
+  tls.key: <PEM private key>
+---
+# per instance (Deployment spec):
+env:
+  - name: MADHYAMAS_PROXY_TLS_CERT_FILE
+    value: /etc/madhyamas/proxy-tls/tls.crt
+  - name: MADHYAMAS_PROXY_TLS_KEY_FILE
+    value: /etc/madhyamas/proxy-tls/tls.key
+volumes:
+  - name: proxy-tls
+    secret:
+      secretName: madhyamas-proxy-tls
+volumeMounts:
+  - name: proxy-tls
+    mountPath: /etc/madhyamas/proxy-tls
+    readOnly: true
+```
+
+The certificate is a **normal server certificate** for the hostname
+clients use to reach the proxy (public CA or your own PKI) and is
+separate from the MITM interception CA above. It is validated
+fail-closed at startup: unreadable/unparseable files or a one-sided
+cert/key configuration abort the instance before it binds.
+
 #### Option B: CA in PostgreSQL (for auto-provisioning)
 
 Store the CA cert and key in PostgreSQL (encrypted at rest). On

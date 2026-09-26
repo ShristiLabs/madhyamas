@@ -90,6 +90,30 @@ madhyamas serve --no-https
 
 When disabled, HTTPS traffic passes through the proxy as an opaque tunnel — Madhyamas can see the connection but not the content.
 
+## TLS Proxy Listener (Protecting Proxy Credentials)
+
+By default the proxy port speaks **plaintext HTTP** (`http://host:8888`). That is fine on `127.0.0.1` or a trusted lab network, but it means anything a client sends *to the proxy itself* — most importantly the `Proxy-Authorization` header carrying Basic or per-device credentials — crosses the network base64-cleartext. On an untrusted network (public Wi-Fi, shared office LAN), anyone on the path can read those credentials.
+
+Enable the **TLS-wrapped listener** to fix this: the proxy port requires a TLS handshake before any proxy protocol, and clients use the proxy URL `https://host:port`:
+
+```bash
+madhyamas serve \
+  --proxy-tls-cert-file /path/to/proxy-cert.pem \
+  --proxy-tls-key-file /path/to/proxy-key.pem
+```
+
+Environment variables `MADHYAMAS_PROXY_TLS_CERT_FILE` / `MADHYAMAS_PROXY_TLS_KEY_FILE` and the config-file fields `proxy_tls_cert_file` / `proxy_tls_key_file` are equivalent. Both files must be set together — a one-sided configuration aborts startup with a clear error, as do unreadable or unparseable certificate/key files (validation is fail-closed before the listener binds). When both are unset (the default), the listener is plaintext exactly as before.
+
+Notes:
+
+- **This is transport TLS for the proxy port, not HTTPS interception.** The certificate here is a normal server certificate for the hostname clients use to reach the proxy — obtain one from a public CA (e.g. Let's Encrypt) or your own PKI. It is completely separate from the Madhyamas MITM interception CA; you still need the latter (and clients trusting it) to inspect HTTPS *content*.
+- Clients then wrap two TLS layers for HTTPS traffic (transport to the proxy + end-to-end to the site) — this is exactly how HTTPS proxies work.
+- A plaintext `CONNECT` sent to a TLS-wrapped port fails the handshake and is dropped; nothing about the proxy is disclosed.
+- The device enrollment QR (see the Devices panel) carries `tls=1` on TLS-enabled instances so companion apps negotiate TLS before `CONNECT`, and the manual-configuration dialog shows the expected scheme.
+- The SOCKS5 listener is unaffected and stays plaintext — no credentials travel over it.
+
+When you can't put TLS on the proxy port (for example, a client that only speaks plaintext proxies), the alternative is to keep the listener on a controlled network or front it with a VPN/wireguard-style tunnel so credentials never cross the untrusted segment.
+
 ## Certificate Pinning
 
 Some mobile apps use **certificate pinning** — they hardcode the expected server certificate or public key and reject any proxy's CA certificate, even if it's signed by a trusted CA. This is a security feature that prevents man-in-the-middle interception.

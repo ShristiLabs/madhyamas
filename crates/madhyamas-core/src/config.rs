@@ -143,6 +143,30 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub socks_auth_password: Option<String>,
 
+    /// Path to a PEM-encoded TLS certificate (chain) file wrapping the
+    /// HTTP proxy listener itself in TLS (issue #110). This is *transport*
+    /// TLS for the proxy port — clients connect with the proxy URL
+    /// `https://host:port` and the CONNECT parser operates on the
+    /// decrypted stream — and is distinct from the MITM interception CA
+    /// managed by [`crate::tls::CertificateManager`]. Must be set together
+    /// with `proxy_tls_key_file` (validated at startup: unreadable or
+    /// unparseable files abort before the listener binds). The certificate
+    /// should be a normal server certificate for the hostname clients use
+    /// to reach the proxy (from a public CA or your own PKI).
+    ///
+    /// When unset (the default) the listener is plaintext HTTP, exactly as
+    /// before. Enables protecting `Proxy-Authorization` credentials on
+    /// untrusted networks.
+    #[serde(default)]
+    pub proxy_tls_cert_file: Option<String>,
+
+    /// Path to the PEM-encoded private key for `proxy_tls_cert_file`.
+    /// Must be set together with `proxy_tls_cert_file`. The key is read
+    /// once at startup to build the rustls acceptor; its contents are
+    /// never logged.
+    #[serde(default)]
+    pub proxy_tls_key_file: Option<String>,
+
     /// Upstream (external) proxy chaining configuration.
     ///
     /// When enabled, all outbound traffic — both the `reqwest`-based HTTP
@@ -1016,6 +1040,8 @@ impl Default for ProxyConfig {
             socks_port: None,
             socks_auth_username: None,
             socks_auth_password: None,
+            proxy_tls_cert_file: None,
+            proxy_tls_key_file: None,
             upstream_proxy: UpstreamProxyConfig::default(),
             allowed_ips: Vec::new(),
             auto_save: AutoSaveConfig::default(),
@@ -1210,6 +1236,18 @@ impl ProxyConfig {
     /// Whether SOCKS5 username/password authentication is configured.
     pub fn socks_auth_enabled(&self) -> bool {
         self.socks_auth_username.is_some()
+    }
+
+    /// Whether the HTTP proxy listener is wrapped in TLS (issue #110).
+    /// `true` only when both the certificate and key file paths are set
+    /// (a single-sided configuration is rejected at startup, before the
+    /// listener binds). When `true`, clients must connect with the proxy
+    /// URL `https://host:port`; when `false` (the default) the listener is
+    /// plaintext HTTP exactly as before. This exposes the listener scheme
+    /// to the web UI (QR `tls=` flag, manual-apply scheme hint) via
+    /// `GET /api/config`.
+    pub fn proxy_tls_enabled(&self) -> bool {
+        self.proxy_tls_cert_file.is_some() && self.proxy_tls_key_file.is_some()
     }
 
     /// Ensure all required data directories exist

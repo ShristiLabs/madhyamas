@@ -50,6 +50,8 @@ These options are set when starting the proxy and can't be changed at runtime:
 | `--upstream-protocol` | `MADHYAMAS_UPSTREAM_PROTOCOL` | `http` | Upstream protocol: http/https/socks5 |
 | `--upstream-auth` | `MADHYAMAS_UPSTREAM_AUTH` | — | Upstream proxy auth as `username:password` |
 | `--upstream-no-proxy` | `MADHYAMAS_UPSTREAM_NO_PROXY` | — | Comma-separated bypass list |
+| `--proxy-tls-cert-file` | `MADHYAMAS_PROXY_TLS_CERT_FILE` | — | PEM certificate (chain) wrapping the proxy listener in TLS — both flags must be set together (see [HTTPS & Certificates](./https-certificates)) |
+| `--proxy-tls-key-file` | `MADHYAMAS_PROXY_TLS_KEY_FILE` | — | PEM private key for `--proxy-tls-cert-file` |
 
 ## Runtime Configuration
 

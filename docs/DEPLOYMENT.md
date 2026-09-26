@@ -720,6 +720,33 @@ api_key = ""
 allowed_origins = ["*"]
 ```
 
+### Proxy Listener TLS (issue #110)
+
+When the proxy port is reachable over an untrusted network, wrap the
+listener itself in TLS so `Proxy-Authorization` credentials (Basic and
+per-device keys) are encrypted in transit — clients then use the proxy
+URL `https://host:port`:
+
+```bash
+madhyamas serve \
+  --proxy-tls-cert-file /etc/madhyamas/proxy-tls/cert.pem \
+  --proxy-tls-key-file /etc/madhyamas/proxy-tls/key.pem
+
+# Equivalent environment variables (for Docker/K8s):
+# MADHYAMAS_PROXY_TLS_CERT_FILE / MADHYAMAS_PROXY_TLS_KEY_FILE
+```
+
+The certificate is a normal server certificate for the proxy hostname
+(public CA or your own PKI), separate from the MITM interception CA.
+Configuration is validated fail-closed at startup: a one-sided cert/key
+setting, an unreadable file, or an unparseable PEM aborts the process
+before the listener binds. Default is off (plaintext listener,
+unchanged behavior). For multi-instance deployments, distribute the
+same cert/key to every instance via a Kubernetes Secret — see the
+"TLS-wrapped proxy listener" note in
+[ENTERPRISE_MULTI_INSTANCE.md](ENTERPRISE_MULTI_INSTANCE.md). End-user
+guidance: [docs-site HTTPS & Certificates](../docs-site/https-certificates.md).
+
 ### Reverse Proxy (nginx)
 
 ```nginx

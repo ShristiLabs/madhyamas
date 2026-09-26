@@ -323,6 +323,29 @@ struct Args {
     #[arg(long, env = "MADHYAMAS_CA_KEY_FILE", global = true)]
     ca_key_file: Option<String>,
 
+    /// Path to a PEM-encoded TLS certificate (chain) for the PROXY
+    /// LISTENER itself (issue #110 — transport TLS, not HTTPS MITM
+    /// interception). When set together with `--proxy-tls-key-file`, the
+    /// proxy port requires TLS: clients use the proxy URL
+    /// `https://host:port` and the CONNECT handshake happens inside the
+    /// TLS tunnel, so proxy credentials (`Proxy-Authorization`) are
+    /// encrypted in transit instead of crossing untrusted networks
+    /// base64-cleartext. The certificate must be a normal server
+    /// certificate for the hostname clients use to reach the proxy (from
+    /// a public CA or your own PKI) — it is separate from the MITM
+    /// interception CA. Validated at startup: unreadable or unparseable
+    /// files abort before the listener binds, and both flags must be set
+    /// together. Default: off (plaintext listener, unchanged behavior).
+    #[arg(long, env = "MADHYAMAS_PROXY_TLS_CERT_FILE", global = true)]
+    proxy_tls_cert_file: Option<String>,
+
+    /// Path to the PEM-encoded private key for `--proxy-tls-cert-file`.
+    /// Must be set together with `--proxy-tls-cert-file`. The key is read
+    /// once at startup to build the rustls listener acceptor; its
+    /// contents are never logged.
+    #[arg(long, env = "MADHYAMAS_PROXY_TLS_KEY_FILE", global = true)]
+    proxy_tls_key_file: Option<String>,
+
     /// Base path for serving the API and web UI (load-balancer context-path
     /// routing). When set to e.g. `/madhyamas`, all routes are served under
     /// `/madhyamas/api/...`, `/madhyamas/health`, `/madhyamas/ws`, and the
@@ -897,6 +920,18 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             .socks_password
             .clone()
             .or_else(|| saved.as_ref().and_then(|s| s.socks_auth_password.clone())),
+        // Proxy listener TLS (issue #110): CLI flags take precedence over
+        // the saved config (config file / env). Both files must be set
+        // together — validated fail-closed below, before the listener
+        // binds. Unset (the default) keeps the plaintext listener.
+        proxy_tls_cert_file: args
+            .proxy_tls_cert_file
+            .clone()
+            .or_else(|| saved.as_ref().and_then(|s| s.proxy_tls_cert_file.clone())),
+        proxy_tls_key_file: args
+            .proxy_tls_key_file
+            .clone()
+            .or_else(|| saved.as_ref().and_then(|s| s.proxy_tls_key_file.clone())),
         // Upstream proxy chaining: CLI flags take precedence over saved
         // config. When --upstream-proxy-enabled is not set, fall back to
         // the saved config (if any) so runtime API changes persist.
@@ -997,6 +1032,35 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         args.ca_key_file.as_deref(),
     )
     .await?;
+
+    // Issue #110: proxy listener TLS. Both files must be set together;
+    // the acceptor is built (and the cert/key validated: readable +
+    // parseable) ONCE here, fail-closed, before the engine binds the
+    // proxy port. Errors name the offending file path, never its
+    // contents. When unset, `proxy_tls_acceptor` stays `None` and the
+    // listener behaves exactly as before (plaintext HTTP).
+    let proxy_tls_acceptor = match (&config.proxy_tls_cert_file, &config.proxy_tls_key_file) {
+        (Some(cert), Some(key)) => {
+            info!("Proxy listener TLS enabled (certificate: {})", cert);
+            Some(madhyamas_core::tls::load_listener_tls_acceptor(
+                std::path::Path::new(cert),
+                std::path::Path::new(key),
+            )?)
+        }
+        (Some(_), None) => anyhow::bail!(
+            "proxy listener TLS is misconfigured: --proxy-tls-cert-file \
+             (or proxy_tls_cert_file) is set but the key file is missing — \
+             set --proxy-tls-key-file as well, or unset both for a \
+             plaintext listener"
+        ),
+        (None, Some(_)) => anyhow::bail!(
+            "proxy listener TLS is misconfigured: --proxy-tls-key-file \
+             (or proxy_tls_key_file) is set but the certificate is missing — \
+             set --proxy-tls-cert-file as well, or unset both for a \
+             plaintext listener"
+        ),
+        (None, None) => None,
+    };
 
     // Initialize traffic store. When --database-url points to a PostgreSQL
     // instance, use PostgresTrafficStore; otherwise fall back to the default
@@ -1431,6 +1495,14 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     let proxy_engine = proxy_engine.with_script_runtime(script_runtime.clone());
     #[cfg(feature = "plugins")]
     let proxy_engine = proxy_engine.with_plugin_manager(plugin_manager.clone());
+    // Issue #110: wrap the proxy listener itself in TLS when configured
+    // (acceptor validated/built at startup above). `None` keeps the
+    // plaintext listener byte-identical to before.
+    let proxy_engine = if let Some(acceptor) = proxy_tls_acceptor {
+        proxy_engine.with_proxy_tls_acceptor(acceptor)
+    } else {
+        proxy_engine
+    };
 
     let proxy_engine_clone = proxy_engine.clone();
     let proxy_task = tokio::spawn(async move {

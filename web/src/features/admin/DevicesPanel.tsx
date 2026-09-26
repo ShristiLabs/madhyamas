@@ -499,8 +499,9 @@ function CopyRow({ label, value }: { label: string; value: string }) {
 interface ConnectUriParams {
   host: string
   port: number
-  /** TLS flag of the proxy listener — 0 today (listener TLS is a later
-   * issue) but the field must exist and round-trip. */
+  /** TLS flag of the proxy listener (issue #110): 1 when the instance's
+   * proxy port is TLS-wrapped (`proxy_tls` from /api/config) — clients
+   * must negotiate TLS before CONNECT — 0 for the plaintext listener. */
   tls: boolean
   name: string
   token?: string
@@ -558,6 +559,10 @@ function CredentialDialog({ issued, onClose, lastCaptureAt, onRotate, rotatePend
 }) {
   const [host, setHost] = useState("")
   const [port, setPort] = useState(8888)
+  /** Whether the instance's proxy listener is TLS-wrapped (issue #110,
+   * `proxy_tls` from /api/config) — drives the QR `tls=1` flag and the
+   * manual-apply scheme hint. */
+  const [proxyTls, setProxyTls] = useState(false)
   const [enrollment, setEnrollment] = useState<DeviceEnrollmentToken | null>(null)
   const [enrollmentError, setEnrollmentError] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
@@ -584,14 +589,18 @@ function CredentialDialog({ issued, onClose, lastCaptureAt, onRotate, rotatePend
     navigated.current = false
     setEnrollment(null)
     setEnrollmentError(false)
-    apiGet<{ host?: string; proxy_port?: number; public_ip?: string }>("/config")
+    apiGet<{ host?: string; proxy_port?: number; public_ip?: string; proxy_tls?: boolean }>(
+      "/config",
+    )
       .then((c) => {
         setHost(c.public_ip || c.host || window.location.hostname)
         setPort(c.proxy_port || 8888)
+        setProxyTls(!!c.proxy_tls)
       })
       .catch(() => {
         setHost(window.location.hostname)
         setPort(8888)
+        setProxyTls(false)
       })
     requestEnrollmentToken(deviceId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -613,7 +622,7 @@ function CredentialDialog({ issued, onClose, lastCaptureAt, onRotate, rotatePend
     ? buildConnectUri({
         host,
         port,
-        tls: false,
+        tls: proxyTls,
         name: issued?.device.name ?? "",
         token: enrollment.token,
       })
@@ -717,6 +726,7 @@ function CredentialDialog({ issued, onClose, lastCaptureAt, onRotate, rotatePend
             <CopyRow label="Password" value={issued?.key ?? ""} />
             <CopyRow label="Host" value={host} />
             <CopyRow label="Port" value={String(port)} />
+            <CopyRow label="Scheme" value={proxyTls ? "https (TLS)" : "http"} />
             <CopyRow label="Username" value={issued?.device.name ?? ""} />
             <div className="flex items-center justify-between gap-2 pt-1">
               <div className="flex items-center gap-2 text-2xs text-warning">
