@@ -94,10 +94,16 @@ fn client_config(ca_pem: &[u8]) -> Arc<rustls::ClientConfig> {
     for cert in certs {
         roots.add(cert).expect("trust test CA");
     }
+    // Explicit provider: under cargo-nextest each test is its own process,
+    // so this helper must not rely on another test's install_default().
     Arc::new(
-        rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth(),
+        rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("ring provider")
+        .with_root_certificates(roots)
+        .with_no_client_auth(),
     )
 }
 

@@ -1417,7 +1417,7 @@ impl ProxyEngine {
             .map_err(|e| Error::Tls(format!("Failed to parse private key: {}", e)))?
             .ok_or_else(|| Error::Tls("No private key found".into()))?;
 
-        let mut config = rustls::ServerConfig::builder()
+        let mut config = crate::tls::ring_server_builder()
             .with_no_client_auth()
             .with_single_cert(cert_chain, private_key)
             .map_err(|e| Error::Tls(format!("Failed to create TLS config: {}", e)))?;
@@ -1711,7 +1711,7 @@ impl ProxyEngine {
 
     /// Create TLS client config for connecting to upstream servers
     fn create_tls_client_config(&self) -> Arc<rustls::ClientConfig> {
-        let config = rustls::ClientConfig::builder()
+        let config = crate::tls::ring_client_builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(SkipServerVerification::new()))
             .with_no_client_auth();
