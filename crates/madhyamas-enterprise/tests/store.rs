@@ -299,3 +299,84 @@ async fn test_pg_enterprise_enrollment_tokens() {
         .unwrap();
     assert_eq!(removed, 1, "only the expired row is pruned");
 }
+
+/// Issue #108: agent-key lifecycle on PostgreSQL — the dedicated
+/// `agent_keys` table exists in the PG backend with the same semantics
+/// as SQLite (hash lookup, parent-scoped listing, single + cascade
+/// revoke, last-used stamp).
+#[tokio::test]
+#[ignore]
+async fn test_pg_agent_key_lifecycle() {
+    use madhyamas_enterprise::auth::{generate_agent_key, hash_api_key};
+
+    let store = make_store().await;
+    let owner = uuid::Uuid::new_v4().to_string();
+
+    let device = DeviceRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "PG agent phone".to_string(),
+        owner_user_id: owner.clone(),
+        install_uuid: None,
+        mac_address: None,
+        status: "active".to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        last_seen: None,
+    };
+    store.create_device(&device).await.expect("create device");
+
+    let key = generate_agent_key();
+    let record = madhyamas_enterprise::store::AgentKeyRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        parent_device_id: device.id.clone(),
+        owner_user_id: owner.clone(),
+        name: "pg agent".to_string(),
+        key_hash: hash_api_key(&key),
+        key_prefix: key.chars().take(12).collect(),
+        scopes: r#"["traffic:read"]"#.to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        expires_at: None,
+        revoked_at: None,
+        last_used_at: None,
+    };
+    store
+        .create_agent_key(&record)
+        .await
+        .expect("create agent key");
+
+    let fetched = store
+        .get_agent_key_by_hash(&record.key_hash)
+        .await
+        .expect("lookup")
+        .expect("found");
+    assert_eq!(fetched.id, record.id);
+    assert_eq!(fetched.parent_device_id, device.id);
+    assert_ne!(fetched.key_hash, key, "hash at rest");
+
+    store
+        .update_agent_key_last_used(&record.id)
+        .await
+        .expect("stamp");
+    let stamped = store
+        .get_agent_key_by_hash(&record.key_hash)
+        .await
+        .expect("lookup")
+        .expect("found");
+    assert!(stamped.last_used_at.is_some());
+
+    store
+        .revoke_agent_keys_for_device(&device.id)
+        .await
+        .expect("cascade");
+    let revoked = store
+        .get_agent_key_by_hash(&record.key_hash)
+        .await
+        .expect("lookup")
+        .expect("found");
+    assert!(revoked.revoked_at.is_some());
+
+    // Cleanup.
+    store
+        .delete_device(&device.id)
+        .await
+        .expect("delete device");
+}

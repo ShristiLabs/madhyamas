@@ -100,6 +100,7 @@ fn auth_user(user_id: &str, role: &str) -> AuthUser {
         scopes: None,
         key_id: None,
         session_id: None,
+        device_id: None,
         user_id: user_id.to_string(),
         role: role.to_string(),
     }

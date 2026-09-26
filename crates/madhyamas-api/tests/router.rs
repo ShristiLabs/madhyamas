@@ -356,7 +356,7 @@ mod device_traffic_api {
         let mut q = none_query();
         q.device_id = Some("dev-alpha".to_string());
         let (status, body) = respond(
-            get_traffic(State(state.clone()), Query(q))
+            get_traffic(State(state.clone()), Query(q), None)
                 .await
                 .into_response(),
         )
@@ -389,7 +389,7 @@ mod device_traffic_api {
         .await;
 
         let (status, body) = respond(
-            get_traffic(State(state.clone()), Query(none_query()))
+            get_traffic(State(state.clone()), Query(none_query()), None)
                 .await
                 .into_response(),
         )
@@ -419,8 +419,12 @@ mod device_traffic_api {
             "device session row exists before the call"
         );
 
-        let (status, body) =
-            respond(get_sessions(State(state.clone())).await.into_response()).await;
+        let (status, body) = respond(
+            get_sessions(State(state.clone()), None)
+                .await
+                .into_response(),
+        )
+        .await;
         assert_eq!(status, axum::http::StatusCode::OK);
         let rows = body.as_array().expect("sessions array");
         let alpha = rows

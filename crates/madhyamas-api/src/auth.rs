@@ -105,6 +105,54 @@ pub struct Identity {
     pub status: Option<String>,
     /// How the identity was established.
     pub method: AuthMethod,
+    /// Feature scopes granted to the key, when authentication was via an
+    /// API key carrying scopes (issue #107 taxonomy; the enterprise
+    /// provider reports the taxonomy-expanded set). Empty for JWT
+    /// identities — their authorization is role-based.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    /// Parent device of a device-derived agent key (`mdy_agent_...`,
+    /// issue #108) — the data-axis binding that forces every traffic
+    /// query this identity makes to the device's entries. `None` for
+    /// JWT and plain user-key identities.
+    #[serde(default)]
+    pub device_id: Option<String>,
+}
+
+/// Request-extension marker carrying the parent device an authenticated
+/// agent key is bound to (issue #108). The enterprise auth middleware
+/// inserts it after validating a `mdy_agent_...` key; traffic read
+/// handlers consume it (via `OptionalExtension`) to force the device
+/// filter server-side — caller-supplied device parameters are
+/// intersected, never widened. In the OSS tier (and for JWT / user-key
+/// principals) the extension is simply absent and handlers behave
+/// unchanged.
+#[derive(Debug, Clone)]
+pub struct DeviceScope {
+    /// The parent device ID every traffic query is forced to.
+    pub device_id: String,
+}
+
+/// Whether any granted scope string satisfies the required
+/// `<resource>:<permission>` scope, with `*` wildcards honored on the
+/// granted side (a bare `*` grants everything). A pure-`std` mirror of
+/// the enterprise `Scope::matches` semantics so in-handler checks (the
+/// WebSocket upgrade path, which authenticates inside the handler)
+/// don't need an enterprise dependency.
+pub fn scope_grants(granted: &[String], required: &str) -> bool {
+    let Some((req_resource, req_permission)) = required.split_once(':') else {
+        return false;
+    };
+    granted.iter().any(|g| {
+        let g = g.trim();
+        if g == "*" {
+            return true;
+        }
+        let Some((res, perm)) = g.split_once(':') else {
+            return false;
+        };
+        (res == "*" || res == req_resource) && (perm == "*" || perm == req_permission)
+    })
 }
 
 /// Resource type a permission check applies to.

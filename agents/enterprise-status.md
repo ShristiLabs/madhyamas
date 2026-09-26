@@ -2,7 +2,7 @@
 
 ## Current Phase
 Milestone "Credential-Based Device & Agent Scoping" — issue-by-issue orchestration
-(current: #107 IN PROGRESS — #108+ NOT started per maintainer instruction)
+(current: #108 IN PROGRESS — #109+ NOT started per maintainer instruction)
 
 ## Milestone Progress
 | Issue | Title | Developer | Tester | Reviewer | Regression | Committer | Status |
@@ -11,7 +11,92 @@ Milestone "Credential-Based Device & Agent Scoping" — issue-by-issue orchestra
 | #104 | Device principals: registration, per-device credentials, devices API and Devices panel | done | done (24 cases) | approved (0 blockers, 0 high, 5 low) | pass (all checks + 17-step smoke) | committed (a9a0e9e) | done |
 | #105 | Per-device traffic visibility: device sessions, device_id filter end-to-end, connected status | done | done (12 cases; caught + fixed legacy-DB migration-order blocker) | approved (0 blockers, 0 high, 1 medium info, 5 low) | pass (all checks + 10/10 two-device DoD smoke on pre-migration DB) | committed (7cfce6b) | done |
 | #106 | QR enrollment: madhyamas://connect payload, enrollment tokens, live status loop | done | done (21 cases) | approved (0 blockers, 0 high, 1 medium, 6 low) | pass (all checks + 20/20 DoD smoke) | committed (b6d8b32) | done |
-| #107 | Feature-scope taxonomy: endpoint/tool mapping and MCP tool filtering | — | — | — | — | — | active |
+| #107 | Feature-scope taxonomy: endpoint/tool mapping and MCP tool filtering | done | done (+43 cases; fixed route_access full-path classification) | approved (0 blockers, 0 high, 1 medium info, 6 low) | pass (all checks + 17/17 live DoD smoke) | committed (0b2ee63) | done |
+| #108 | Device-derived agent keys: referential binding, mint endpoint with scope picker, forced device filter, cascade | | | | | | active |
+
+## Agent Log
+
+### 2026-09-18 — orchestrator (milestone kickoff, #108)
+- Issue #108 exists (maintainer-created, OPEN) — enterprise-issues step skipped; full chain dispatched for #108 ONLY (#109+ explicitly out of scope per maintainer brief)
+- Verified code facts post-#107 (commit 0b2ee63, tree clean except this log):
+  - Key-kind rejection precedents: validate_api_key early-rejects mdy_dev_ (auth.rs:474) + mdy_enroll_ (:480); ProxyAuthValidator rejects enrollment tokens on all three arms (auth.rs:832-904); mdy_agent_ classification tests already exist in tests (is_device_key edge, enrollment classification) — no mdy_agent_ constants exist yet anywhere
+  - ApiKeyAuth (auth.rs:158) = {user_id, scopes, key_id} — no device binding; AuthUser (middleware.rs:514) = {claims, scopes, user_id, role, key_id, session_id} — same; api-crate Identity (api/auth.rs:89) has neither scopes nor device_id
+  - route_access: `/devices*` starts_with → JwtOnly (middleware.rs:221) — POST /api/devices/{id}/agent-keys is JWT-only automatically; /ws is PUBLIC_PATHS-exempt with in-handler auth (ws_handler api/handlers.rs:1224 validates only ?token= JWT via auth_provider.validate_token; WsAuthQuery has token only)
+  - Store precedent: device_keys + device_enrollment_tokens are DEDICATED tables (sqlite.rs:91/:101, postgres mirror); cascade pattern = revoke_X_for_device called in revoke_device + delete_device (handlers.rs:927-985); rotate_device_key (handlers.rs:899) calls ONLY revoke_device_keys_for_device
+  - TrafficFilter.device_id + TrafficEntrySnapshot.device_id exist from #105; device_session_id()/device_session_name() in core traffic/types.rs:338; get_traffic device predicate works both backends
+  - Data-axis injection point (per brief: handlers, not store): get_traffic (api/handlers.rs:47), get_traffic_entry (:128), get_traffic_count (:201 — calls trait count() with NO filter), export_har (:341 — exports CURRENT session only), get_sessions (:245 — list_sessions unfiltered), ws.rs handle_ws (no device filter; initial snapshot TrafficFilter::default())
+  - get_current_user (/auth/me) returns claims.scopes (handlers.rs:601) — MCP fetch_key_scopes (mcp/server.rs:167) works for any key principal whose AuthUser.scopes is populated; agent keys flow through the same Authenticated classification
+  - ApiKeyCreated/ApiKeyRevoked audit variants exist; issue text says "extended with parent device" (metadata), not new variants
+- Design resolutions (maintainer brief + issue + doc; brief delegates table-shape + enforcement-point calls):
+  - DEDICATED agent_keys table (not device_keys+kind): #104 precedent is one table per credential kind (api_keys / device_keys / device_enrollment_tokens each with their own validation lookup + cascade path); agent keys need columns device_keys lacks (scopes, expires_at, name, denormalized owner) — a kind column would tax every device-key lookup and complicate the #104 cascades. Columns: id, parent_device_id, owner_user_id (denormalized → single-lookup resolution to (user, device?, scopes)), name, key_hash UNIQUE, key_prefix, scopes JSON, created_at, expires_at NULL, revoked_at NULL, last_used_at NULL
+  - Referential binding only: parent_device_id FK semantics; key material independent random (doc's derivation table rejects crypto derivation); rotation of device key does NOT touch agent keys (regression test required); validation still checks the device row exists+active (defense in depth beyond cascade revoke)
+  - Presets server-side: mint body {name?, preset?, scopes?, expires_in_days?}; preset read-only-agent = traffic:read+config:read; intercept-agent = read-only + mocks/rewrites/breakpoints/blocklist/throttle read+write; preset-expanded ∪ explicit; EVERY scope validated against the #107 16-scope taxonomy — `*` and unknown strings rejected for agent keys; ≥1 scope required; expiry in days (>0) optional
+  - Audit: REUSE ApiKeyCreated/ApiKeyRevoked with metadata {parent_device_id, key_kind:"agent", key_name} (issue text: "extended with parent device"); no new variants/label-maps
+  - Data axis in api crate via a new OSS-inert `DeviceScope` extension type (inserted by enterprise middleware when the key is an agent key; consumed with OptionalExtension): traffic list = intersection (caller names another device → empty result, never widened), detail/count/export-curl = parent-device check else 404/empty, export/har = export the DEVICE session not current session, sessions list = device session row only, sessions detail/export = 404 unless device session; count endpoint uses device-filtered get_traffic().len() (trait count() has no filter — SQL COUNT follow-up noted)
+  - WS: in-handler auth extended to accept ?api_key= (query) — validate via AuthProvider::validate_api_key, local wildcard scope check for traffic:read (api crate stays enterprise-free), per-subscriber filter of initial snapshot + Traffic events by snapshot.device_id; Identity gains scopes + device_id (serde defaults, inert in OSS)
+  - CONNECT: mdy_agent_ rejected on all three ProxyAuthValidator arms (mirror mdy_enroll_; agent keys are API credentials, not connect credentials)
+  - Web: DevicesPanel per-device "AI agents" action (dialog: list name/prefix/scopes summary/last-used/status + mint dialog with preset chips + per-feature read/write checkboxes + expiry + show-once + per-agent revoke); admin.ts wrappers; reuse ApiKeysPanel chip/show-once patterns
+  - MCP: no code change expected — tool filtering + device-scoped data both ride the existing /auth/me scope fetch + middleware data axis (verify in live smoke)
+- Dispatching enterprise-developer for #108
+- Status: dispatched
+
+### 2026-09-18 — enterprise-developer (#108)
+- Auth: AGENT_KEY_PREFIX mdy_agent_ + is_agent_key + generate_agent_key (32 hex); ApiKeyAuth gains device_id (None for user keys); validate_api_key branches on is_agent_key -> validate_agent_key (hash lookup, revoked/expiry/parent-device-exists-and-active checks, fire-and-forget last_used); AuthProvider::validate_api_key fills Identity.scopes (effective) + Identity.device_id; ProxyAuthValidator rejects mdy_agent_ on all three arms (Basic-either-half/Bearer/ApiKey) with "connect with the device key instead"
+- Store: DEDICATED agent_keys table in BOTH backends (SQLite + PG DDL + CREATE in txn/advisory-lock path) — columns id, parent_device_id, owner_user_id (denormalized), name, key_hash UNIQUE, key_prefix, scopes JSON, created_at, expires_at, revoked_at, last_used_at; AgentKeyRecord; trait methods create/get_by_hash/list(newest-first)/revoke_one/revoke_for_device/update_last_used
+- Middleware: AuthUser.device_id; API-key arm inserts madhyamas_api::auth::DeviceScope extension when device-bound (data axis) AFTER route_access scope/JwtOnly enforcement (capability axis unchanged)
+- Handlers: AGENT_KEY_TAXONOMY (16 #107 scopes, no `*`), AGENT_KEY_PRESETS (read-only-agent=traffic:read+config:read; intercept-agent=+mocks/rewrites/breakpoints/blocklist/throttle r/w), validate_agent_scopes (preset ∪ explicit, taxonomy-validated, ≥1 required, sorted-dedup); create_agent_key (JWT-only via /devices* mapping; owner-or-admin via load_owned_device; 409 revoked device; hash-at-rest show-once), list_agent_keys (metadata only), revoke_agent_key (key must belong to path device else 404); revoke_device + delete_device now cascade revoke_agent_keys_for_device; rotate_device_key deliberately does NOT
+- API (OSS-inert): Identity.scopes/device_id (serde defaults); DeviceScope extension type + pure-std scope_grants wildcard matcher in api/auth.rs; data axis handlers — get_traffic (forced device; other-device param -> empty intersection), get_traffic_entry + export_curl (parent-device check else 404), get_traffic_count (device-filtered get_traffic().len(); trait count() has no filter — filtered COUNT SQL noted as follow-up), export_har (exports the DEVICE session, not current), get_sessions (device session row only), get_session/export_session (404 unless device session); ws_handler accepts ?api_key= (validate via AuthProvider, local traffic:read check, 403/401 pre-upgrade; JWT ?token= arm unchanged) and passes device_filter; ws.rs handle_ws(device_filter) filters initial snapshot + every live/cross-instance Added/Updated event by snapshot.device_id (Deleted/Cleared/CountUpdate broadcast events stay visible)
+- Router: GET/POST /api/devices/{id}/agent-keys + DELETE /api/devices/{id}/agent-keys/{key_id}
+- Web: admin.ts wrappers (AgentKeyEntry/AgentKeyWithSecret/CreateAgentKeyPayload/list/create/revoke); DevicesPanel Bot-icon action -> AgentKeysDialog (list name/scopes summary/last-used/status + per-agent revoke) + MintAgentKeyDialog (preset chips union-only, per-feature Read/Write checkbox grid, standalone scope chips, expiry select) + show-once secret dialog
+- Docs: API_ENTERPRISE.md — key-kinds paragraph, full "Device-derived agent keys (issue #108)" section (endpoints, presets, two-axis enforcement semantics incl. WS ?api_key=, lifecycle incl. rotation-immunity, audit metadata, #109 global-rules limitation), JWT-only exclusion note that agent-key minting requires JWT
+- Adapted 3 pre-existing call sites to new signatures (api tests/router.rs None args; enrollment.rs AuthUser helper + device_id) — no assertion changes
+- VERIFIED: fmt pass; clippy --all-targets --all-features -D warnings 0; cargo check --all-features --all-targets clean; cargo check --no-default-features (+ --all-targets) clean (OSS isolation); tests 792/0/31 EXACT baseline; web tsc+vite pass; check-docs.sh + check-docs-coverage.sh pass
+- Gotcha handled: Cargo.lock flipped to local licensing-core path patch during build — restored via git checkout
+- Status: completed
+
+### 2026-09-18 — enterprise-tester (#108)
+- Created tests/agent_keys.rs (16 cases): key shape (prefix/32-hex/uniqueness, classification vs mdy_dev_/mdy_enroll_/madhyamas_/no-underscore), REST resolution (happy path resolves owner+parent+scopes and stamps last_used via poll; revoked/expired/unknown rejected with named errors, no material leak; parent-device revoked AND missing rejected — defense in depth; plain user key keeps device_id None), proxy rejection on ALL FOUR arms (ApiKey/Bearer/Basic-password/Basic-username; error points at device key; no material leak), store CRUD (hash lookup, newest-first parent-scoped list, single revoke leaves sibling+other-device, per-device cascade revoke idempotent, last_used stamp), presets (read-only-agent exactly traffic:read+config:read; intercept-agent exactly 12 scopes; unknown preset None; every preset scope taxonomy-valid; taxonomy = exactly 16, no `*`), handlers (mint happy: show-once plaintext validates with union scopes sorted+deduped, expiry honored, hash-at-rest, audit ApiKeyCreated with parent_device_id+key_kind=agent and ZERO secret material; 400 for empty/`*`/unknown-scope/unknown-preset; 403 stranger / admin-OK / 404 unknown device / 409 revoked device; list metadata-only asserted via serialized JSON containing no key_hash/plaintext, newest-first, 403/404; revoke: key dead + device key alive + sibling alive + other device alive, audit ApiKeyRevoked with parent, 404 wrong-parent-pair, 403 stranger), cascade (revoke_device + delete_device each kill agents — validate fails after), ROTATION-IMMUNITY DoD test (rotate -> old dev key dead, new works, agent key STILL validates, row not revoked)
+- tests/store.rs (+1 #[ignore] PG): agent-key lifecycle on PostgreSQL (create/hash-at-rest/lookup/stamp/cascade)
+- api/tests/auth_scopes.rs (new, 2): scope_grants exact/wildcard/malformed/empty + DeviceScope inert-marker contract
+- Inline unit tests (private fns per hybrid layout): api/handlers.rs resolve_device_scope intersection table (None-passthrough, forced, same, other->Err); api/ws.rs event_in_scope (bound subscriber sees own Added/Updated only, other-device + unattributed filtered, Deleted/Cleared/CountUpdate broadcast visible, unfiltered sees all)
+- CASES: +20 runnable, +1 PG-gated = 812 passed / 0 failed / 32 ignored (baseline 792/0/31; zero regressions in existing)
+- clippy -D warnings: 0 (3 findings in the new test file fixed: unused import, unused binding, unused must_use); fmt: pass
+- Environment: disk exhausted mid-run (target/debug/deps 17G of accumulated artifacts) — freed by removing target/debug (rebuilt once); ENOSPC root cause of an earlier bogus clippy/OSS failure pass, re-verified clean afterwards
+- GAPS (documented): engine accept-loop CONNECT with an agent key covered at validator level + regression live smoke (no engine harness — consistent with #104/#105/#106 gaps); WS per-subscriber filter covered at event_in_scope decision level, handler auth at scope_grants level — live WS e2e via regression smoke; web dialog (preset chips/checkbox grid/show-once) has no unit-test infra — tsc/vite + regression smoke; PG test ignore-gated (no Docker daemon); MCP tool filtering for agent keys rides #107's /auth/me path unchanged — verified only in live smoke
+- Status: completed
+
+### 2026-09-18 — enterprise-reviewer (#108)
+- Verdict: approved (0 blockers, 0 high, 1 medium, 7 low)
+- Verified: two-axis ordering correct — capability axis (route_access incl. JwtOnly on the whole /devices* surface) enforces BEFORE the DeviceScope insert, so agent keys can never mint/reach admin surface and are scope-checked like any key; data axis never widens — resolve_device_scope intersection table (pinned by inline test), detail/curl 404 covers BOTH other-device and unattributed (device_id NULL) entries per the doc's "unauthenticated traffic invisible to agents"; the #105 store device predicate replaces the session predicate so forced queries exclude NULL device rows; WS: ?api_key= validated via AuthProvider (X-API-Key header deliberately NOT read — browsers cannot set it; header-auth clients hit 401 guidance), traffic:read enforced by scope_grants (faithful mirror of enterprise Scope::matches incl. bare-*, colonless-no-match), per-subscriber filter applies to initial snapshot + local + cross-instance events while Deleted/Cleared/CountUpdate broadcast metadata stays visible (deliberate, no entry data); CONNECT rejection on all four arms BEFORE any DB side effect, no material in errors; rotation immunity real (rotate calls only revoke_device_keys_for_device — DoD test green) and cascade complete on revoke+delete (tests green); expiry checked at validation with unparseable-expiry-treated-as-none mirroring the user-key arm exactly; SQL parameterized in both backends, key_hash UNIQUE, hash-at-rest (test), show-once (no secret in any list/response — test asserts serialized JSON); owner-or-admin via load_owned_device (404/403), mint 409 revoked device, revoke verifies key belongs to path device (cross-device pair = 404, no confused-deputy revoke); audit = ApiKeyCreated/Revoked + parent_device_id/key_kind metadata only (test asserts zero secret material); /auth/me reports agent scopes → MCP filtering automatic; OSS isolation clean (api changes are inert plain types; cargo check --no-default-features --all-targets clean post-cleanup — the earlier ENOSPC-era "22 errors" pass was disk garbage, re-verified; sole enterprise mention in core/api = pre-existing pubsub.rs doc comment); web dialog queries enabled-gated (!!device) so non-null assertions are safe, show-once only, no agent QR per doc; docs accurate incl. the brief's required confirmation — agent-created intercept rules are GLOBAL today and documented as #109 ("Known limitation" section)
+- Medium (non-blocking): GET /api/traffic/count for agent principals materializes every device entry (include_bodies=false metadata rows) to compute len() — correct but O(n); a filtered COUNT statement on the store trait is follow-up material (comment in code)
+- Low: (1) mint silently drops expires_in_days <= 0 (filter) instead of 400 — web UI never sends 0; raw-API callers get "no expiry" rather than an error (user-key create is similarly loose, though with different semantics) (2) "Agent key revoked" message also fires when the parent DEVICE is revoked (conflates causes; missing device correctly returns indistinguishable "Invalid API key") (3) pre-existing no-op: WS GetInitialTraffic computes a snapshot but never transmits — if ever wired up it must respect device_filter (4) agent-key validation costs 2 point lookups (hash + device row) per request — same shape as device-key validation (5) revoked agent rows are kept, not pruned (device_keys precedent; UI shows Revoked badge) (6) preset chips only union, never remove — matches "presets are shortcuts" (7) Cargo.lock re-flipped during tester builds — committer must restore before staging
+- fmt --check: pass; clippy --all-targets --all-features -D warnings: 0; tests 812/0/32
+- Status: completed
+
+### 2026-09-26 — enterprise-regression (#108)
+- Frontend (tsc+vite): pass; fmt --check: pass; clippy --all-targets --all-features -D warnings: 0
+- OSS release build (--no-default-features): pass, 27,133,680 bytes (baseline 27.10 MB); symbol scan: 0 madhyamas_enterprise, 0 mdy_agent_, 0 agent_keys/AgentKey, 0 DeviceScope/device_scope
+- Enterprise release build: pass, 36,022,432 bytes (baseline 35.92 MB); mdy_agent_ symbol present
+- cargo test --all-features: 812 passed / 0 failed / 32 ignored (baseline 792/0/31; +20 runnable +1 PG-gated — zero regressions in existing)
+- Docs: check-docs.sh pass, check-docs-coverage.sh pass; cfg-enterprise gates in core/api src: 0
+- Disk: ENOSPC mid-run (target/debug/deps had 17G accumulated artifacts) — removed target/debug entirely, rebuilt once on 22G free; an earlier bogus clippy/OSS error pass during ENOSPC re-verified clean
+- LIVE DoD SMOKE (enterprise release binary, repo-root cwd, ephemeral HOME, --enable-auth + bootstrap admin, 2 devices, 5 agent keys): 56/56 PASS —
+  minting: mdy_agent_ show-once; no-JWT 401; agent-key-mint 403 (JwtOnly); device-key-mint 401 (connect-only); `*`/empty/garbage scope mints 400;
+  DATA AXIS: read-only agent on A sees exactly A's 2 entries unfiltered (device-attributed entries generated via authenticated CONNECT+close, the #105 technique — plain-HTTP-proxy GETs are not captured, pre-existing engine behavior); naming device B = empty intersection; naming A = own entries; B-agent sees only B; count scoped per device (2/1); B entry 404 by id for A's agent while JWT 200;
+  EXPORT: K1 (no traffic:export) gets 403 on curl/HAR (capability axis fires FIRST — correct); export-capable agent: B's entry curl-export 404, A's entry 200, HAR export = exactly the device-A session (2 entries; HAR schema carries no device_id — session scoping proven by count);
+  SESSIONS: agent sees exactly [device-<A>] row; other session 404;
+  CAPABILITY: no-scope mock POST 403; intercept-agent mock POST 201 (GLOBAL rule — documented #109 limitation); mock read denied/granted per scope; /devices + /users 403 (JwtOnly);
+  /auth/me reports config:read,sessions:read,traffic:read for the read-only agent (MCP path);
+  CONNECT: agent key as Basic password AND username = 407;
+  ROTATION: device-key rotate leaves both A agents working; old device key 407; new key 200;
+  EXPIRY: backdated expires_at row rejected 401;
+  WS: ?api_key= handshake 101; initial snapshot only device A; live B-entry never emitted while A-entry IS emitted (filter passes parent, blocks others); bad key 401 pre-upgrade;
+  MCP: read-only agent tools/list = 25 tools, ZERO mock tools, 5 traffic tools; intercept agent = 80 tools incl. 30 mock tools — tool filtering + (data axis via REST) verified in practice;
+  CASCADE: device revoke kills both its agents (401) while B's agents live; single-agent revoke kills only that agent; device B keeps an active sibling;
+  AUDIT: >=5 agent ApiKeyCreated + agent ApiKeyRevoked events with parent_device_id + key_kind=agent, ZERO secret material; server log grep for all 6 minted credentials = 0
+- Cargo.lock licensing-core path-patch flip: RESTORED via git checkout after builds (working tree clean of lock changes)
+- Verdict: ALL CHECKS PASSED — safe to commit
+- Status: completed
 
 ## Earlier Phases (13-phase plan — COMPLETE)
 Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration.
@@ -58,7 +143,7 @@ Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration
 | 12a+12e Licensing core+deploy | #65,69 | done | skipped | approved | done (licensing-server crate, Ed25519 signing, license issuance/verification/seat APIs, Dockerfile, K8s, KEY_MANAGEMENT.md, BACKUP.md, DEPLOYMENT.md, 600 tests) | committed (8172b32) | done |
 | 12b+12c+12d Customer+Stripe+Admin | #66,67,68 | done | skipped | approved | done (JWT auth, customer portal React frontend, Stripe Checkout+webhooks, admin portal, revenue dashboard, 604 tests) | committed (039a8ad) | done |
 
-## Agent Log
+## Older Agent Log (pre-#108, reverse chronological)
 
 ### 2026-09-18 — orchestrator (milestone kickoff, #107)
 - Issue #107 exists (maintainer-created, OPEN) — enterprise-issues step skipped; full chain dispatched for #107 ONLY (#108+ explicitly out of scope per maintainer brief)
@@ -81,6 +166,20 @@ Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration
   - Middleware coverage plan: move auth enforcement from the enterprise router to the whole /api nest (enterprise build only; OSS build untouched; require_auth=false still passes everything); base-path-aware path normalization; /api/ws exempt (handler-level auth stays); static assets outside /api stay public
   - MCP plan: extend /api/auth/me to include key scopes; MCP server fetches principal scopes at startup/first tools/list, filters tool list via required_permission + local wildcard matcher; annotate all tools with their scope
 - Status: dispatched (pending maintainer answer on (d))
+
+### 2026-09-18 — enterprise-committer (#107)
+- Verified regression pass + reviewer approval in this log; cargo fmt no-op; Cargo.lock absent from status and identical to origin/main (0 diff lines)
+- Staged 39 files by name (37 modified + tests/scopes.rs and tests/tool_filtering.rs new; agents/enterprise-status.md included — carries reviewer + regression entries)
+- Commit: 0b2ee63 "feat(enterprise): scope taxonomy, whole-/api auth, MCP filtering" — body contains "Implements #107 (5 of 9)"; no AI attribution; author = user
+- 39 files changed, 2561 insertions(+), 138 deletions(-); working tree clean after commit; NOT pushed (maintainer pushes)
+- Status: completed
+
+### 2026-09-18 — orchestrator (#107 close-out)
+- Full chain green: issues (skipped — maintainer-created) -> developer -> tester (+43 cases, 792/0/31; fixed real route_access full-path defect) -> reviewer (approved, 0 blockers/0 high, 1 medium informational: MCP startup-time scope fetch needs restart on rotation; 6 low) -> regression (all checks + 17/17 live DoD smoke; freed disk to run) -> committer (0b2ee63)
+- Issue #107 CLOSED with completion comment recording decisions 1-4, the tester-found path-classification fix, the MCP startup-time scope-fetch limitation, the visible change (unauth /api reads 401 under --enable-auth), and verification counts; status:in-progress label removed
+- Regression observation for follow-up: unmatched /api/* paths fall to the pre-existing SPA fallback (static-only) outside the auth layer — consider a JSON 404 for unmatched /api/* under auth (future issue material)
+- Milestone position: 5 of 9 complete; #108 (device binding) next per maintainer
+- Status: done
 
 ### 2026-09-18 — enterprise-regression (#107)
 - Frontend (tsc+vite): pass; fmt --check: pass; clippy --all-targets --all-features -D warnings: 0

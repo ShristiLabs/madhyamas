@@ -35,6 +35,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Loader2,
   Plus,
   Trash2,
@@ -44,6 +51,8 @@ import {
   Ban,
   Activity,
   Camera,
+  Bot,
+  AlertTriangle,
 } from "lucide-react"
 import { apiGet } from "@/lib/api/client"
 import {
@@ -53,9 +62,14 @@ import {
   revokeDeviceApi,
   deleteDeviceApi,
   createEnrollmentTokenApi,
+  listAgentKeysApi,
+  createAgentKeyApi,
+  revokeAgentKeyApi,
   type DeviceEntry,
   type DeviceEnrollmentToken,
   type CreateDevicePayload,
+  type AgentKeyEntry,
+  type CreateAgentKeyPayload,
 } from "@/lib/api/admin"
 import { buildTrafficWsUrl } from "@/hooks/useTrafficWebSocket"
 import { useWebSocket } from "@/hooks/useWebSocket"
@@ -140,6 +154,8 @@ export function DevicesPanel() {
   const [issued, setIssued] = useState<{ device: DeviceEntry; key: string } | null>(null)
   const [revokeTarget, setRevokeTarget] = useState<DeviceEntry | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<DeviceEntry | null>(null)
+  // Device whose "AI agents" dialog is open (issue #108).
+  const [agentsDevice, setAgentsDevice] = useState<DeviceEntry | null>(null)
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["admin-devices"] })
@@ -264,6 +280,14 @@ export function DevicesPanel() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        onClick={() => setAgentsDevice(d)}
+                        title="AI agents for this device (agent keys)"
+                      >
+                        <Bot className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
                         onClick={() => rotateMut.mutate(d.id)}
                         disabled={rotateMut.isPending || d.status === "revoked"}
                         title="Rotate device key"
@@ -317,6 +341,8 @@ export function DevicesPanel() {
         onRotate={(id) => rotateMut.mutate(id)}
         rotatePending={rotateMut.isPending}
       />
+
+      <AgentKeysDialog device={agentsDevice} onClose={() => setAgentsDevice(null)} />
 
       <Dialog open={!!revokeTarget} onOpenChange={(open) => !open && setRevokeTarget(null)}>
         <DialogContent className="sm:max-w-[400px]">
@@ -722,6 +748,452 @@ function CredentialDialog({ issued, onClose, lastCaptureAt, onRotate, rotatePend
         <DialogFooter>
           <Button onClick={onClose}>Done</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ============================================================================
+// AI agents (issue #108): device-derived agent keys
+// ============================================================================
+
+/** Preset chips from the minting-flow design — shortcuts, never the only
+ * choice (per-feature checkboxes always remain editable afterwards). */
+const AGENT_PRESETS: { id: string; label: string; scopes: string[] }[] = [
+  { id: "read-only-agent", label: "Read-only agent", scopes: ["traffic:read", "config:read"] },
+  {
+    id: "intercept-agent",
+    label: "Intercept agent",
+    scopes: [
+      "traffic:read",
+      "config:read",
+      "mocks:read",
+      "mocks:write",
+      "rewrites:read",
+      "rewrites:write",
+      "breakpoints:read",
+      "breakpoints:write",
+      "blocklist:read",
+      "blocklist:write",
+      "throttle:read",
+      "throttle:write",
+    ],
+  },
+]
+
+/** Features with a read/write split in the #107 taxonomy — rendered as
+ * label + Read + Write checkbox rows. */
+const AGENT_FEATURES: { label: string; scope: string }[] = [
+  { label: "Mocks", scope: "mocks" },
+  { label: "Rewrites", scope: "rewrites" },
+  { label: "Breakpoints", scope: "breakpoints" },
+  { label: "Block list", scope: "blocklist" },
+  { label: "Throttle", scope: "throttle" },
+]
+
+/** Standalone taxonomy scopes (no read/write split) — rendered as chips. */
+const AGENT_STANDALONE_SCOPES = [
+  "traffic:read",
+  "traffic:export",
+  "sessions:read",
+  "replay:execute",
+  "config:read",
+  "config:write",
+]
+
+const AGENT_EXPIRY_OPTIONS = [
+  { label: "Never", value: 0 },
+  { label: "7 days", value: 7 },
+  { label: "30 days", value: 30 },
+  { label: "90 days", value: 90 },
+]
+
+/**
+ * Per-device agent-key manager (issue #108): lists the device's AI agents
+ * (name, scope summary, last-used, status), mints new agent keys with the
+ * scope picker (preset chips + per-feature read/write checkboxes + optional
+ * expiry), shows the plaintext exactly once, and revokes individual agents
+ * without disturbing the device or sibling agents.
+ */
+function AgentKeysDialog({ device, onClose }: {
+  device: DeviceEntry | null
+  onClose: () => void
+}) {
+  const { toast } = useToast()
+  const queryClient = useQueryClient()
+
+  const { data: agents, isLoading } = useQuery({
+    queryKey: ["device-agent-keys", device?.id],
+    queryFn: () => listAgentKeysApi(device!.id),
+    enabled: !!device,
+  })
+
+  const [mintOpen, setMintOpen] = useState(false)
+  const [issued, setIssued] = useState<{ secret: string; name: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [revokeTarget, setRevokeTarget] = useState<AgentKeyEntry | null>(null)
+
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["device-agent-keys", device?.id] })
+
+  const mintMut = useMutation({
+    mutationFn: (data: Parameters<typeof createAgentKeyApi>[1]) =>
+      createAgentKeyApi(device!.id, data),
+    onSuccess: (res) => {
+      invalidate()
+      setMintOpen(false)
+      setIssued({ secret: res.secret, name: res.key.name || res.key.key_prefix })
+      setCopied(false)
+    },
+    onError: (e: unknown) => {
+      toast({
+        title: "Failed to mint agent key",
+        description: e instanceof ApiError ? e.body : "Unknown error",
+        variant: "destructive",
+      })
+    },
+  })
+
+  const revokeMut = useMutation({
+    mutationFn: (keyId: string) => revokeAgentKeyApi(device!.id, keyId),
+    onSuccess: () => {
+      invalidate()
+      setRevokeTarget(null)
+      toast({ title: "Agent key revoked" })
+    },
+    onError: (e: unknown) => {
+      toast({
+        title: "Failed to revoke agent key",
+        description: e instanceof ApiError ? e.body : "Unknown error",
+        variant: "destructive",
+      })
+    },
+  })
+
+  const handleCopy = async () => {
+    if (!issued) return
+    try {
+      await navigator.clipboard.writeText(issued.secret)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast({ title: "Copy failed", variant: "destructive" })
+    }
+  }
+
+  return (
+    <>
+      <Dialog open={!!device && !mintOpen && !issued} onOpenChange={(open) => !open && onClose()}>
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>AI agents — {device?.name}</DialogTitle>
+            <DialogDescription>
+              Agent keys are API credentials bound to this device: within their
+              scopes they see and modify only this device&apos;s traffic. Minting
+              requires your web session — a device key can never mint one.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[50vh] overflow-auto">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-6 text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading agents…
+              </div>
+            ) : agents && agents.length > 0 ? (
+              <table className="w-full text-xs">
+                <thead className="text-left text-muted-foreground">
+                  <tr className="border-b border-border">
+                    <th className="py-2 font-medium">Name</th>
+                    <th className="py-2 font-medium">Scopes</th>
+                    <th className="py-2 font-medium">Last used</th>
+                    <th className="py-2 font-medium">Status</th>
+                    <th className="py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {agents.map((a) => (
+                    <tr key={a.id} className="border-b border-border/50">
+                      <td className="py-2">
+                        <div className="font-medium">{a.name || a.key_prefix + "…"}</div>
+                        <div className="font-mono text-2xs text-muted-foreground">
+                          {a.expires_at
+                            ? `expires ${new Date(a.expires_at * 1000).toLocaleDateString()}`
+                            : "no expiry"}
+                        </div>
+                      </td>
+                      <td className="py-2">
+                        <div className="flex max-w-[220px] flex-wrap gap-1">
+                          {a.scopes.slice(0, 4).map((s) => (
+                            <span
+                              key={s}
+                              className="rounded bg-primary/10 px-1 py-0.5 text-2xs text-primary"
+                            >
+                              {s}
+                            </span>
+                          ))}
+                          {a.scopes.length > 4 && (
+                            <span className="text-2xs text-muted-foreground">
+                              +{a.scopes.length - 4}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2 text-muted-foreground">
+                        {a.last_used ? formatSeen(a.last_used) : "—"}
+                      </td>
+                      <td className="py-2">
+                        <Badge
+                          variant={a.status === "revoked" ? "destructive" : "success"}
+                          className="text-2xs"
+                        >
+                          {a.status === "revoked" ? "Revoked" : "Active"}
+                        </Badge>
+                      </td>
+                      <td className="py-2 text-right">
+                        {a.status !== "revoked" && (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => setRevokeTarget(a)}
+                            title="Revoke this agent key"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="py-6 text-center text-muted-foreground">
+                No AI agents yet. Mint one to let an MCP/CLI agent monitor this
+                device&apos;s traffic.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={onClose}>
+              Close
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setMintOpen(true)}
+              disabled={device?.status === "revoked"}
+            >
+              <Plus className="mr-1 h-3.5 w-3.5" /> Mint agent key
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {device && (
+        <MintAgentKeyDialog
+          open={mintOpen}
+          onOpenChange={(open) => {
+            if (!open) setMintOpen(false)
+          }}
+          onSubmit={(d) => mintMut.mutate(d)}
+          loading={mintMut.isPending}
+        />
+      )}
+
+      <Dialog open={!!issued} onOpenChange={(open) => !open && setIssued(null)}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Agent Key Created</DialogTitle>
+            <DialogDescription>
+              Copy the key now and hand it to the agent via
+              MADHYAMAS_API_URL / MADHYAMAS_API_KEY — it will not be shown
+              again.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              Within its scopes this key exposes exactly {device?.name}&apos;s
+              traffic — store it securely.
+            </div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 truncate rounded bg-muted p-2 font-mono text-2xs">
+                {issued?.secret}
+              </code>
+              <Button size="sm" variant="outline" onClick={() => void handleCopy()}>
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setIssued(null)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!revokeTarget} onOpenChange={(open) => !open && setRevokeTarget(null)}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Revoke Agent Key</DialogTitle>
+            <DialogDescription>
+              Revoke <strong>{revokeTarget?.name || revokeTarget?.key_prefix + "…"}</strong>?
+              The device and its other agents are not affected.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRevokeTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => revokeTarget && revokeMut.mutate(revokeTarget.id)}
+              disabled={revokeMut.isPending}
+            >
+              {revokeMut.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
+              Revoke
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+/** Scope-picker mint dialog: preset chips as starting points, per-feature
+ * read/write checkboxes, standalone scope chips, optional expiry. */
+function MintAgentKeyDialog({ open, onOpenChange, onSubmit, loading }: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSubmit: (data: CreateAgentKeyPayload) => void
+  loading: boolean
+}) {
+  const [name, setName] = useState("")
+  const [scopes, setScopes] = useState<string[]>([])
+  const [expiry, setExpiry] = useState(0)
+
+  const toggle = (s: string) =>
+    setScopes((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]))
+
+  const applyPreset = (preset: (typeof AGENT_PRESETS)[number]) => {
+    // Union with the current selection — presets are shortcuts, they never
+    // remove explicitly chosen scopes.
+    setScopes((prev) => Array.from(new Set([...prev, ...preset.scopes])))
+  }
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const data: CreateAgentKeyPayload = { scopes }
+    if (name.trim()) data.name = name.trim()
+    if (expiry > 0) data.expires_in_days = expiry
+    onSubmit(data)
+    setName("")
+    setScopes([])
+    setExpiry(0)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[480px]">
+        <DialogHeader>
+          <DialogTitle>Mint Agent Key</DialogTitle>
+          <DialogDescription>
+            Pick what the agent may do. Every traffic query it makes is forced
+            to this device regardless — scopes control capabilities only.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="agent-name">Name (optional)</Label>
+            <Input
+              id="agent-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. debug copilot"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Presets</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {AGENT_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => applyPreset(p)}
+                  className="rounded border border-border bg-muted px-2 py-1 text-2xs text-muted-foreground hover:bg-accent"
+                >
+                  + {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Feature scopes</Label>
+            <div className="space-y-1 rounded-md border border-border p-2">
+              <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-3 text-2xs text-muted-foreground">
+                <span />
+                <span className="w-10 text-center">Read</span>
+                <span className="w-10 text-center">Write</span>
+              </div>
+              {AGENT_FEATURES.map((f) => (
+                <div
+                  key={f.scope}
+                  className="grid grid-cols-[1fr_auto_auto] items-center gap-x-3 text-xs"
+                >
+                  <span>{f.label}</span>
+                  {(["read", "write"] as const).map((perm) => {
+                    const scope = `${f.scope}:${perm}`
+                    return (
+                      <label key={perm} className="flex w-14 justify-center">
+                        <input
+                          type="checkbox"
+                          checked={scopes.includes(scope)}
+                          onChange={() => toggle(scope)}
+                          className="h-3.5 w-3.5"
+                        />
+                      </label>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {AGENT_STANDALONE_SCOPES.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => toggle(s)}
+                  className={
+                    scopes.includes(s)
+                      ? "rounded bg-primary px-2 py-1 text-2xs font-medium text-primary-foreground"
+                      : "rounded border border-border bg-muted px-2 py-1 text-2xs text-muted-foreground hover:bg-accent"
+                  }
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Expiry</Label>
+            <Select value={String(expiry)} onValueChange={(v) => setExpiry(Number(v))}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {AGENT_EXPIRY_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={String(o.value)}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button type="submit" disabled={loading || scopes.length === 0}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Mint
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )

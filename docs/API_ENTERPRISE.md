@@ -28,12 +28,18 @@ JWTs use HMAC-SHA256 with claims: `sub` (user ID), `iss` ("madhyamas"),
 `aud` ("madhyamas-api"), `exp`, `iat`, `role`, `sid`. API keys use the format
 `madhyamas_{hex}` and are sent via the `X-API-Key` header (configurable);
 per-device credentials use the distinct `mdy_dev_{hex}` prefix and are
-connect-only (see [Devices](#devices)).
+connect-only (see [Devices](#devices)); device-derived agent keys use the
+`mdy_agent_{hex}` prefix — API-only, forced to their parent device's
+traffic (see
+[Device-derived agent keys](#device-derived-agent-keys-issue-108)).
 
 When `/auth/me` is called with an API key, the response additionally
 carries the key's effective `scopes` array (taxonomy-expanded, see
 [Feature scopes](#feature-scopes-issue-107)); JWT callers have no `scopes`
-field. The MCP server consumes this to filter its tool list.
+field. The MCP server consumes this to filter its tool list. Agent keys
+flow through the same path: their MCP session sees the filtered tool list
+*and* device-scoped data (the forced filter applies to every traffic query
+the tools make).
 
 ## Feature scopes (issue #107)
 
@@ -64,7 +70,8 @@ wildcard in either half (`traffic:*`, `*:read`).
 The following surfaces **always reject API keys** (`403`) regardless of
 scopes — they require a JWT web-session principal:
 
-- key and device management (`/api/auth/api-keys*`, `/api/devices*`)
+- key and device management (`/api/auth/api-keys*`, `/api/devices*` —
+  including agent-key minting, so a key can never mint a key)
 - user/admin endpoints (`/api/users*`, `/api/rbac*`, `/api/audit*`, `/api/onboarding*`)
 - scripts and plugins (code-execution adjacent)
 - secrets (`/api/secrets*`)
@@ -218,6 +225,87 @@ Enrollment tokens:
   written to audit metadata (device IDs only).
 - Revoking or deleting a device also revokes its outstanding enrollment
   tokens; expired token rows are pruned opportunistically on issuance.
+
+## Device-derived agent keys (issue #108)
+
+Agent keys are API credentials **referentially bound to a device**: the row
+carries `parent_device_id`, the key material is independent random
+(deliberately not derived from the device key — rotation of the device key
+leaves agents working), and every traffic query made with the key is forced
+server-side to the parent device's entries. Minting happens in the device's
+context from the owner's web session; the whole `/api/devices*` surface is
+JWT-only, so neither a device key nor an agent key can ever mint keys.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/devices/{id}/agent-keys` | List the device's agent keys (metadata only — no secrets) |
+| POST | `/devices/{id}/agent-keys` | Mint an agent key `{name?, preset?, scopes?, expires_in_days?}`; returns `{key, secret}` (show-once) |
+| DELETE | `/devices/{id}/agent-keys/{key_id}` | Revoke one agent key (device and siblings untouched) |
+
+Key format `mdy_agent_{hex}`, sent via `X-API-Key` like a user key — but
+**rejected on every proxy CONNECT arm** (`X-API-Key`, `Bearer`, either
+half of `Basic`): agent keys are API credentials, the mirror image of the
+`mdy_dev_` REST rejection. Hash at rest (SHA-256), show-once plaintext at
+mint, `last_used` stamped per request.
+
+### Scopes and presets
+
+Scopes are a user-picked subset of the [issue #107 taxonomy](#taxonomy) —
+every entry is validated against it (the user-key `*` wildcard is
+rejected for agent keys) and at least one scope is required. Two presets
+expand server-side and union with explicit scopes:
+
+| Preset | Scopes |
+|---|---|
+| `read-only-agent` | `traffic:read`, `config:read` |
+| `intercept-agent` | read-only set + `mocks`/`rewrites`/`breakpoints`/`blocklist`/`throttle` read+write |
+
+### Two-axis enforcement
+
+- **Capability axis**: the issue #107 route map applies unchanged — an
+  agent key without `mocks:write` gets `403` on `POST /api/mocks`, keys
+  are excluded from the JWT-only surface, and `/api/auth/me` reports the
+  effective scopes (MCP tool filtering).
+- **Data axis** (forced, server-side — callers cannot escape it even by
+  naming another device):
+  - `GET /api/traffic`: the `device_id` filter is forced to the parent;
+    a caller-supplied `device_id` of a *different* device yields the
+    empty intersection.
+  - `GET /api/traffic/{id}`, `GET /api/export/curl/{id}`: entries of any
+    other device (or unattributed entries) are `404`.
+  - `GET /api/traffic/count`: counts only the parent device's entries.
+  - `GET /api/export/har`: exports the parent device's capture session,
+    never the global current session.
+  - `GET /api/sessions*`: only the parent device's session row is
+    visible/exportable.
+  - `GET /api/ws?api_key=...`: API-key WS auth (issue #108 addition —
+    JWT `?token=` unchanged); the key must hold `traffic:read`, and the
+    stream (initial snapshot + every live event) only ever carries the
+    parent device's entries.
+
+### Lifecycle
+
+- Revoking or deleting the device **cascades** a revoke onto its agent
+  keys.
+- Rotating the device key does **not** touch agent keys (referential
+  binding — the agents reference the device, not the key material).
+- Revoking one agent key leaves the device, its device key, and sibling
+  agent keys untouched.
+- Optional expiry (`expires_in_days` at mint) is enforced at key
+  validation: an expired key is rejected like a revoked one.
+
+### Audit
+
+Minting and revocation reuse `ApiKeyCreated` / `ApiKeyRevoked` with
+`key_kind: "agent"` and `parent_device_id` in the metadata (never key
+material).
+
+### Known limitation (issue #109)
+
+Intercept rules (mocks, rewrites, breakpoints, block list, throttle) are
+**global** today: an agent key with `mocks:write` can create a mock rule
+and the rule applies to every device's traffic. Device-scoped rules and
+pipeline match-time attribution are issue #109.
 
 ### Proxy auth policy (`require_proxy_auth`)
 

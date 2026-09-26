@@ -17,8 +17,8 @@ pub mod types;
 pub use postgres::PostgresEnterpriseStore;
 pub use sqlite::SqliteEnterpriseStore;
 pub use types::{
-    ApiKeyRecord, AuditEventRecord, AuditStats, AuthSession, DeviceKeyRecord, DeviceRecord,
-    EnrollmentTokenRecord, UserRecord, UserUpdate,
+    AgentKeyRecord, ApiKeyRecord, AuditEventRecord, AuditStats, AuthSession, DeviceKeyRecord,
+    DeviceRecord, EnrollmentTokenRecord, UserRecord, UserUpdate,
 };
 
 use async_trait::async_trait;
@@ -116,6 +116,24 @@ pub trait EnterpriseStore: Send + Sync {
     /// returns the number of rows removed (opportunistic cleanup on
     /// issuance, keeps the table bounded).
     async fn delete_expired_enrollment_tokens(&self, now: &str) -> Result<u64>;
+
+    /// Persist a device-derived agent key (hash + prefix; the plaintext
+    /// is shown once at creation and never stored) (issue #108).
+    async fn create_agent_key(&self, key: &AgentKeyRecord) -> Result<()>;
+    /// Look up an agent key row by its key hash (validation path).
+    async fn get_agent_key_by_hash(&self, key_hash: &str) -> Result<Option<AgentKeyRecord>>;
+    /// List a device's agent keys, newest first (metadata only — the
+    /// caller must never return the hash).
+    async fn list_agent_keys(&self, parent_device_id: &str) -> Result<Vec<AgentKeyRecord>>;
+    /// Deactivate one agent key (single-agent revoke; leaves the device
+    /// and sibling agents untouched).
+    async fn revoke_agent_key(&self, id: &str) -> Result<()>;
+    /// Deactivate all of a device's agent keys at once (device
+    /// revocation/deletion cascade). Device-key ROTATION must NOT call
+    /// this — the binding is referential, not key-material.
+    async fn revoke_agent_keys_for_device(&self, parent_device_id: &str) -> Result<()>;
+    /// Stamp an agent key's `last_used_at` to now.
+    async fn update_agent_key_last_used(&self, id: &str) -> Result<()>;
 
     async fn create_session(&self, session: &AuthSession) -> Result<()>;
     async fn get_session(&self, id: &str) -> Result<Option<AuthSession>>;

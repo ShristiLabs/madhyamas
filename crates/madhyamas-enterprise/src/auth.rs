@@ -162,6 +162,14 @@ pub struct ApiKeyAuth {
     pub scopes: Vec<String>,
     /// Key record ID (for audit logging / last-used updates).
     pub key_id: String,
+    /// Parent device ID, when the key is a device-derived agent key
+    /// (`mdy_agent_...`, issue #108). `None` for plain user keys. This is
+    /// the data-axis half of the two-axis enforcement: the capability axis
+    /// (scopes) is enforced per route as for any key, while the device
+    /// binding forces every traffic query made with this key to the parent
+    /// device's entries.
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 /// A parsed scope string of the form `<resource>:<permission>`.
@@ -304,6 +312,33 @@ pub fn generate_enrollment_token() -> String {
     format!(
         "{}{}",
         ENROLLMENT_TOKEN_PREFIX,
+        uuid::Uuid::new_v4().simple().to_string().replace('-', "")
+    )
+}
+
+/// Prefix of device-derived agent keys (issue #108). An agent key is an
+/// API credential bound **referentially** to a parent device (the row
+/// carries `parent_device_id`; the key material is independent random —
+/// the doc's derivation-options table rejects crypto derivation because
+/// it would break on rotation and allow offline minting). It authenticates
+/// REST/MCP/CLI requests via `X-API-Key` like a user key, but every
+/// traffic query it makes is forced to the parent device's entries, and
+/// it can never authenticate proxy CONNECTs (that is the `mdy_dev_`
+/// key's job — the inverse of the #104 REST rejection).
+pub const AGENT_KEY_PREFIX: &str = "mdy_agent_";
+
+/// Whether the given token is a device-derived agent key.
+pub fn is_agent_key(token: &str) -> bool {
+    token.trim().starts_with(AGENT_KEY_PREFIX)
+}
+
+/// Generate a new agent key: `mdy_agent_` + 32 hex chars. Show-once
+/// semantics like every other credential kind; only the SHA-256 hash is
+/// persisted.
+pub fn generate_agent_key() -> String {
+    format!(
+        "{}{}",
+        AGENT_KEY_PREFIX,
         uuid::Uuid::new_v4().simple().to_string().replace('-', "")
     )
 }
@@ -484,6 +519,12 @@ impl AuthManager {
                     .to_string(),
             });
         }
+        // Agent keys are API credentials (issue #108) — validate them
+        // against their own table and resolve the (user, device, scopes)
+        // triple the two-axis enforcement needs.
+        if is_agent_key(key) {
+            return self.validate_agent_key(key.trim()).await;
+        }
         let store = self
             .store
             .as_ref()
@@ -522,7 +563,83 @@ impl AuthManager {
             user_id,
             scopes,
             key_id,
+            device_id: None,
         })
+    }
+
+    /// Validate a device-derived agent key (`mdy_agent_...`) against the
+    /// persistent store (issue #108).
+    ///
+    /// Hashes the input with SHA-256, looks up the agent-key record by
+    /// hash, rejects revoked and expired keys, and rejects keys whose
+    /// parent device is missing or revoked (defense in depth beyond the
+    /// cascade revoke that should already have deactivated the row).
+    /// Returns the owner (denormalized on the row), the parent device ID
+    /// (the data-axis binding), and the key's feature scopes (the
+    /// capability axis). Fire-and-forgets a `last_used` update.
+    pub async fn validate_agent_key(&self, key: &str) -> Result<ApiKeyAuth, EnterpriseError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| EnterpriseError::AuthFailed {
+                message: "Agent key validation requires a persistent store".to_string(),
+            })?;
+        let hash = hash_api_key(key);
+        let record = store
+            .get_agent_key_by_hash(&hash)
+            .await
+            .map_err(|e| EnterpriseError::AuthFailed {
+                message: format!("Agent key lookup failed: {e}"),
+            })?
+            .ok_or_else(|| EnterpriseError::AuthFailed {
+                message: "Invalid API key".to_string(),
+            })?;
+        if record.revoked_at.is_some() {
+            return Err(EnterpriseError::AuthFailed {
+                message: "Agent key revoked".to_string(),
+            });
+        }
+        if let Some(ref expires_str) = record.expires_at {
+            if let Ok(expires) = chrono::DateTime::parse_from_rfc3339(expires_str) {
+                if chrono::Utc::now() > expires.with_timezone(&chrono::Utc) {
+                    return Err(EnterpriseError::AuthFailed {
+                        message: "API key expired".to_string(),
+                    });
+                }
+            }
+        }
+        // Referential binding: the key lives exactly as long as its parent
+        // device. The cascade on device revoke/delete deactivates the row,
+        // but check the device directly too so a stale row can never
+        // authenticate.
+        let device = store
+            .get_device(&record.parent_device_id)
+            .await
+            .map_err(|e| EnterpriseError::AuthFailed {
+                message: format!("Device lookup failed: {e}"),
+            })?
+            .ok_or_else(|| EnterpriseError::AuthFailed {
+                message: "Invalid API key".to_string(),
+            })?;
+        if device.status != "active" {
+            return Err(EnterpriseError::AuthFailed {
+                message: "Agent key revoked".to_string(),
+            });
+        }
+        let scopes: Vec<String> = serde_json::from_str(&record.scopes).unwrap_or_default();
+        let auth = ApiKeyAuth {
+            user_id: record.owner_user_id,
+            scopes,
+            key_id: record.id.clone(),
+            device_id: Some(record.parent_device_id),
+        };
+        // Fire-and-forget last-used update — don't block the request.
+        let store_clone = Arc::clone(store);
+        let kid = record.id;
+        tokio::spawn(async move {
+            let _ = store_clone.update_agent_key_last_used(&kid).await;
+        });
+        Ok(auth)
     }
 
     /// Validate a per-device credential (`mdy_dev_...`) against the
@@ -744,6 +861,8 @@ impl AuthProvider for AuthManager {
             session_id: claims.sid,
             status: Some("active".to_string()),
             method: AuthMethod::Jwt,
+            scopes: Vec::new(),
+            device_id: None,
         })
     }
 
@@ -759,6 +878,12 @@ impl AuthProvider for AuthManager {
             session_id: None,
             status: Some("active".to_string()),
             method: AuthMethod::ApiKey,
+            // Effective (taxonomy-expanded) scopes + the agent key's
+            // device binding, so WS-level consumers (the /ws in-handler
+            // auth) can enforce both axes without an enterprise
+            // dependency (issue #108).
+            scopes: effective_scopes(&auth.scopes),
+            device_id: auth.device_id,
         })
     }
 
@@ -827,6 +952,13 @@ impl AuthProvider for AuthManager {
 /// every arm — they are single-use exchange credentials, not proxy
 /// credentials. A device must redeem the token first and connect with
 /// the resulting `mdy_dev_` key.
+///
+/// Issue #108: agent keys (`mdy_agent_...`) are likewise rejected on
+/// every arm — they are API credentials (REST/MCP/CLI) bound to a parent
+/// device, not connect credentials. The inverse of the #104 rule that
+/// rejects `mdy_dev_` on REST: a device connects with `mdy_dev_`, an
+/// agent reads the device's traffic with `mdy_agent_`, and neither can
+/// do the other's job.
 #[async_trait]
 impl ProxyAuthValidator for AuthManager {
     async fn validate(&self, credentials: &ProxyCredentials) -> Result<ProxyPrincipal, String> {
@@ -837,6 +969,13 @@ impl ProxyAuthValidator for AuthManager {
                     return Err(
                         "Enrollment tokens cannot authenticate proxy connections; redeem the \
                          token for a device key first"
+                            .to_string(),
+                    );
+                }
+                if is_agent_key(username) || is_agent_key(password) {
+                    return Err(
+                        "Agent keys cannot authenticate proxy connections; connect with the \
+                         device key (mdy_dev_) instead"
                             .to_string(),
                     );
                 }
@@ -866,6 +1005,13 @@ impl ProxyAuthValidator for AuthManager {
                             .to_string(),
                     );
                 }
+                if is_agent_key(token) {
+                    return Err(
+                        "Agent keys cannot authenticate proxy connections; connect with the \
+                         device key (mdy_dev_) instead"
+                            .to_string(),
+                    );
+                }
                 if is_device_key(token) {
                     return self.device_principal(token).await;
                 }
@@ -884,6 +1030,13 @@ impl ProxyAuthValidator for AuthManager {
                     return Err(
                         "Enrollment tokens cannot authenticate proxy connections; redeem the \
                          token for a device key first"
+                            .to_string(),
+                    );
+                }
+                if is_agent_key(key) {
+                    return Err(
+                        "Agent keys cannot authenticate proxy connections; connect with the \
+                         device key (mdy_dev_) instead"
                             .to_string(),
                     );
                 }

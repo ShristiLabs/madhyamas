@@ -415,7 +415,22 @@ pub async fn auth_middleware(
                     role: "user".to_string(),
                     key_id: Some(api_key_auth.key_id.clone()),
                     session_id: None,
+                    device_id: api_key_auth.device_id.clone(),
                 };
+                // Data-axis enforcement for device-derived agent keys
+                // (issue #108): publish the parent-device binding as an
+                // api-crate extension so the traffic read handlers can
+                // force `device_id = parent` server-side (caller-supplied
+                // device params are intersected, never widened). The
+                // capability axis is already enforced by `route_access`
+                // above for any key principal.
+                if let Some(ref device_id) = api_key_auth.device_id {
+                    request
+                        .extensions_mut()
+                        .insert(madhyamas_api::auth::DeviceScope {
+                            device_id: device_id.clone(),
+                        });
+                }
                 // Audit key logins only on the /auth surface: since issue
                 // #107 the middleware covers the whole /api nest, and
                 // polling routes (traffic, mocks, ...) would otherwise
@@ -497,6 +512,7 @@ pub async fn auth_middleware(
                 claims: Some(claims),
                 scopes: None,
                 key_id: None,
+                device_id: None,
             };
             request.extensions_mut().insert(auth_user);
             next.run(request).await
@@ -510,6 +526,10 @@ pub async fn auth_middleware(
 /// When authentication was via JWT, `claims` is `Some` and `scopes` is
 /// `None`. When authentication was via API key, `claims` is `None` and
 /// `scopes` is `Some`. The `user_id` and `role` fields are always set.
+/// When the key was a device-derived agent key (`mdy_agent_...`,
+/// issue #108), `device_id` carries the parent-device binding (the
+/// principal resolves to `(user, device, scopes)` — the two-axis model
+/// from docs/CREDENTIAL_ONBOARDING.md).
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     /// JWT claims, when authenticated via bearer token.
@@ -524,6 +544,9 @@ pub struct AuthUser {
     pub key_id: Option<String>,
     /// Session ID, when authenticated via JWT with a session claim.
     pub session_id: Option<String>,
+    /// Parent device ID, when the key is a device-derived agent key
+    /// (issue #108); `None` for JWT and plain user-key principals.
+    pub device_id: Option<String>,
 }
 
 impl axum::extract::FromRequestParts<Arc<AppState>> for AuthUser {

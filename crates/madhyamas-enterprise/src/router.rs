@@ -110,6 +110,19 @@ pub fn create_enterprise_router(
             post(handlers::issue_device_enrollment_token),
         )
         .route("/devices/enroll", post(handlers::enroll_device))
+        // Device-derived agent keys (issue #108): minted in the device's
+        // context with a user-picked feature-scope subset, referentially
+        // bound to the device (rotation-immune, cascade on revoke/delete).
+        // The whole `/devices` surface is JWT-only (route_access), so a
+        // device key or agent key can never mint keys.
+        .route(
+            "/devices/{id}/agent-keys",
+            get(handlers::list_agent_keys).post(handlers::create_agent_key),
+        )
+        .route(
+            "/devices/{id}/agent-keys/{key_id}",
+            delete(handlers::revoke_agent_key),
+        )
         // User Management (admin-only via RBAC)
         .merge(user_routes)
         // RBAC

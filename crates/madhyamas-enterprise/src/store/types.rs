@@ -163,6 +163,37 @@ pub struct EnrollmentTokenRecord {
     pub revoked_at: Option<String>,
 }
 
+/// Database row for the `agent_keys` table (issue #108). Each row is one
+/// device-derived agent key: an API credential **referentially** bound
+/// to a parent device (`parent_device_id` — the key material is
+/// independent random, deliberately NOT derived from the device key, so
+/// device-key rotation leaves agents working). `key_hash` stores the
+/// SHA-256 of the plaintext `mdy_agent_...` key; `owner_user_id` is
+/// denormalized from the device so validation resolves
+/// `(user, device, scopes)` with a single row; `scopes` is a JSON array
+/// of feature scopes from the issue #107 taxonomy. Revoking the parent
+/// device cascades a revoke onto its agent keys; rotating the device
+/// key does not.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AgentKeyRecord {
+    pub id: String,
+    /// The device this key is scoped to (data axis).
+    pub parent_device_id: String,
+    /// Denormalized device owner (capability/audit axis).
+    pub owner_user_id: String,
+    /// Optional human label shown in the device's agent list.
+    pub name: String,
+    pub key_hash: String,
+    pub key_prefix: String,
+    /// JSON array of feature scopes (issue #107 taxonomy).
+    pub scopes: String,
+    pub created_at: String,
+    /// RFC 3339 expiry, `None` = never expires.
+    pub expires_at: Option<String>,
+    pub revoked_at: Option<String>,
+    pub last_used_at: Option<String>,
+}
+
 /// Database row for the `audit_events` table.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct AuditEventRecord {

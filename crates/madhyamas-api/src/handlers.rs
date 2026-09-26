@@ -4,6 +4,7 @@ use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
     http::StatusCode,
     response::{IntoResponse, Json},
+    Extension,
 };
 use madhyamas_core::{
     AccessControlList, PaginatedTraffic, ProxyConfig, TrafficCursor, TrafficFilter, WsFilter,
@@ -11,8 +12,33 @@ use madhyamas_core::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use super::auth::DeviceScope;
 use super::ws::handle_ws;
 use super::AppState;
+
+/// Resolve the forced device filter for device-derived agent-key
+/// principals (issue #108). The enterprise auth middleware inserts the
+/// [`DeviceScope`] extension after validating an `mdy_agent_...` key;
+/// every traffic read then carries `device_id = parent` server-side.
+///
+/// Returns:
+/// - `None` — no agent binding (JWT / user key / OSS tier): the handler
+///   behaves exactly as before.
+/// - `Some(Ok(device_id))` — the caller supplied no device filter or
+///   named the parent device itself: the query is forced to the parent.
+/// - `Some(Err(()))` — the caller named a *different* device: the
+///   intersection of `{parent}` and `{requested}` is empty, so the
+///   result is empty (never widened to more data).
+fn resolve_device_scope(
+    scope: Option<DeviceScope>,
+    requested: Option<&str>,
+) -> Option<Result<String, ()>> {
+    scope.map(|s| match requested {
+        None => Ok(s.device_id),
+        Some(d) if d == s.device_id => Ok(s.device_id),
+        Some(_) => Err(()),
+    })
+}
 
 /// Query parameters for traffic listing
 #[derive(Debug, Deserialize)]
@@ -39,7 +65,8 @@ pub struct TrafficQuery {
     pub include_bodies: Option<String>,
     /// Filter by the device a connection was attributed to (issue #105,
     /// enterprise device credentials). Scopes the query to that device's
-    /// entries across sessions.
+    /// entries across sessions. For agent-key principals this parameter
+    /// is intersected with the key's parent device (issue #108).
     pub device_id: Option<String>,
 }
 
@@ -47,7 +74,19 @@ pub struct TrafficQuery {
 pub async fn get_traffic(
     State(state): State<Arc<AppState>>,
     Query(query): Query<TrafficQuery>,
+    device_scope: Option<Extension<DeviceScope>>,
 ) -> impl IntoResponse {
+    // Data-axis enforcement for agent keys (issue #108): force the query
+    // to the parent device. A caller naming another device gets the
+    // (empty) intersection, never its entries.
+    let forced_device =
+        match resolve_device_scope(device_scope.map(|e| e.0), query.device_id.as_deref()) {
+            None => query.device_id,
+            Some(Ok(parent)) => Some(parent),
+            Some(Err(())) => {
+                return Json(Vec::<madhyamas_core::TrafficEntry>::new()).into_response();
+            }
+        };
     // Parse status code filter (e.g., "2xx", "4xx", "5xx")
     let (status_min, status_max) = query
         .status_code
@@ -85,7 +124,7 @@ pub async fn get_traffic(
         host: query.host,
         cursor: query.cursor,
         include_bodies: Some(include_bodies),
-        device_id: query.device_id,
+        device_id: forced_device,
     };
 
     match state.traffic_store.get_traffic(&filter).await {
@@ -129,6 +168,7 @@ pub async fn get_traffic_entry(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Query(query): Query<TrafficEntryQuery>,
+    device_scope: Option<Extension<DeviceScope>>,
 ) -> impl IntoResponse {
     let decompress = query
         .decompressed
@@ -138,6 +178,20 @@ pub async fn get_traffic_entry(
 
     match state.traffic_store.get_by_id(&id).await {
         Ok(Some(mut entry)) => {
+            // Data axis for agent keys (issue #108): an entry belonging to
+            // any device other than the key's parent is not visible —
+            // 404, indistinguishable from a missing entry.
+            if let Some(scope) = device_scope {
+                if entry.device_id.as_deref() != Some(scope.device_id.as_str()) {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(ErrorResponse {
+                            error: "Entry not found".to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
+            }
             if decompress {
                 if let Some(response) = entry.response.as_mut() {
                     if let Some(body) = response.body.take() {
@@ -198,7 +252,31 @@ pub async fn clear_traffic(State(state): State<Arc<AppState>>) -> impl IntoRespo
 }
 
 /// Get traffic count
-pub async fn get_traffic_count(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn get_traffic_count(
+    State(state): State<Arc<AppState>>,
+    device_scope: Option<Extension<DeviceScope>>,
+) -> impl IntoResponse {
+    // Data axis for agent keys (issue #108): `count()` has no filter, so
+    // count the parent device's entries via the filtered list query
+    // (bodies omitted — only the row count is needed). A dedicated
+    // filtered COUNT statement is follow-up material.
+    if let Some(scope) = device_scope {
+        let filter = TrafficFilter {
+            device_id: Some(scope.device_id.clone()),
+            include_bodies: Some(false),
+            ..Default::default()
+        };
+        return match state.traffic_store.get_traffic(&filter).await {
+            Ok(entries) => Json(serde_json::json!({ "count": entries.len() })).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+                .into_response(),
+        };
+    }
     match state.traffic_store.count().await {
         Ok(count) => Json(serde_json::json!({ "count": count })).into_response(),
         Err(e) => (
@@ -242,11 +320,24 @@ pub struct SessionResponse {
 /// capture sessions auto-created for enterprise device credentials appear
 /// here alongside manual and HAR-import sessions, named after the device
 /// record ("Device: Hari's Pixel").
-pub async fn get_sessions(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+///
+/// Issue #108: agent-key principals see exactly one session — their
+/// parent device's capture session (the data axis applies to session
+/// listing too; session *switching* is already JWT-only).
+pub async fn get_sessions(
+    State(state): State<Arc<AppState>>,
+    device_scope: Option<Extension<DeviceScope>>,
+) -> impl IntoResponse {
+    let device_session =
+        device_scope.map(|s| madhyamas_core::traffic::device_session_id(&s.device_id));
     match state.traffic_store.list_sessions().await {
         Ok(sessions) => Json(
             sessions
                 .into_iter()
+                .filter(|s| match device_session {
+                    None => true,
+                    Some(ref dev) => s.id == *dev,
+                })
                 .map(|s| SessionResponse {
                     id: s.id,
                     name: s.name,
@@ -300,7 +391,21 @@ pub async fn create_session(
 pub async fn get_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    device_scope: Option<Extension<DeviceScope>>,
 ) -> impl IntoResponse {
+    // Data axis for agent keys (issue #108): only the parent device's own
+    // session is visible.
+    if let Some(scope) = device_scope {
+        if id != madhyamas_core::traffic::device_session_id(&scope.device_id) {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Session not found".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    }
     match state.session_manager.get_session(&id).await {
         Ok(Some(session)) => Json(session).into_response(),
         Ok(None) => (
@@ -338,8 +443,17 @@ pub async fn delete_session(
 }
 
 /// Export session as HAR
-pub async fn export_har(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let session_id = state.traffic_store.current_session_id();
+pub async fn export_har(
+    State(state): State<Arc<AppState>>,
+    device_scope: Option<Extension<DeviceScope>>,
+) -> impl IntoResponse {
+    // Data axis for agent keys (issue #108): HAR export is the bulk
+    // exfiltration path — an agent key exports its parent device's
+    // session, never the global current session.
+    let session_id = match device_scope {
+        Some(scope) => madhyamas_core::traffic::device_session_id(&scope.device_id),
+        None => state.traffic_store.current_session_id(),
+    };
 
     match state.traffic_store.export_har(&session_id).await {
         Ok(mut har) => {
@@ -413,9 +527,23 @@ pub async fn import_traffic_har(
 pub async fn export_curl(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    device_scope: Option<Extension<DeviceScope>>,
 ) -> impl IntoResponse {
     match state.traffic_store.get_by_id(&id).await {
         Ok(Some(entry)) => {
+            // Data axis for agent keys (issue #108): only entries of the
+            // key's parent device may be exported as curl.
+            if let Some(scope) = device_scope {
+                if entry.device_id.as_deref() != Some(scope.device_id.as_str()) {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(ErrorResponse {
+                            error: "Entry not found".to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
+            }
             let curl = generate_curl(&entry.request);
             Json(serde_json::json!({ "curl": curl })).into_response()
         }
@@ -1203,21 +1331,31 @@ pub async fn trigger_autosave_snapshot(State(state): State<Arc<AppState>>) -> im
 /// Query parameters for the WebSocket upgrade endpoint. Browsers cannot
 /// set custom headers on a WebSocket handshake, so the JWT is passed via
 /// the `?token=` query parameter (or the `Sec-WebSocket-Protocol`
-/// subprotocol header). See Phase 9.1.
+/// subprotocol header). See Phase 9.1. Issue #108 adds `?api_key=` so
+/// API-key principals (notably device-derived agent keys) can subscribe
+/// to the live stream.
 #[derive(Debug, Deserialize)]
 pub struct WsAuthQuery {
     pub token: Option<String>,
+    pub api_key: Option<String>,
 }
 
-/// WebSocket handler (Phase 9.1: auth on upgrade).
+/// WebSocket handler (Phase 9.1: auth on upgrade; #108: API keys).
 ///
 /// In enterprise mode with auth enabled (`AppState::auth_provider` is
 /// `Some`), the WebSocket upgrade is rejected with `401 Unauthorized`
-/// unless a valid JWT is supplied. Browsers cannot set custom headers on
-/// the WS handshake, so the token is accepted from:
+/// unless a valid credential is supplied. Browsers cannot set custom
+/// headers on the WS handshake, so the JWT token is accepted from:
+///
 /// 1. `?token=` query parameter, or
 /// 2. `Sec-WebSocket-Protocol` subprotocol header (the first protocol
 ///    value is treated as the token).
+///
+/// Non-browser clients may instead authenticate an API key via
+/// `?api_key=` (issue #108). API-key connections must hold
+/// `traffic:read` (the live-stream capability); device-derived agent
+/// keys additionally get a per-subscriber filter so the stream only
+/// ever emits their parent device's entries (the data axis).
 ///
 /// In OSS mode (or when auth is disabled — `auth_provider` is `None`),
 /// all connections are allowed (unchanged behavior).
@@ -1227,54 +1365,91 @@ pub async fn ws_handler(
     Query(query): Query<WsAuthQuery>,
     headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
-    // If an auth provider is configured, validate the token before
+    // If an auth provider is configured, validate the credential before
     // allowing the upgrade. This runs inside the handler (not as
     // middleware) because the WebSocketUpgrade extractor must consume
     // the connection — the enterprise auth middleware cannot reject it
     // before the extractor runs.
+    let mut device_filter: Option<String> = None;
     if let Some(ref auth_provider) = state.auth_provider {
         if auth_provider.auth_required() {
-            // Extract the token: query param first, then subprotocol header.
-            let token = query.token.or_else(|| {
-                headers
-                    .get("sec-websocket-protocol")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.split(',').next())
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-            });
+            // API-key arm (issue #108): validate the key, require
+            // traffic:read, and pick up the agent key's device binding.
+            if let Some(key) = query
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|k| !k.is_empty())
+            {
+                match auth_provider.validate_api_key(key).await {
+                    Ok(identity) => {
+                        if !super::auth::scope_grants(&identity.scopes, "traffic:read") {
+                            return (
+                                StatusCode::FORBIDDEN,
+                                Json(serde_json::json!({
+                                    "error": "forbidden",
+                                    "message": "Insufficient API key scope: traffic:read is required for the live stream",
+                                })),
+                            )
+                                .into_response();
+                        }
+                        device_filter = identity.device_id;
+                    }
+                    Err(err) => {
+                        tracing::debug!("WebSocket API key auth rejected: {err}");
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            Json(serde_json::json!({
+                                "error": "unauthorized",
+                                "message": err.to_string(),
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
+            } else {
+                // JWT arm: query param first, then subprotocol header.
+                let token = query.token.or_else(|| {
+                    headers
+                        .get("sec-websocket-protocol")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.split(',').next())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                });
 
-            let token = match token {
-                Some(t) => t,
-                None => {
+                let token = match token {
+                    Some(t) => t,
+                    None => {
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            Json(serde_json::json!({
+                                "error": "unauthorized",
+                                "message": "WebSocket authentication required: provide ?token= or ?api_key="
+                            })),
+                        )
+                            .into_response();
+                    }
+                };
+
+                if let Err(err) = auth_provider.validate_token(&token).await {
+                    tracing::debug!("WebSocket auth rejected: {err}");
                     return (
                         StatusCode::UNAUTHORIZED,
                         Json(serde_json::json!({
                             "error": "unauthorized",
-                            "message": "WebSocket authentication required: provide ?token= or Sec-WebSocket-Protocol header"
+                            "message": err.to_string(),
                         })),
                     )
                         .into_response();
                 }
-            };
-
-            if let Err(err) = auth_provider.validate_token(&token).await {
-                tracing::debug!("WebSocket auth rejected: {err}");
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({
-                        "error": "unauthorized",
-                        "message": err.to_string(),
-                    })),
-                )
-                    .into_response();
             }
         }
     }
 
     ws.on_upgrade(move |socket| {
         let cross_rx = state.cross_instance_sender.as_ref().map(|s| s.subscribe());
-        handle_ws(socket, state.traffic_store.clone(), cross_rx)
+        handle_ws(socket, state.traffic_store.clone(), cross_rx, device_filter)
     })
     .into_response()
 }
@@ -1326,7 +1501,21 @@ pub struct ErrorResponse {
 pub async fn export_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    device_scope: Option<Extension<DeviceScope>>,
 ) -> impl IntoResponse {
+    // Data axis for agent keys (issue #108): export is a bulk read —
+    // only the parent device's own session may be exported.
+    if let Some(scope) = device_scope {
+        if id != madhyamas_core::traffic::device_session_id(&scope.device_id) {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Session not found".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    }
     match state.session_manager.export_session(&id).await {
         Ok(export) => Json(export).into_response(),
         Err(e) => (
@@ -2299,6 +2488,38 @@ mod tests {
         assert_eq!(v["host_filter"], serde_json::json!(["a.com"]));
         assert_eq!(v["redact_headers"], serde_json::json!(["Authorization"]));
         assert_eq!(v["redact_bodies"], true);
+    }
+
+    /// Issue #108 data-axis intersection semantics (private helper — the
+    /// handler tests in tests/router.rs cover the None case end-to-end).
+    #[test]
+    fn resolve_device_scope_intersects_never_widens() {
+        let scope = Some(DeviceScope {
+            device_id: "dev-x".to_string(),
+        });
+        // No agent binding: whatever the caller asked, unchanged.
+        assert_eq!(resolve_device_scope(None, None), None);
+        assert_eq!(
+            resolve_device_scope(None, Some("dev-y")),
+            None,
+            "unbound principals keep their own filter"
+        );
+        // Bound, no caller filter: forced to the parent.
+        assert_eq!(
+            resolve_device_scope(scope.clone(), None),
+            Some(Ok("dev-x".to_string()))
+        );
+        // Bound, same device: kept.
+        assert_eq!(
+            resolve_device_scope(scope.clone(), Some("dev-x")),
+            Some(Ok("dev-x".to_string()))
+        );
+        // Bound, different device: empty intersection.
+        assert_eq!(
+            resolve_device_scope(scope, Some("dev-y")),
+            Some(Err(())),
+            "naming another device yields the empty intersection"
+        );
     }
 }
 

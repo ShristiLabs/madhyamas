@@ -896,6 +896,9 @@ pub async fn create_device(
 
 /// Rotate a device's credential: the previous key is deactivated and a
 /// new one is minted. The plaintext key is returned exactly once.
+/// Agent keys are deliberately NOT touched: their binding is
+/// referential (`parent_device_id`), not key material, so agents keep
+/// working across rotation (issue #108).
 pub async fn rotate_device_key(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
@@ -922,8 +925,10 @@ pub async fn rotate_device_key(
     }))
 }
 
-/// Revoke a device: its credentials are deactivated and its status flips
-/// to `revoked`, so subsequent CONNECTs with its key are rejected.
+/// Revoke a device: its credentials are deactivated, its agent keys are
+/// cascaded a revoke (issue #108 — the device is gone, debugging it is
+/// meaningless), and its status flips to `revoked`, so subsequent
+/// CONNECTs with its key are rejected.
 pub async fn revoke_device(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
@@ -941,6 +946,10 @@ pub async fn revoke_device(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     store
+        .revoke_agent_keys_for_device(&device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
         .update_device_status(&device.id, "revoked")
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -953,8 +962,8 @@ pub async fn revoke_device(
     Ok(StatusCode::OK)
 }
 
-/// Delete a device: revokes its credentials (audit `DeviceRevoked`) and
-/// removes the device record.
+/// Delete a device: revokes its credentials and agent keys (audit
+/// `DeviceRevoked`) and removes the device record.
 pub async fn delete_device(
     State(_state): State<Arc<AppState>>,
     Extension(store): Extension<Arc<dyn EnterpriseStore>>,
@@ -969,6 +978,10 @@ pub async fn delete_device(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     store
         .revoke_enrollment_tokens_for_device(&device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .revoke_agent_keys_for_device(&device.id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     store
@@ -1138,6 +1151,284 @@ async fn mint_enrollment_token(
     record.token_prefix = token.chars().take(12).collect();
     store.create_enrollment_token(&record).await?;
     Ok((token, record))
+}
+
+// ============================================================================
+// Device-Derived Agent Key Handlers (issue #108)
+// ============================================================================
+
+/// The issue #107 feature-scope taxonomy agent keys may draw from. A
+/// device-derived agent key is minted with a user-picked subset of these;
+/// anything else (including the user-key `*` wildcard) is rejected —
+/// deny-by-default is the point of the picker.
+pub const AGENT_KEY_TAXONOMY: &[&str] = &[
+    "traffic:read",
+    "traffic:export",
+    "sessions:read",
+    "mocks:read",
+    "mocks:write",
+    "rewrites:read",
+    "rewrites:write",
+    "breakpoints:read",
+    "breakpoints:write",
+    "blocklist:read",
+    "blocklist:write",
+    "throttle:read",
+    "throttle:write",
+    "replay:execute",
+    "config:read",
+    "config:write",
+];
+
+/// One-click scope presets from the minting-flow design (docs/
+/// CREDENTIAL_ONBOARDING.md *Minting flow and agent UX*). Presets are
+/// shortcuts, never the only choice — the request may always add or
+/// remove individual scopes.
+pub const AGENT_KEY_PRESETS: &[(&str, &[&str])] = &[
+    ("read-only-agent", &["traffic:read", "config:read"]),
+    (
+        "intercept-agent",
+        &[
+            "traffic:read",
+            "config:read",
+            "mocks:read",
+            "mocks:write",
+            "rewrites:read",
+            "rewrites:write",
+            "breakpoints:read",
+            "breakpoints:write",
+            "blocklist:read",
+            "blocklist:write",
+            "throttle:read",
+            "throttle:write",
+        ],
+    ),
+];
+
+/// Expand a preset name to its scope list, or `None` when unknown.
+pub fn agent_key_preset_scopes(preset: &str) -> Option<Vec<String>> {
+    AGENT_KEY_PRESETS
+        .iter()
+        .find(|(name, _)| *name == preset)
+        .map(|(_, scopes)| scopes.iter().map(|s| s.to_string()).collect())
+}
+
+/// An agent key row as returned by the devices API — metadata only, no
+/// secret material (the hash never leaves the store; the plaintext was
+/// shown once at mint).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentKey {
+    pub id: String,
+    /// Device this key is scoped to.
+    pub parent_device_id: String,
+    /// Owning user (device owner, denormalized at mint).
+    pub owner_user_id: String,
+    pub name: String,
+    /// Non-secret preview of the `mdy_agent_...` key.
+    pub key_prefix: String,
+    pub scopes: Vec<String>,
+    /// Unix seconds.
+    pub created_at: i64,
+    /// Unix seconds, `None` = never expires.
+    pub expires_at: Option<i64>,
+    /// `active` or `revoked`.
+    pub status: String,
+    /// Unix seconds of the last request made with this key.
+    pub last_used: Option<i64>,
+}
+
+impl From<crate::store::AgentKeyRecord> for AgentKey {
+    fn from(r: crate::store::AgentKeyRecord) -> Self {
+        Self {
+            id: r.id,
+            parent_device_id: r.parent_device_id,
+            owner_user_id: r.owner_user_id,
+            name: r.name,
+            key_prefix: r.key_prefix,
+            scopes: serde_json::from_str(&r.scopes).unwrap_or_default(),
+            created_at: rfc3339_to_unix(&r.created_at),
+            expires_at: r.expires_at.as_deref().and_then(rfc3339_to_unix_opt),
+            status: if r.revoked_at.is_some() {
+                "revoked".to_string()
+            } else {
+                "active".to_string()
+            },
+            last_used: r.last_used_at.as_deref().and_then(rfc3339_to_unix_opt),
+        }
+    }
+}
+
+/// A freshly minted agent key together with its show-once plaintext.
+#[derive(Debug, Serialize)]
+pub struct AgentKeyWithSecret {
+    pub key: AgentKey,
+    /// Plaintext `mdy_agent_...` credential — shown once, never stored.
+    pub secret: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateAgentKeyRequest {
+    /// Optional human label for the device's agent list.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Preset shortcut (`read-only-agent` / `intercept-agent`); unioned
+    /// with `scopes`.
+    #[serde(default)]
+    pub preset: Option<String>,
+    /// Explicit feature scopes from the #107 taxonomy.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    /// Optional expiry in days (> 0).
+    pub expires_in_days: Option<i64>,
+}
+
+/// Validate and collect the effective scope set for a mint request:
+/// preset-expanded ∪ explicit, every entry checked against the taxonomy
+/// (`*` and unknown scopes rejected), at least one scope required.
+/// Returns the deduplicated scope list or the offending scope.
+fn validate_agent_scopes(req: &CreateAgentKeyRequest) -> Result<Vec<String>, String> {
+    let mut scopes: Vec<String> = Vec::new();
+    if let Some(ref preset) = req.preset {
+        match agent_key_preset_scopes(preset) {
+            Some(preset_scopes) => scopes.extend(preset_scopes),
+            None => return Err(format!("unknown preset: {preset}")),
+        }
+    }
+    for scope in &req.scopes {
+        if !AGENT_KEY_TAXONOMY.contains(&scope.as_str()) {
+            return Err(format!(
+                "scope not in the agent-key taxonomy: {scope} \
+                 (allowed: {})",
+                AGENT_KEY_TAXONOMY.join(", ")
+            ));
+        }
+        scopes.push(scope.clone());
+    }
+    // Deduplicate (preset ∪ explicit may overlap) with a stable order.
+    scopes.sort();
+    scopes.dedup();
+    if scopes.is_empty() {
+        return Err("at least one scope is required".to_string());
+    }
+    Ok(scopes)
+}
+
+/// Mint a device-derived agent key (issue #108).
+///
+/// `POST /api/devices/{id}/agent-keys` — JWT-only (the whole `/devices`
+/// surface rejects API keys, so a device key can never self-mint). The
+/// key is **referentially** bound to the device: the row carries
+/// `parent_device_id`, the material is independent random, and rotating
+/// the device key later does not disturb it. Scopes are validated
+/// against the #107 taxonomy (presets are unioned in); expiry is
+/// optional. The plaintext is returned exactly once.
+pub async fn create_agent_key(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+    Path(device_id): Path<String>,
+    Json(req): Json<CreateAgentKeyRequest>,
+) -> Result<Json<AgentKeyWithSecret>, StatusCode> {
+    let device = load_owned_device(&store, &claims, &device_id).await?;
+    if device.status != "active" {
+        return Err(StatusCode::CONFLICT);
+    }
+    let scopes = validate_agent_scopes(&req).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let now = chrono::Utc::now();
+    let expires_at = req
+        .expires_in_days
+        .filter(|d| *d > 0)
+        .map(|d| now + chrono::Duration::days(d));
+    let plaintext = crate::auth::generate_agent_key();
+    let record = crate::store::AgentKeyRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        parent_device_id: device.id.clone(),
+        owner_user_id: device.owner_user_id.clone(),
+        name: req.name.unwrap_or_default().trim().to_string(),
+        key_hash: crate::auth::hash_api_key(&plaintext),
+        key_prefix: plaintext.chars().take(12).collect(),
+        scopes: serde_json::to_string(&scopes).unwrap_or_else(|_| "[]".into()),
+        created_at: now.to_rfc3339(),
+        expires_at: expires_at.map(|t| t.to_rfc3339()),
+        revoked_at: None,
+        last_used_at: None,
+    };
+    store
+        .create_agent_key(&record)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit.log(
+        AuditEvent::new(AuditEventType::ApiKeyCreated, "Agent key minted for device")
+            .with_user(claims.user_id.clone())
+            .with_metadata("parent_device_id", serde_json::json!(device.id))
+            .with_metadata("key_kind", serde_json::json!("agent"))
+            .with_metadata(
+                "key_name",
+                serde_json::json!(if record.name.is_empty() {
+                    agent_key_display_name(&record)
+                } else {
+                    record.name.clone()
+                }),
+            ),
+    );
+    Ok(Json(AgentKeyWithSecret {
+        key: AgentKey::from(record),
+        secret: plaintext,
+    }))
+}
+
+/// Non-secret display label for audit rows when the mint carried no name.
+fn agent_key_display_name(record: &crate::store::AgentKeyRecord) -> String {
+    format!("{}…", record.key_prefix)
+}
+
+/// List a device's agent keys (metadata only).
+pub async fn list_agent_keys(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+    Path(device_id): Path<String>,
+) -> Result<Json<Vec<AgentKey>>, StatusCode> {
+    let device = load_owned_device(&store, &claims, &device_id).await?;
+    let records = store
+        .list_agent_keys(&device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(records.into_iter().map(AgentKey::from).collect()))
+}
+
+/// Revoke one agent key. The parent device, its device key, and sibling
+/// agent keys are untouched — killing one noisy agent must not disturb
+/// the device (docs/CREDENTIAL_ONBOARDING.md security properties).
+pub async fn revoke_agent_key(
+    State(_state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<dyn EnterpriseStore>>,
+    Extension(audit): Extension<Arc<crate::AuditLogger>>,
+    claims: axum::Extension<crate::middleware::AuthUser>,
+    Path((device_id, key_id)): Path<(String, String)>,
+) -> Result<StatusCode, StatusCode> {
+    let device = load_owned_device(&store, &claims, &device_id).await?;
+    // The key must belong to this device — a mismatched pair is a 404,
+    // not a revoke of someone else's key.
+    let records = store
+        .list_agent_keys(&device.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !records.iter().any(|r| r.id == key_id) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    store
+        .revoke_agent_key(&key_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit.log(
+        AuditEvent::new(AuditEventType::ApiKeyRevoked, "Agent key revoked")
+            .with_user(claims.user_id.clone())
+            .with_metadata("parent_device_id", serde_json::json!(device.id))
+            .with_metadata("key_kind", serde_json::json!("agent")),
+    );
+    Ok(StatusCode::OK)
 }
 
 /// Mint and persist a new `mdy_dev_` credential for `device_id`,

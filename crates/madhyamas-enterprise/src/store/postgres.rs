@@ -14,8 +14,8 @@ use sqlx::PgPool;
 
 use super::types::{AuditEventRecord, UserRecord};
 use super::{
-    ApiKeyRecord, AuditEvent, AuditFilter, AuditStats, AuthSession, DeviceKeyRecord, DeviceRecord,
-    EnrollmentTokenRecord, EnterpriseStore, Result, UserUpdate,
+    AgentKeyRecord, ApiKeyRecord, AuditEvent, AuditFilter, AuditStats, AuthSession,
+    DeviceKeyRecord, DeviceRecord, EnrollmentTokenRecord, EnterpriseStore, Result, UserUpdate,
 };
 use crate::user::User;
 
@@ -46,6 +46,7 @@ impl PostgresEnterpriseStore {
         sqlx::query(SCHEMA_DEVICE_ENROLLMENT_TOKENS)
             .execute(&mut *tx)
             .await?;
+        sqlx::query(SCHEMA_AGENT_KEYS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_AUTH_SESSIONS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_AUDIT_EVENTS).execute(&mut *tx).await?;
         sqlx::query(SCHEMA_SECRETS).execute(&mut *tx).await?;
@@ -115,6 +116,22 @@ const SCHEMA_DEVICE_ENROLLMENT_TOKENS: &str =
     expires_at TEXT NOT NULL,
     redeemed_at TEXT,
     revoked_at TEXT
+)";
+
+/// Device-derived agent keys (issue #108) — see the SQLite twin for the
+/// dedicated-table rationale.
+const SCHEMA_AGENT_KEYS: &str = "CREATE TABLE IF NOT EXISTS agent_keys (
+    id TEXT PRIMARY KEY,
+    parent_device_id TEXT NOT NULL,
+    owner_user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    key_hash TEXT UNIQUE NOT NULL,
+    key_prefix TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT,
+    revoked_at TEXT,
+    last_used_at TEXT
 )";
 
 const SCHEMA_AUTH_SESSIONS: &str = "CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -569,6 +586,81 @@ impl EnterpriseStore for PostgresEnterpriseStore {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected())
+    }
+
+    async fn create_agent_key(&self, key: &AgentKeyRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO agent_keys \
+             (id, parent_device_id, owner_user_id, name, key_hash, key_prefix, scopes, \
+              created_at, expires_at, revoked_at, last_used_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        )
+        .bind(&key.id)
+        .bind(&key.parent_device_id)
+        .bind(&key.owner_user_id)
+        .bind(&key.name)
+        .bind(&key.key_hash)
+        .bind(&key.key_prefix)
+        .bind(&key.scopes)
+        .bind(&key.created_at)
+        .bind(&key.expires_at)
+        .bind(&key.revoked_at)
+        .bind(&key.last_used_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn get_agent_key_by_hash(&self, key_hash: &str) -> Result<Option<AgentKeyRecord>> {
+        let row: Option<AgentKeyRecord> =
+            sqlx::query_as::<_, AgentKeyRecord>("SELECT * FROM agent_keys WHERE key_hash = $1")
+                .bind(key_hash)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row)
+    }
+
+    async fn list_agent_keys(&self, parent_device_id: &str) -> Result<Vec<AgentKeyRecord>> {
+        let rows: Vec<AgentKeyRecord> = sqlx::query_as::<_, AgentKeyRecord>(
+            "SELECT * FROM agent_keys WHERE parent_device_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(parent_device_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn revoke_agent_key(&self, id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE agent_keys SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL")
+            .bind(&now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn revoke_agent_keys_for_device(&self, parent_device_id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "UPDATE agent_keys SET revoked_at = $1 \
+             WHERE parent_device_id = $2 AND revoked_at IS NULL",
+        )
+        .bind(&now)
+        .bind(parent_device_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_agent_key_last_used(&self, id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE agent_keys SET last_used_at = $1 WHERE id = $2")
+            .bind(&now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     async fn create_session(&self, session: &AuthSession) -> Result<()> {

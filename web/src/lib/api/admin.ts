@@ -264,6 +264,61 @@ export function createEnrollmentTokenApi(id: string): Promise<DeviceEnrollmentTo
 }
 
 // ============================================================================
+// Device-derived agent keys (enterprise, issue #108)
+// ============================================================================
+
+/** An agent key row as listed on a device — metadata only, never a secret. */
+export interface AgentKeyEntry {
+  id: string
+  parent_device_id: string
+  owner_user_id: string
+  name: string
+  /** Non-secret preview, e.g. "mdy_agent_ab…". */
+  key_prefix: string
+  scopes: string[]
+  /** Unix seconds. */
+  created_at: number
+  /** Unix seconds, null = never expires. */
+  expires_at: number | null
+  /** "active" | "revoked". */
+  status: string
+  /** Unix seconds of the last request made with this key. */
+  last_used: number | null
+}
+
+/** A freshly minted agent key: metadata + the show-once plaintext. */
+export interface AgentKeyWithSecret {
+  key: AgentKeyEntry
+  /** Plaintext mdy_agent_ credential — shown once at mint, never stored. */
+  secret: string
+}
+
+export interface CreateAgentKeyPayload {
+  name?: string
+  /** Preset shortcut: "read-only-agent" | "intercept-agent". */
+  preset?: string
+  /** Explicit feature scopes (unioned with the preset). */
+  scopes?: string[]
+  /** Optional expiry in days (> 0). */
+  expires_in_days?: number
+}
+
+export function listAgentKeysApi(deviceId: string): Promise<AgentKeyEntry[]> {
+  return apiGet<AgentKeyEntry[]>(`/devices/${deviceId}/agent-keys`)
+}
+
+export function createAgentKeyApi(
+  deviceId: string,
+  data: CreateAgentKeyPayload,
+): Promise<AgentKeyWithSecret> {
+  return apiPost<AgentKeyWithSecret>(`/devices/${deviceId}/agent-keys`, data)
+}
+
+export function revokeAgentKeyApi(deviceId: string, keyId: string): Promise<void> {
+  return apiDeleteVoid(`/devices/${deviceId}/agent-keys/${keyId}`)
+}
+
+// ============================================================================
 // Instances
 // ============================================================================
 
