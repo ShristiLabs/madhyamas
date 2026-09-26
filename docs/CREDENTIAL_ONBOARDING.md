@@ -350,21 +350,25 @@ Per path:
    device's entries.
 3. **Modify (interception rules — the real work).** Requires the
    matching feature scope (`mocks:write`, `rewrites:write`,
-   `breakpoints:write`, `blocklist:write`, `throttle:write`). Today's
-   rules (rewrites, mocks, breakpoints, block list —
-   `intercept/rewrite.rs`, `mock.rs`, `block_list.rs`, `breakpoint.rs`)
-   are **global**: they match every request. Device-bound agents require
-   a `device_id` scope on rules and the device context at match time:
-   - Rule model: `device_id: Option<DeviceId>` — `None` = user-global
-     (owner/admin only), `Some(X)` = applies only to device X's requests,
-     visible/editable by X's agents and the owner.
-   - Pipeline context: the pipeline entry points
-     (`proxy/pipeline.rs:199-201, 239, 594`) currently receive only
-     `RequestData` + session. An **attribution context**
-     (`device_id`, `client_addr`, `listener` — the same struct the
-     scoping docs need) must be resolved at CONNECT and flow through to
-     rule matching, so `device_id = Some(X)` rules are skipped for every
-     other device.
+   `breakpoints:write`, `blocklist:write`, `throttle:write`).
+   **Implemented in issue #109** — every rule type (rewrites, mocks,
+   breakpoints, block list, throttle profile) now carries a device
+   scope and the pipeline consults the attribution context at match
+   time:
+   - Rule model: `device_id: Option<String>` — `None` = user-global
+     (owner/admin and plain user keys), `Some(X)` = applies only to
+     device X's requests, visible/editable by X's agents and the owner.
+   - Pipeline context: the attribution context resolved at CONNECT
+     (issue #103) flows into every manager's match method, so
+     `device_id = Some(X)` rules are skipped for every other device
+     (and for unattributed traffic). One shared rule namespace per
+     device: any of the device's agents can edit each other's
+     device-scoped rules, within their feature scopes — per-agent rule
+     ownership was considered and kept out.
+   - Default scoping: an agent key creating a rule without a
+     `device_id` gets its parent device's scope; explicit `null`
+     (global) and foreign devices are rejected (403). Batch toggles,
+     export, import, and recorded-mock promotion obey the same axis.
    - Breakpoints: an agent's breakpoint pauses only device X's matching
      request; other devices flow through unaffected.
    - Audit: every rule mutation records `api_key_id` (which agent) and

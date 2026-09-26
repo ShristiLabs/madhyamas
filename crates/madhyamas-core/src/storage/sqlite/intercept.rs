@@ -29,7 +29,8 @@ const SCHEMA_MOCK_RULES: &str = "CREATE TABLE IF NOT EXISTS mock_rules (
     priority INTEGER NOT NULL DEFAULT 100,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    hit_count INTEGER NOT NULL DEFAULT 0
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    device_id TEXT
 )";
 
 /// Schema for the `rewrite_rules` table.
@@ -42,7 +43,8 @@ const SCHEMA_REWRITE_RULES: &str = "CREATE TABLE IF NOT EXISTS rewrite_rules (
     enabled INTEGER NOT NULL DEFAULT 1,
     priority INTEGER NOT NULL DEFAULT 100,
     created_at INTEGER NOT NULL,
-    hit_count INTEGER NOT NULL DEFAULT 0
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    device_id TEXT
 )";
 
 /// Schema for the `breakpoint_rules` table.
@@ -52,7 +54,8 @@ const SCHEMA_BREAKPOINT_RULES: &str = "CREATE TABLE IF NOT EXISTS breakpoint_rul
     condition TEXT NOT NULL,
     direction TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
-    priority INTEGER NOT NULL DEFAULT 100
+    priority INTEGER NOT NULL DEFAULT 100,
+    device_id TEXT
 )";
 
 /// Schema for the `throttle_profile` table (singleton row, id = 1).
@@ -64,7 +67,8 @@ const SCHEMA_THROTTLE_PROFILE: &str = "CREATE TABLE IF NOT EXISTS throttle_profi
     latency_ms INTEGER NOT NULL,
     jitter_ms INTEGER NOT NULL,
     packet_loss_percent INTEGER NOT NULL,
-    enabled INTEGER NOT NULL DEFAULT 0
+    enabled INTEGER NOT NULL DEFAULT 0,
+    device_id TEXT
 )";
 
 /// Schema for the `block_list_entries` table.
@@ -78,7 +82,8 @@ const SCHEMA_BLOCK_LIST_ENTRIES: &str = "CREATE TABLE IF NOT EXISTS block_list_e
     response_body TEXT NOT NULL DEFAULT 'Blocked by Madhyamas',
     content_type TEXT NOT NULL DEFAULT 'text/plain',
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    device_id TEXT
 )";
 
 /// Indexes for enabled/priority columns used during rule lookup.
@@ -106,6 +111,7 @@ struct MockRuleRow {
     created_at: i64,
     updated_at: i64,
     hit_count: i64,
+    device_id: Option<String>,
 }
 
 /// Row shape for `rewrite_rules`.
@@ -120,6 +126,7 @@ struct RewriteRuleRow {
     priority: i64,
     created_at: i64,
     hit_count: i64,
+    device_id: Option<String>,
 }
 
 /// Row shape for `breakpoint_rules`.
@@ -131,6 +138,7 @@ struct BreakpointRuleRow {
     direction: String,
     enabled: i32,
     priority: i64,
+    device_id: Option<String>,
 }
 
 /// Row shape for `throttle_profile`.
@@ -143,6 +151,7 @@ struct ThrottleProfileRow {
     jitter_ms: i64,
     packet_loss_percent: i32,
     enabled: i32,
+    device_id: Option<String>,
 }
 
 /// Row shape for `block_list_entries`.
@@ -158,6 +167,7 @@ struct BlockListEntryRow {
     content_type: String,
     created_at: i64,
     updated_at: i64,
+    device_id: Option<String>,
 }
 
 /// SQLite-backed intercept rules store.
@@ -178,6 +188,7 @@ impl SqliteInterceptStore {
             .await?;
         sqlx::query(SCHEMA_INDEXES).execute(&pool).await?;
         migrate_mock_rules(&pool).await?;
+        migrate_device_scope_columns(&pool).await?;
         Ok(Self { pool })
     }
 
@@ -199,6 +210,16 @@ const MOCK_RULES_ADDED_COLUMNS: &[(&str, &str)] = &[
     ("description", "TEXT NOT NULL DEFAULT ''"),
     ("tags", "TEXT NOT NULL DEFAULT '[]'"),
     ("collection_id", "TEXT NOT NULL DEFAULT ''"),
+    ("device_id", "TEXT"),
+];
+
+/// Intercept tables that gained the nullable `device_id` scope column
+/// (issue #109). Pre-migration rows read `NULL` → global rules.
+const DEVICE_SCOPED_TABLES: &[&str] = &[
+    "rewrite_rules",
+    "breakpoint_rules",
+    "throttle_profile",
+    "block_list_entries",
 ];
 
 /// Lightweight `mock_rules` migration: `PRAGMA table_info` to inspect the
@@ -222,6 +243,26 @@ async fn migrate_mock_rules(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
+/// Add the nullable `device_id` column (issue #109) to the remaining
+/// intercept tables when upgrading a pre-issue-109 database. Same
+/// `PRAGMA table_info` check as [`migrate_mock_rules`]; fresh databases
+/// already declare the column, so this is a no-op for them.
+async fn migrate_device_scope_columns(pool: &SqlitePool) -> Result<()> {
+    for table in DEVICE_SCOPED_TABLES {
+        let rows: Vec<(String,)> =
+            sqlx::query_as(&format!("SELECT name FROM pragma_table_info('{table}')"))
+                .fetch_all(pool)
+                .await?;
+        let existing: Vec<&str> = rows.iter().map(|(name,)| name.as_str()).collect();
+        if !existing.contains(&"device_id") {
+            sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN device_id TEXT"))
+                .execute(pool)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl InterceptStoreBackend for SqliteInterceptStore {
     async fn save_mock_rule(&self, rule: &MockRule) -> Result<()> {
@@ -233,8 +274,8 @@ impl InterceptStoreBackend for SqliteInterceptStore {
 
         sqlx::query(
             "INSERT OR REPLACE INTO mock_rules \
-             (id, name, description, tags, collection_id, condition, response_config, enabled, priority, created_at, updated_at, hit_count) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, name, description, tags, collection_id, condition, response_config, enabled, priority, created_at, updated_at, hit_count, device_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&rule.id)
         .bind(&rule.name)
@@ -248,6 +289,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
         .bind(rule.created_at.timestamp())
         .bind(rule.updated_at.timestamp())
         .bind(rule.hit_count as i64)
+        .bind(&rule.device_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -256,7 +298,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
     async fn load_mock_rules(&self) -> Result<Vec<MockRule>> {
         let rows: Vec<MockRuleRow> = sqlx::query_as::<_, MockRuleRow>(
             "SELECT id, name, description, tags, collection_id, condition, response_config, \
-             enabled, priority, created_at, updated_at, hit_count \
+             enabled, priority, created_at, updated_at, hit_count, device_id \
              FROM mock_rules ORDER BY priority",
         )
         .fetch_all(&self.pool)
@@ -293,6 +335,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
                 version_history: Vec::new(),
                 response_schema: None,
                 response_script: None,
+                device_id: row.device_id,
             });
         }
         Ok(rules)
@@ -321,8 +364,8 @@ impl InterceptStoreBackend for SqliteInterceptStore {
 
         sqlx::query(
             "INSERT OR REPLACE INTO rewrite_rules \
-             (id, name, condition, direction, rewrites, enabled, priority, created_at, hit_count) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, name, condition, direction, rewrites, enabled, priority, created_at, hit_count, device_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&rule.id)
         .bind(&rule.name)
@@ -333,6 +376,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
         .bind(rule.priority as i64)
         .bind(rule.created_at.timestamp())
         .bind(rule.hit_count as i64)
+        .bind(&rule.device_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -340,7 +384,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
 
     async fn load_rewrite_rules(&self) -> Result<Vec<RewriteRule>> {
         let rows: Vec<RewriteRuleRow> = sqlx::query_as::<_, RewriteRuleRow>(
-            "SELECT id, name, condition, direction, rewrites, enabled, priority, created_at, hit_count \
+            "SELECT id, name, condition, direction, rewrites, enabled, priority, created_at, hit_count, device_id \
              FROM rewrite_rules ORDER BY priority",
         )
         .fetch_all(&self.pool)
@@ -361,6 +405,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
                 priority: row.priority as u32,
                 created_at: parse_timestamp(row.created_at),
                 hit_count: row.hit_count as u64,
+                device_id: row.device_id,
             });
         }
         Ok(rules)
@@ -380,8 +425,8 @@ impl InterceptStoreBackend for SqliteInterceptStore {
 
         sqlx::query(
             "INSERT OR REPLACE INTO breakpoint_rules \
-             (id, name, condition, direction, enabled, priority) \
-             VALUES (?, ?, ?, ?, ?, ?)",
+             (id, name, condition, direction, enabled, priority, device_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&rule.id)
         .bind(&rule.name)
@@ -389,6 +434,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
         .bind(&direction)
         .bind(rule.enabled as i32)
         .bind(rule.priority as i64)
+        .bind(&rule.device_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -396,7 +442,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
 
     async fn load_breakpoint_rules(&self) -> Result<Vec<BreakpointRule>> {
         let rows: Vec<BreakpointRuleRow> = sqlx::query_as::<_, BreakpointRuleRow>(
-            "SELECT id, name, condition, direction, enabled, priority \
+            "SELECT id, name, condition, direction, enabled, priority, device_id \
              FROM breakpoint_rules ORDER BY priority",
         )
         .fetch_all(&self.pool)
@@ -413,6 +459,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
                 direction,
                 enabled: row.enabled != 0,
                 priority: row.priority as u32,
+                device_id: row.device_id,
             });
         }
         Ok(rules)
@@ -429,8 +476,8 @@ impl InterceptStoreBackend for SqliteInterceptStore {
     async fn save_throttle_profile(&self, profile: &ThrottleProfile, enabled: bool) -> Result<()> {
         sqlx::query(
             "INSERT OR REPLACE INTO throttle_profile \
-             (id, name, download_bps, upload_bps, latency_ms, jitter_ms, packet_loss_percent, enabled) \
-             VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
+             (id, name, download_bps, upload_bps, latency_ms, jitter_ms, packet_loss_percent, enabled, device_id) \
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&profile.name)
         .bind(profile.download_bps as i64)
@@ -439,6 +486,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
         .bind(profile.jitter_ms as i64)
         .bind(profile.packet_loss_percent as i32)
         .bind(enabled as i32)
+        .bind(&profile.device_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -446,7 +494,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
 
     async fn load_throttle_profile(&self) -> Result<Option<(ThrottleProfile, bool)>> {
         let row: Option<ThrottleProfileRow> = sqlx::query_as::<_, ThrottleProfileRow>(
-            "SELECT name, download_bps, upload_bps, latency_ms, jitter_ms, packet_loss_percent, enabled \
+            "SELECT name, download_bps, upload_bps, latency_ms, jitter_ms, packet_loss_percent, enabled, device_id \
              FROM throttle_profile WHERE id = 1",
         )
         .fetch_optional(&self.pool)
@@ -461,6 +509,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
                     latency_ms: r.latency_ms as u64,
                     jitter_ms: r.jitter_ms as u64,
                     packet_loss_percent: r.packet_loss_percent as u8,
+                    device_id: r.device_id,
                 },
                 r.enabled != 0,
             )
@@ -471,8 +520,8 @@ impl InterceptStoreBackend for SqliteInterceptStore {
         let note = entry.note.as_deref().unwrap_or("");
         sqlx::query(
             "INSERT OR REPLACE INTO block_list_entries \
-             (id, pattern, note, enabled, hit_count, status_code, response_body, content_type, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, pattern, note, enabled, hit_count, status_code, response_body, content_type, created_at, updated_at, device_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&entry.id)
         .bind(&entry.pattern)
@@ -484,6 +533,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
         .bind(&entry.content_type)
         .bind(entry.created_at.timestamp())
         .bind(entry.updated_at.timestamp())
+        .bind(&entry.device_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -491,7 +541,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
 
     async fn load_block_list_entries(&self) -> Result<Vec<BlockListEntry>> {
         let rows: Vec<BlockListEntryRow> = sqlx::query_as::<_, BlockListEntryRow>(
-            "SELECT id, pattern, note, enabled, hit_count, status_code, response_body, content_type, created_at, updated_at \
+            "SELECT id, pattern, note, enabled, hit_count, status_code, response_body, content_type, created_at, updated_at, device_id \
              FROM block_list_entries ORDER BY created_at",
         )
         .fetch_all(&self.pool)
@@ -514,6 +564,7 @@ impl InterceptStoreBackend for SqliteInterceptStore {
                 content_type: row.content_type,
                 created_at: parse_timestamp(row.created_at),
                 updated_at: parse_timestamp(row.updated_at),
+                device_id: row.device_id,
             });
         }
         Ok(entries)
@@ -622,6 +673,10 @@ impl InterceptStoreBackend for SqliteInterceptStore {
                     latency_ms: obj.get("latency_ms")?.as_u64()?,
                     jitter_ms: obj.get("jitter_ms")?.as_u64()?,
                     packet_loss_percent: obj.get("packet_loss_percent")?.as_u64()? as u8,
+                    device_id: obj
+                        .get("device_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                 };
                 let enabled = obj.get("enabled")?.as_bool()?;
                 Some((profile, enabled))

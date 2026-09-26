@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef } from "react";
+import { DeviceScopeBadge } from "./DeviceScopeBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -805,6 +806,7 @@ export function MocksPanel({ onEditMock }: MocksPanelProps) {
                     {getResponse(mock).status_code}
                   </span>
                   {getResponseTypeBadge(mock)}
+                  <DeviceScopeBadge deviceId={mock.device_id} />
                   {mock.hit_count > 0 && (
                     <span className="text-xs text-muted-foreground flex-shrink-0">
                       ({mock.hit_count} hits)

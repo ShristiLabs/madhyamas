@@ -1,3 +1,4 @@
+import { DeviceScopeBadge } from "./DeviceScopeBadge";
 import { useState, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -467,6 +468,7 @@ export function BlockListPanel() {
                   <span className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300 flex-shrink-0">
                     {entry.status_code}
                   </span>
+                  <DeviceScopeBadge deviceId={entry.device_id} />
                   {entry.hit_count > 0 && (
                     <span className="text-xs text-muted-foreground flex-shrink-0">
                       {entry.hit_count} {entry.hit_count === 1 ? 'hit' : 'hits'}

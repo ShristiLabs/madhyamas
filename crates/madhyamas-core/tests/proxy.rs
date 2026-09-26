@@ -706,3 +706,197 @@ fn test_config_enable_h2_downstream_default_false() {
     let config = ProxyConfig::default();
     assert!(!config.enable_h2_downstream);
 }
+
+// ============================================================================
+// Device-scoped intercept rules through the pipeline (issue #109)
+// ============================================================================
+
+/// The definition-of-done scenario: with one shared rule set, a
+/// `Some(X)`-scoped mock alters only device X's requests while device
+/// Y's identical requests pass untouched to upstream, and a global
+/// (`None`) mock keeps applying to both.
+#[tokio::test]
+async fn device_scoped_mock_alters_only_bound_device_traffic() {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use madhyamas_core::intercept::{MatchCondition, MockManager, MockResponse, MockRule};
+    use madhyamas_test_utils::spawn_mock_server;
+
+    let (upstream_url, _upstream_rx) = spawn_mock_server().await;
+    let upstream_authority = upstream_url
+        .strip_prefix("http://")
+        .unwrap_or(&upstream_url)
+        .to_string();
+
+    // One shared rule set: a scoped mock and a global mock.
+    let mocks = Arc::new(MockManager::new());
+    let mut scoped = MockRule::new(
+        "scoped for device-x".to_string(),
+        MatchCondition::UrlPattern {
+            pattern: format!("{upstream_url}/scoped"),
+        },
+        MockResponse {
+            status_code: 200,
+            body: Some("scoped-mock-body-x".to_string()),
+            ..MockResponse::default()
+        },
+    );
+    scoped.device_id = Some("device-x".to_string());
+    let mut global = MockRule::new(
+        "global mock".to_string(),
+        MatchCondition::UrlPattern {
+            pattern: format!("{upstream_url}/global"),
+        },
+        MockResponse {
+            status_code: 200,
+            body: Some("global-mock-body".to_string()),
+            ..MockResponse::default()
+        },
+    );
+    global.device_id = None;
+    mocks.add_rule(scoped).await;
+    mocks.add_rule(global).await;
+
+    let store = TrafficStore::in_memory().await.expect("in-memory store");
+    let (traffic_tx, _) = tokio::sync::broadcast::channel(16);
+
+    let http_client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("test http client");
+
+    // One pipeline per device attribution, sharing the mock manager —
+    // exactly how the engine builds a per-connection pipeline.
+    let pipeline_for = |device: Option<&str>| {
+        let mut attribution =
+            AttributionContext::new(ListenerKind::Http, Some("127.0.0.1:51531".parse().unwrap()));
+        attribution.device_id = device.map(str::to_string);
+        Pipeline::new(
+            ProxyConfig::default(),
+            http_client.clone(),
+            &*store,
+            &traffic_tx,
+            Some(&mocks),
+            None,
+            None,
+            None,
+            None,
+            #[cfg(feature = "grpc")]
+            None,
+            #[cfg(feature = "scripting")]
+            None,
+            #[cfg(feature = "plugins")]
+            None,
+            None,
+            None,
+            None,
+        )
+        .with_attribution(attribution)
+    };
+
+    async fn send_through(
+        pipeline: Pipeline<'_>,
+        upstream_url: &str,
+        upstream_authority: &str,
+        path: &str,
+    ) {
+        let mut request = RequestData {
+            method: HttpMethod::Get,
+            url: format!("{upstream_url}{path}"),
+            host: upstream_authority.to_string(),
+            path: path.to_string(),
+            headers: HashMap::new(),
+            body: None,
+            content_type: None,
+            http_version: Some("HTTP/1.1".to_string()),
+        };
+        let (mut client_stream, _client_read_side) = tokio::io::duplex(64 * 1024);
+        pipeline
+            .process_request(&mut request, &mut client_stream)
+            .await
+            .expect("process request through pipeline");
+    }
+
+    // Device X: scoped rule hits, global rule hits.
+    send_through(
+        pipeline_for(Some("device-x")),
+        &upstream_url,
+        &upstream_authority,
+        "/scoped",
+    )
+    .await;
+    send_through(
+        pipeline_for(Some("device-x")),
+        &upstream_url,
+        &upstream_authority,
+        "/global",
+    )
+    .await;
+    // Device Y: the scoped rule must be skipped (upstream body "[]").
+    send_through(
+        pipeline_for(Some("device-y")),
+        &upstream_url,
+        &upstream_authority,
+        "/scoped",
+    )
+    .await;
+    send_through(
+        pipeline_for(Some("device-y")),
+        &upstream_url,
+        &upstream_authority,
+        "/global",
+    )
+    .await;
+
+    // Device-attributed entries land in the device's per-device session
+    // (issue #105) — query each device's session.
+    let x_session = store.session_for_device(Some("device-x"), None).await;
+    let y_session = store.session_for_device(Some("device-y"), None).await;
+    let mut entries = store
+        .get_traffic_by_session(&x_session)
+        .await
+        .expect("list device-x entries");
+    entries.extend(
+        store
+            .get_traffic_by_session(&y_session)
+            .await
+            .expect("list device-y entries"),
+    );
+    // Precise per-device assertions via entry device_id.
+    let entry = |device: &str, path: &str| -> &madhyamas_core::traffic::TrafficEntry {
+        entries
+            .iter()
+            .find(|e| e.device_id.as_deref() == Some(device) && e.request.path == path)
+            .unwrap_or_else(|| panic!("no entry for {device} {path}"))
+    };
+    let body = |device: &str, path: &str| -> String {
+        entry(device, path)
+            .response
+            .as_ref()
+            .and_then(|r| r.body.as_ref())
+            .and_then(|b| String::from_utf8(b.clone()).ok())
+            .unwrap_or_default()
+    };
+
+    assert_eq!(
+        body("device-x", "/scoped"),
+        "scoped-mock-body-x",
+        "the bound device's request is mocked"
+    );
+    assert_eq!(
+        body("device-y", "/scoped"),
+        "[]",
+        "device Y's identical request passes untouched to upstream"
+    );
+    assert_eq!(
+        body("device-x", "/global"),
+        "global-mock-body",
+        "global rules keep applying to device traffic"
+    );
+    assert_eq!(
+        body("device-y", "/global"),
+        "global-mock-body",
+        "global rules keep applying to every device"
+    );
+}

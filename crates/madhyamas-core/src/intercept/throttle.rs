@@ -21,6 +21,11 @@ pub struct ThrottleProfile {
     pub jitter_ms: u64,
     /// Packet loss percentage (0-100)
     pub packet_loss_percent: u8,
+    /// Device scope (issue #109): `None` = the profile throttles all
+    /// traffic; `Some(id)` = the profile throttles only requests
+    /// authenticated as that device.
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 impl ThrottleProfile {
@@ -33,6 +38,7 @@ impl ThrottleProfile {
             latency_ms: 0,
             jitter_ms: 0,
             packet_loss_percent: 0,
+            device_id: None,
         }
     }
 
@@ -45,6 +51,7 @@ impl ThrottleProfile {
             latency_ms: 500,
             jitter_ms: 100,
             packet_loss_percent: 2,
+            device_id: None,
         }
     }
 
@@ -57,6 +64,7 @@ impl ThrottleProfile {
             latency_ms: 300,
             jitter_ms: 50,
             packet_loss_percent: 1,
+            device_id: None,
         }
     }
 
@@ -69,6 +77,7 @@ impl ThrottleProfile {
             latency_ms: 100,
             jitter_ms: 20,
             packet_loss_percent: 0,
+            device_id: None,
         }
     }
 
@@ -81,6 +90,7 @@ impl ThrottleProfile {
             latency_ms: 30,
             jitter_ms: 10,
             packet_loss_percent: 0,
+            device_id: None,
         }
     }
 
@@ -93,6 +103,7 @@ impl ThrottleProfile {
             latency_ms: 200,
             jitter_ms: 50,
             packet_loss_percent: 0,
+            device_id: None,
         }
     }
 
@@ -105,6 +116,7 @@ impl ThrottleProfile {
             latency_ms: 600,
             jitter_ms: 100,
             packet_loss_percent: 1,
+            device_id: None,
         }
     }
 
@@ -117,6 +129,7 @@ impl ThrottleProfile {
             latency_ms: 20,
             jitter_ms: 5,
             packet_loss_percent: 0,
+            device_id: None,
         }
     }
 
@@ -129,6 +142,7 @@ impl ThrottleProfile {
             latency_ms,
             jitter_ms: 0,
             packet_loss_percent: 0,
+            device_id: None,
         }
     }
 
@@ -224,9 +238,16 @@ impl ThrottleManager {
         *self.enabled.read()
     }
 
-    /// Apply latency delay
-    pub async fn apply_latency(&self) {
+    /// Apply latency delay.
+    ///
+    /// `device_id` is the connection's device attribution (issue #109): a
+    /// device-scoped profile delays only that device's requests; a global
+    /// profile (`device_id = None`) delays every request.
+    pub async fn apply_latency(&self, device_id: Option<&str>) {
         if !self.is_enabled() {
+            return;
+        }
+        if !super::device_scope_applies(self.profile.read().device_id.as_deref(), device_id) {
             return;
         }
         let delay = self.profile.read().effective_latency();
@@ -475,6 +496,7 @@ mod tests {
                 latency_ms: 100,
                 jitter_ms: 50,
                 packet_loss_percent: 0,
+                device_id: None,
             };
 
             // Check that latency is within expected range (100-150ms)
@@ -623,7 +645,7 @@ mod tests {
             manager.set_profile(ThrottleProfile::satellite()).await; // 600ms latency
 
             let start = std::time::Instant::now();
-            manager.apply_latency().await;
+            manager.apply_latency(None).await;
             let elapsed = start.elapsed();
 
             // Should be near instant when disabled

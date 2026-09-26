@@ -29,6 +29,8 @@ export interface BreakpointRule {
   direction: 'request' | 'response' | 'both';
   enabled: boolean;
   hit_count: number;
+  /** Device scope (enterprise): absent/null = global rule. */
+  device_id?: string | null;
 }
 
 export interface PausedTraffic {
@@ -130,6 +132,8 @@ export interface MockRule {
   version_history: MockRuleVersion[];
   response_schema?: string;
   response_script?: string;
+  /** Device scope (enterprise): absent/null = global rule. */
+  device_id?: string | null;
 }
 
 export interface MockCollection {
@@ -177,6 +181,8 @@ export interface RewriteRule {
   rewrites: RewriteAction[];
   enabled: boolean;
   hit_count: number;
+  /** Device scope (enterprise): absent/null = global rule. */
+  device_id?: string | null;
 }
 
 // Throttle
@@ -187,6 +193,8 @@ export interface ThrottleProfile {
   latency_ms: number;
   jitter_ms: number;
   packet_loss_percent: number;
+  /** Device scope (enterprise): absent/null = throttles all traffic. */
+  device_id?: string | null;
 }
 
 export interface ThrottleConfig {
@@ -872,6 +880,8 @@ export interface BlockListEntry {
   content_type: string;
   created_at: string;
   updated_at: string;
+  /** Device scope (enterprise): absent/null = global entry. */
+  device_id?: string | null;
 }
 
 export interface BlockListStats {

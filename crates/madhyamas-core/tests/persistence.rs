@@ -561,3 +561,246 @@ async fn test_pg_device_attribution_and_filter() {
         .expect("device session row exists");
     assert_eq!(row.name.as_deref(), Some("Device: PG Phone"));
 }
+
+// ── Device-scoped rules (issue #109) ──────────────────────────────────────
+
+/// Every rule type round-trips its device scope through the SQLite
+/// intercept store (`None` = global, `Some(id)` = device-scoped).
+#[tokio::test]
+async fn intercept_rules_roundtrip_device_scope() {
+    use madhyamas_core::intercept::{
+        BlockListEntry, BreakpointRule, InterceptDirection, RewriteAction, RewriteDirection,
+        RewriteRule, ThrottleProfile,
+    };
+
+    let store = SqliteInterceptStore::new(memory_pool().await)
+        .await
+        .unwrap();
+
+    // Mocks: one global, one scoped.
+    let mut scoped_mock = sample_rule();
+    scoped_mock.device_id = Some("device-x".to_string());
+    store.save_mock_rule(&scoped_mock).await.unwrap();
+    store.save_mock_rule(&sample_rule()).await.unwrap();
+    let mocks = store.load_mock_rules().await.unwrap();
+    assert_eq!(mocks.len(), 2);
+    let scoped = mocks
+        .iter()
+        .find(|r| r.device_id.as_deref() == Some("device-x"))
+        .expect("scoped mock must load with its device_id");
+    assert_eq!(scoped.id, scoped_mock.id);
+    assert!(
+        mocks.iter().filter(|r| r.device_id.is_none()).count() >= 1,
+        "global mocks must load with device_id = None"
+    );
+
+    // Rewrites.
+    let mut rewrite = RewriteRule::new(
+        "scoped rewrite".to_string(),
+        MatchCondition::All,
+        RewriteDirection::Request,
+        vec![RewriteAction::SetHeader {
+            name: "X-A".to_string(),
+            value: "b".to_string(),
+        }],
+    );
+    rewrite.device_id = Some("device-y".to_string());
+    store.save_rewrite_rule(&rewrite).await.unwrap();
+    let rewrites = store.load_rewrite_rules().await.unwrap();
+    assert_eq!(rewrites.len(), 1);
+    assert_eq!(rewrites[0].device_id.as_deref(), Some("device-y"));
+
+    // Breakpoints.
+    let mut bp = BreakpointRule::new(
+        "scoped bp".to_string(),
+        MatchCondition::All,
+        InterceptDirection::Request,
+    );
+    bp.device_id = Some("device-x".to_string());
+    store.save_breakpoint_rule(&bp).await.unwrap();
+    let bps = store.load_breakpoint_rules().await.unwrap();
+    assert_eq!(bps.len(), 1);
+    assert_eq!(bps[0].device_id.as_deref(), Some("device-x"));
+
+    // Throttle singleton carries its scope.
+    let mut profile = ThrottleProfile {
+        name: "3G".to_string(),
+        ..ThrottleProfile::three_g()
+    };
+    profile.device_id = Some("device-x".to_string());
+    store.save_throttle_profile(&profile, true).await.unwrap();
+    let (loaded_profile, enabled) = store.load_throttle_profile().await.unwrap().unwrap();
+    assert_eq!(loaded_profile.device_id.as_deref(), Some("device-x"));
+    assert!(enabled);
+
+    // Block list entries.
+    let mut entry = BlockListEntry::new("ads.example.com".to_string());
+    entry.device_id = Some("device-y".to_string());
+    store.save_block_list_entry(&entry).await.unwrap();
+    let entries = store.load_block_list_entries().await.unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].device_id.as_deref(), Some("device-y"));
+
+    // The export bundle carries scopes too (persistence export path).
+    let bundle = store.export_all().await.unwrap();
+    assert!(bundle.contains("device-x"), "export must carry the scope");
+}
+
+/// Build all five intercept tables in their pre-#109 shape (no
+/// `device_id` column) and seed one row each, simulating a database
+/// created before device-scoped rules existed.
+async fn create_pre_device_scope_schema(pool: &sqlx::SqlitePool) {
+    let condition = serde_json::to_string(&sample_rule().condition).unwrap();
+    let response_config = serde_json::to_string(&sample_rule().response_config).unwrap();
+    sqlx::query(
+        "CREATE TABLE mock_rules (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, condition TEXT NOT NULL,
+            response_config TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 100, created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL, hit_count INTEGER NOT NULL DEFAULT 0)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO mock_rules (id, name, condition, response_config, enabled, priority, created_at, updated_at, hit_count) \
+         VALUES ('m-legacy', 'legacy mock', ?, ?, 1, 100, 1700000000, 1700000000, 0)",
+    )
+    .bind(&condition)
+    .bind(&response_config)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE rewrite_rules (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, condition TEXT NOT NULL,
+            direction TEXT NOT NULL, rewrites TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1, priority INTEGER NOT NULL DEFAULT 100,
+            created_at INTEGER NOT NULL, hit_count INTEGER NOT NULL DEFAULT 0)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO rewrite_rules (id, name, condition, direction, rewrites, enabled, priority, created_at, hit_count) \
+         VALUES ('r-legacy', 'legacy rewrite', ?, '\"request\"', '[]', 1, 100, 1700000000, 0)",
+    )
+    .bind(&condition)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE breakpoint_rules (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, condition TEXT NOT NULL,
+            direction TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 100)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO breakpoint_rules (id, name, condition, direction, enabled, priority) \
+         VALUES ('b-legacy', 'legacy bp', ?, '\"request\"', 1, 100)",
+    )
+    .bind(&condition)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE throttle_profile (
+            id INTEGER PRIMARY KEY CHECK (id = 1), name TEXT NOT NULL,
+            download_bps INTEGER NOT NULL, upload_bps INTEGER NOT NULL,
+            latency_ms INTEGER NOT NULL, jitter_ms INTEGER NOT NULL,
+            packet_loss_percent INTEGER NOT NULL, enabled INTEGER NOT NULL DEFAULT 0)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO throttle_profile (id, name, download_bps, upload_bps, latency_ms, jitter_ms, packet_loss_percent, enabled) \
+         VALUES (1, '3G', 1000000, 500000, 100, 20, 0, 1)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE block_list_entries (
+            id TEXT PRIMARY KEY, pattern TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1, hit_count INTEGER NOT NULL DEFAULT 0,
+            status_code INTEGER NOT NULL DEFAULT 403,
+            response_body TEXT NOT NULL DEFAULT 'Blocked by Madhyamas',
+            content_type TEXT NOT NULL DEFAULT 'text/plain',
+            created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_list_entries (id, pattern, note, enabled, hit_count, status_code, response_body, content_type, created_at, updated_at) \
+         VALUES ('bl-legacy', 'ads.example.com', '', 1, 0, 403, 'Blocked by Madhyamas', 'text/plain', 1700000000, 1700000000)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Issue #109 migration: a database created before device-scoped rules
+/// gains the `device_id` column on every intercept table at store init,
+/// and every pre-existing row loads as a global rule (`device_id` =
+/// `None`) — behavior identical to before the upgrade.
+#[tokio::test]
+async fn migrates_pre_device_scope_schema_rows_read_as_global() {
+    let pool = memory_pool().await;
+    create_pre_device_scope_schema(&pool).await;
+
+    // Store init migrates all five tables instead of failing SELECTs.
+    let store = SqliteInterceptStore::new(pool).await.unwrap();
+
+    let mocks = store.load_mock_rules().await.unwrap();
+    assert_eq!(mocks.len(), 1);
+    assert_eq!(mocks[0].device_id, None, "legacy mock reads as global");
+    assert_eq!(mocks[0].id, "m-legacy");
+
+    let rewrites = store.load_rewrite_rules().await.unwrap();
+    assert_eq!(rewrites.len(), 1);
+    assert_eq!(
+        rewrites[0].device_id, None,
+        "legacy rewrite reads as global"
+    );
+
+    let bps = store.load_breakpoint_rules().await.unwrap();
+    assert_eq!(bps.len(), 1);
+    assert_eq!(bps[0].device_id, None, "legacy breakpoint reads as global");
+
+    let (profile, enabled) = store
+        .load_throttle_profile()
+        .await
+        .unwrap()
+        .expect("legacy throttle row must load");
+    assert_eq!(profile.device_id, None, "legacy throttle reads as global");
+    assert!(enabled);
+
+    let entries = store.load_block_list_entries().await.unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].device_id, None,
+        "legacy block entry reads as global"
+    );
+
+    // The columns physically exist: a scoped write after migration works.
+    let mut scoped = sample_rule();
+    scoped.device_id = Some("device-post-migration".to_string());
+    store.save_mock_rule(&scoped).await.unwrap();
+    let mocks = store.load_mock_rules().await.unwrap();
+    assert_eq!(mocks.len(), 2);
+    assert!(
+        mocks
+            .iter()
+            .any(|r| r.device_id.as_deref() == Some("device-post-migration")),
+        "scoped rule written after migration must persist its scope"
+    );
+}

@@ -27,6 +27,11 @@ pub struct BreakpointRule {
     pub enabled: bool,
     /// Order/priority (lower = higher priority)
     pub priority: u32,
+    /// Device scope (issue #109): `None` = user-global rule that pauses any
+    /// matching request; `Some(id)` = the rule pauses only requests
+    /// authenticated as that device (other devices flow through).
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 impl BreakpointRule {
@@ -38,6 +43,7 @@ impl BreakpointRule {
             direction,
             enabled: true,
             priority: 100,
+            device_id: None,
         }
     }
 }
@@ -161,8 +167,16 @@ impl BreakpointManager {
         }
     }
 
-    /// Check if a request should be breakpointed
-    pub fn check_request(&self, request: &RequestData) -> Option<BreakpointRule> {
+    /// Check if a request should be breakpointed.
+    ///
+    /// `device_id` is the connection's device attribution (issue #109): a
+    /// device-scoped rule pauses only that device's matching request; every
+    /// other device (and unattributed traffic) flows through unaffected.
+    pub fn check_request(
+        &self,
+        request: &RequestData,
+        device_id: Option<&str>,
+    ) -> Option<BreakpointRule> {
         let rules = self.rules.read();
         rules
             .iter()
@@ -171,6 +185,7 @@ impl BreakpointManager {
                     && (r.direction == InterceptDirection::Request
                         || r.direction == InterceptDirection::Both)
             })
+            .filter(|r| super::device_scope_applies(r.device_id.as_deref(), device_id))
             .find(|r| {
                 r.condition.matches_request(
                     &request.url,
@@ -183,11 +198,15 @@ impl BreakpointManager {
             .cloned()
     }
 
-    /// Check if a response matches any breakpoint
+    /// Check if a response matches any breakpoint.
+    ///
+    /// `device_id` is the connection's device attribution (issue #109);
+    /// see [`crate::intercept::device_scope_applies`].
     pub fn check_response(
         &self,
         _request: &RequestData,
         response: &ResponseData,
+        device_id: Option<&str>,
     ) -> Option<BreakpointRule> {
         let rules = self.rules.read();
         rules
@@ -197,6 +216,7 @@ impl BreakpointManager {
                     && (r.direction == InterceptDirection::Response
                         || r.direction == InterceptDirection::Both)
             })
+            .filter(|r| super::device_scope_applies(r.device_id.as_deref(), device_id))
             .find(|r| {
                 r.condition.matches_response(
                     response.status_code,

@@ -300,12 +300,18 @@ Minting and revocation reuse `ApiKeyCreated` / `ApiKeyRevoked` with
 `key_kind: "agent"` and `parent_device_id` in the metadata (never key
 material).
 
-### Known limitation (issue #109)
+### Device-scoped intercept rules (issue #109, resolved)
 
 Intercept rules (mocks, rewrites, breakpoints, block list, throttle) are
-**global** today: an agent key with `mocks:write` can create a mock rule
-and the rule applies to every device's traffic. Device-scoped rules and
-pipeline match-time attribution are issue #109.
+no longer implicitly global for agent keys. An agent key creating a rule
+gets its parent device's scope by default (explicit `null`/global and
+foreign devices are rejected with `403`); it sees and mutates only its
+device's rules, while global and other-device rules are hidden (`404`).
+The pipeline consults the attribution context at match time, so a
+`Some(X)` rule only ever affects device X's traffic. Rule mutations are
+audited with the acting `api_key_id` and the rule's device scope. See
+[API_INTERCEPT.md](API_INTERCEPT.md#device-scoped-rules-enterprise) for
+the full endpoint semantics (including the throttle singleton).
 
 ### Proxy auth policy (`require_proxy_auth`)
 

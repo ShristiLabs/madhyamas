@@ -1,3 +1,4 @@
+import { DeviceScopeBadge } from "./DeviceScopeBadge";
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -75,7 +76,10 @@ export function ThrottlePanel() {
   return (
     <div className="p-4 space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Network Throttling</h2>
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          Network Throttling
+          <DeviceScopeBadge deviceId={profile.device_id} />
+        </h2>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">Enable</span>
           <Switch checked={enabled} onCheckedChange={setEnabled} />

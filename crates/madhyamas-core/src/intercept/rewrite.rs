@@ -40,6 +40,11 @@ pub struct RewriteRule {
     pub created_at: DateTime<Utc>,
     /// Number of times this rule has been applied
     pub hit_count: u64,
+    /// Device scope (issue #109): `None` = user-global rule that applies to
+    /// every request; `Some(id)` = the rule only applies to requests
+    /// authenticated as that device.
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 impl RewriteRule {
@@ -59,6 +64,7 @@ impl RewriteRule {
             priority: 100,
             created_at: Utc::now(),
             hit_count: 0,
+            device_id: None,
         }
     }
 }
@@ -196,8 +202,11 @@ impl RewriteManager {
         }
     }
 
-    /// Apply rewrite rules to a request
-    pub fn rewrite_request(&self, request: &mut RequestData) {
+    /// Apply rewrite rules to a request.
+    ///
+    /// `device_id` is the connection's device attribution (issue #109);
+    /// see [`crate::intercept::device_scope_applies`].
+    pub fn rewrite_request(&self, request: &mut RequestData, device_id: Option<&str>) {
         let mut rules = self.rules.write();
 
         for rule in rules.iter_mut() {
@@ -207,6 +216,9 @@ impl RewriteManager {
             if rule.direction != RewriteDirection::Request
                 && rule.direction != RewriteDirection::Both
             {
+                continue;
+            }
+            if !super::device_scope_applies(rule.device_id.as_deref(), device_id) {
                 continue;
             }
 
@@ -228,8 +240,16 @@ impl RewriteManager {
         }
     }
 
-    /// Apply rewrite rules to a response
-    pub fn rewrite_response(&self, _request: &RequestData, response: &mut ResponseData) {
+    /// Apply rewrite rules to a response.
+    ///
+    /// `device_id` is the connection's device attribution (issue #109);
+    /// see [`crate::intercept::device_scope_applies`].
+    pub fn rewrite_response(
+        &self,
+        _request: &RequestData,
+        response: &mut ResponseData,
+        device_id: Option<&str>,
+    ) {
         let mut rules = self.rules.write();
 
         for rule in rules.iter_mut() {
@@ -239,6 +259,9 @@ impl RewriteManager {
             if rule.direction != RewriteDirection::Response
                 && rule.direction != RewriteDirection::Both
             {
+                continue;
+            }
+            if !super::device_scope_applies(rule.device_id.as_deref(), device_id) {
                 continue;
             }
 

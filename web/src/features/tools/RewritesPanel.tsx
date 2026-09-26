@@ -1,3 +1,4 @@
+import { DeviceScopeBadge } from "./DeviceScopeBadge";
 import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -666,6 +667,7 @@ export function RewritesPanel({ onEditRewrite }: RewritesPanelProps) {
               <div className="flex-1 min-w-0 ml-2">
                 <div className="flex items-center gap-2">
                   <span className="font-medium truncate">{rewrite.name}</span>
+                  <DeviceScopeBadge deviceId={rewrite.device_id} />
                   <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300 flex-shrink-0">
                     {rewrite.direction}
                   </span>

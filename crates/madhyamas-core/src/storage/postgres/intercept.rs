@@ -29,7 +29,8 @@ const SCHEMA_MOCK_RULES: &str = "CREATE TABLE IF NOT EXISTS mock_rules (
     priority INTEGER NOT NULL DEFAULT 100,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
-    hit_count BIGINT NOT NULL DEFAULT 0
+    hit_count BIGINT NOT NULL DEFAULT 0,
+    device_id TEXT
 )";
 
 /// Schema for the `rewrite_rules` table.
@@ -42,7 +43,8 @@ const SCHEMA_REWRITE_RULES: &str = "CREATE TABLE IF NOT EXISTS rewrite_rules (
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     priority INTEGER NOT NULL DEFAULT 100,
     created_at BIGINT NOT NULL,
-    hit_count BIGINT NOT NULL DEFAULT 0
+    hit_count BIGINT NOT NULL DEFAULT 0,
+    device_id TEXT
 )";
 
 /// Schema for the `breakpoint_rules` table.
@@ -52,7 +54,8 @@ const SCHEMA_BREAKPOINT_RULES: &str = "CREATE TABLE IF NOT EXISTS breakpoint_rul
     condition TEXT NOT NULL,
     direction TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    priority INTEGER NOT NULL DEFAULT 100
+    priority INTEGER NOT NULL DEFAULT 100,
+    device_id TEXT
 )";
 
 /// Schema for the `throttle_profile` table (singleton row, id = 1).
@@ -64,7 +67,8 @@ const SCHEMA_THROTTLE_PROFILE: &str = "CREATE TABLE IF NOT EXISTS throttle_profi
     latency_ms BIGINT NOT NULL,
     jitter_ms BIGINT NOT NULL,
     packet_loss_percent INTEGER NOT NULL,
-    enabled BOOLEAN NOT NULL DEFAULT FALSE
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    device_id TEXT
 )";
 
 /// Schema for the `block_list_entries` table.
@@ -78,7 +82,8 @@ const SCHEMA_BLOCK_LIST_ENTRIES: &str = "CREATE TABLE IF NOT EXISTS block_list_e
     response_body TEXT NOT NULL DEFAULT 'Blocked by Madhyamas',
     content_type TEXT NOT NULL DEFAULT 'text/plain',
     created_at BIGINT NOT NULL,
-    updated_at BIGINT NOT NULL
+    updated_at BIGINT NOT NULL,
+    device_id TEXT
 )";
 
 /// Indexes for enabled/priority columns used during rule lookup. Each
@@ -108,6 +113,7 @@ struct MockRuleRow {
     created_at: i64,
     updated_at: i64,
     hit_count: i64,
+    device_id: Option<String>,
 }
 
 /// Row shape for `rewrite_rules`.
@@ -122,6 +128,7 @@ struct RewriteRuleRow {
     priority: i64,
     created_at: i64,
     hit_count: i64,
+    device_id: Option<String>,
 }
 
 /// Row shape for `breakpoint_rules`.
@@ -133,6 +140,7 @@ struct BreakpointRuleRow {
     direction: String,
     enabled: bool,
     priority: i64,
+    device_id: Option<String>,
 }
 
 /// Row shape for `throttle_profile`.
@@ -145,6 +153,7 @@ struct ThrottleProfileRow {
     jitter_ms: i64,
     packet_loss_percent: i32,
     enabled: bool,
+    device_id: Option<String>,
 }
 
 /// Row shape for `block_list_entries`.
@@ -160,6 +169,7 @@ struct BlockListEntryRow {
     content_type: String,
     created_at: i64,
     updated_at: i64,
+    device_id: Option<String>,
 }
 
 /// PostgreSQL-backed intercept rules store.
@@ -190,6 +200,7 @@ impl PostgresInterceptStore {
             sqlx::query(stmt).execute(&mut *tx).await?;
         }
         migrate_mock_rules(&mut tx).await?;
+        migrate_device_scope_columns(&mut tx).await?;
         tx.commit().await?;
         Ok(Self { pool })
     }
@@ -209,6 +220,16 @@ const MOCK_RULES_ADDED_COLUMNS: &[(&str, &str)] = &[
     ("description", "TEXT NOT NULL DEFAULT ''"),
     ("tags", "TEXT NOT NULL DEFAULT '[]'"),
     ("collection_id", "TEXT NOT NULL DEFAULT ''"),
+    ("device_id", "TEXT"),
+];
+
+/// Intercept tables that gained the nullable `device_id` scope column
+/// (issue #109). Pre-migration rows read `NULL` → global rules.
+const DEVICE_SCOPED_TABLES: &[&str] = &[
+    "rewrite_rules",
+    "breakpoint_rules",
+    "throttle_profile",
+    "block_list_entries",
 ];
 
 /// Lightweight `mock_rules` migration for existing installs: `ADD COLUMN IF
@@ -218,6 +239,20 @@ async fn migrate_mock_rules(tx: &mut sqlx::PgTransaction<'_>) -> Result<()> {
     for (column, definition) in MOCK_RULES_ADDED_COLUMNS {
         sqlx::query(&format!(
             "ALTER TABLE mock_rules ADD COLUMN IF NOT EXISTS {column} {definition}"
+        ))
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Add the nullable `device_id` column (issue #109) to the remaining
+/// intercept tables when upgrading a pre-issue-109 database. The advisory
+/// lock taken in `new` serializes concurrent store initializations.
+async fn migrate_device_scope_columns(tx: &mut sqlx::PgTransaction<'_>) -> Result<()> {
+    for table in DEVICE_SCOPED_TABLES {
+        sqlx::query(&format!(
+            "ALTER TABLE {table} ADD COLUMN IF NOT EXISTS device_id TEXT"
         ))
         .execute(&mut **tx)
         .await?;
@@ -240,15 +275,15 @@ impl InterceptStoreBackend for PostgresInterceptStore {
 
         sqlx::query(
             "INSERT INTO mock_rules \
-             (id, name, description, tags, collection_id, condition, response_config, enabled, priority, created_at, updated_at, hit_count) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+             (id, name, description, tags, collection_id, condition, response_config, enabled, priority, created_at, updated_at, hit_count, device_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
              ON CONFLICT (id) DO UPDATE SET \
                 name = EXCLUDED.name, description = EXCLUDED.description, \
                 tags = EXCLUDED.tags, collection_id = EXCLUDED.collection_id, \
                 condition = EXCLUDED.condition, response_config = EXCLUDED.response_config, \
                 enabled = EXCLUDED.enabled, priority = EXCLUDED.priority, \
                 created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, \
-                hit_count = EXCLUDED.hit_count",
+                hit_count = EXCLUDED.hit_count, device_id = EXCLUDED.device_id",
         )
         .bind(&rule.id)
         .bind(&rule.name)
@@ -262,6 +297,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
         .bind(rule.created_at.timestamp())
         .bind(rule.updated_at.timestamp())
         .bind(rule.hit_count as i64)
+        .bind(&rule.device_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -270,7 +306,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
     async fn load_mock_rules(&self) -> Result<Vec<MockRule>> {
         let rows: Vec<MockRuleRow> = sqlx::query_as::<_, MockRuleRow>(
             "SELECT id, name, description, tags, collection_id, condition, response_config, \
-             enabled, priority, created_at, updated_at, hit_count \
+             enabled, priority, created_at, updated_at, hit_count, device_id \
              FROM mock_rules ORDER BY priority",
         )
         .fetch_all(&self.pool)
@@ -307,6 +343,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
                 version_history: Vec::new(),
                 response_schema: None,
                 response_script: None,
+                device_id: row.device_id,
             });
         }
         Ok(rules)
@@ -335,13 +372,14 @@ impl InterceptStoreBackend for PostgresInterceptStore {
 
         sqlx::query(
             "INSERT INTO rewrite_rules \
-             (id, name, condition, direction, rewrites, enabled, priority, created_at, hit_count) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+             (id, name, condition, direction, rewrites, enabled, priority, created_at, hit_count, device_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
              ON CONFLICT (id) DO UPDATE SET \
                 name = EXCLUDED.name, condition = EXCLUDED.condition, \
                 direction = EXCLUDED.direction, rewrites = EXCLUDED.rewrites, \
                 enabled = EXCLUDED.enabled, priority = EXCLUDED.priority, \
-                created_at = EXCLUDED.created_at, hit_count = EXCLUDED.hit_count",
+                created_at = EXCLUDED.created_at, hit_count = EXCLUDED.hit_count, \
+                device_id = EXCLUDED.device_id",
         )
         .bind(&rule.id)
         .bind(&rule.name)
@@ -352,6 +390,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
         .bind(rule.priority as i64)
         .bind(rule.created_at.timestamp())
         .bind(rule.hit_count as i64)
+        .bind(&rule.device_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -359,7 +398,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
 
     async fn load_rewrite_rules(&self) -> Result<Vec<RewriteRule>> {
         let rows: Vec<RewriteRuleRow> = sqlx::query_as::<_, RewriteRuleRow>(
-            "SELECT id, name, condition, direction, rewrites, enabled, priority, created_at, hit_count \
+            "SELECT id, name, condition, direction, rewrites, enabled, priority, created_at, hit_count, device_id \
              FROM rewrite_rules ORDER BY priority",
         )
         .fetch_all(&self.pool)
@@ -380,6 +419,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
                 priority: row.priority as u32,
                 created_at: parse_timestamp(row.created_at),
                 hit_count: row.hit_count as u64,
+                device_id: row.device_id,
             });
         }
         Ok(rules)
@@ -399,12 +439,12 @@ impl InterceptStoreBackend for PostgresInterceptStore {
 
         sqlx::query(
             "INSERT INTO breakpoint_rules \
-             (id, name, condition, direction, enabled, priority) \
-             VALUES ($1, $2, $3, $4, $5, $6) \
+             (id, name, condition, direction, enabled, priority, device_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
              ON CONFLICT (id) DO UPDATE SET \
                 name = EXCLUDED.name, condition = EXCLUDED.condition, \
                 direction = EXCLUDED.direction, enabled = EXCLUDED.enabled, \
-                priority = EXCLUDED.priority",
+                priority = EXCLUDED.priority, device_id = EXCLUDED.device_id",
         )
         .bind(&rule.id)
         .bind(&rule.name)
@@ -412,6 +452,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
         .bind(&direction)
         .bind(rule.enabled)
         .bind(rule.priority as i64)
+        .bind(&rule.device_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -419,7 +460,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
 
     async fn load_breakpoint_rules(&self) -> Result<Vec<BreakpointRule>> {
         let rows: Vec<BreakpointRuleRow> = sqlx::query_as::<_, BreakpointRuleRow>(
-            "SELECT id, name, condition, direction, enabled, priority \
+            "SELECT id, name, condition, direction, enabled, priority, device_id \
              FROM breakpoint_rules ORDER BY priority",
         )
         .fetch_all(&self.pool)
@@ -436,6 +477,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
                 direction,
                 enabled: row.enabled,
                 priority: row.priority as u32,
+                device_id: row.device_id,
             });
         }
         Ok(rules)
@@ -452,14 +494,14 @@ impl InterceptStoreBackend for PostgresInterceptStore {
     async fn save_throttle_profile(&self, profile: &ThrottleProfile, enabled: bool) -> Result<()> {
         sqlx::query(
             "INSERT INTO throttle_profile \
-             (id, name, download_bps, upload_bps, latency_ms, jitter_ms, packet_loss_percent, enabled) \
-             VALUES (1, $1, $2, $3, $4, $5, $6, $7) \
+             (id, name, download_bps, upload_bps, latency_ms, jitter_ms, packet_loss_percent, enabled, device_id) \
+             VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8) \
              ON CONFLICT (id) DO UPDATE SET \
                 name = EXCLUDED.name, download_bps = EXCLUDED.download_bps, \
                 upload_bps = EXCLUDED.upload_bps, latency_ms = EXCLUDED.latency_ms, \
                 jitter_ms = EXCLUDED.jitter_ms, \
                 packet_loss_percent = EXCLUDED.packet_loss_percent, \
-                enabled = EXCLUDED.enabled",
+                enabled = EXCLUDED.enabled, device_id = EXCLUDED.device_id",
         )
         .bind(&profile.name)
         .bind(profile.download_bps as i64)
@@ -468,6 +510,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
         .bind(profile.jitter_ms as i64)
         .bind(profile.packet_loss_percent as i32)
         .bind(enabled)
+        .bind(&profile.device_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -475,7 +518,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
 
     async fn load_throttle_profile(&self) -> Result<Option<(ThrottleProfile, bool)>> {
         let row: Option<ThrottleProfileRow> = sqlx::query_as::<_, ThrottleProfileRow>(
-            "SELECT name, download_bps, upload_bps, latency_ms, jitter_ms, packet_loss_percent, enabled \
+            "SELECT name, download_bps, upload_bps, latency_ms, jitter_ms, packet_loss_percent, enabled, device_id \
              FROM throttle_profile WHERE id = 1",
         )
         .fetch_optional(&self.pool)
@@ -490,6 +533,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
                     latency_ms: r.latency_ms as u64,
                     jitter_ms: r.jitter_ms as u64,
                     packet_loss_percent: r.packet_loss_percent as u8,
+                    device_id: r.device_id,
                 },
                 r.enabled,
             )
@@ -500,14 +544,14 @@ impl InterceptStoreBackend for PostgresInterceptStore {
         let note = entry.note.as_deref().unwrap_or("");
         sqlx::query(
             "INSERT INTO block_list_entries \
-             (id, pattern, note, enabled, hit_count, status_code, response_body, content_type, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+             (id, pattern, note, enabled, hit_count, status_code, response_body, content_type, created_at, updated_at, device_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
              ON CONFLICT (id) DO UPDATE SET \
                 pattern = EXCLUDED.pattern, note = EXCLUDED.note, \
                 enabled = EXCLUDED.enabled, hit_count = EXCLUDED.hit_count, \
                 status_code = EXCLUDED.status_code, response_body = EXCLUDED.response_body, \
                 content_type = EXCLUDED.content_type, created_at = EXCLUDED.created_at, \
-                updated_at = EXCLUDED.updated_at",
+                updated_at = EXCLUDED.updated_at, device_id = EXCLUDED.device_id",
         )
         .bind(&entry.id)
         .bind(&entry.pattern)
@@ -519,6 +563,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
         .bind(&entry.content_type)
         .bind(entry.created_at.timestamp())
         .bind(entry.updated_at.timestamp())
+        .bind(&entry.device_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -526,7 +571,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
 
     async fn load_block_list_entries(&self) -> Result<Vec<BlockListEntry>> {
         let rows: Vec<BlockListEntryRow> = sqlx::query_as::<_, BlockListEntryRow>(
-            "SELECT id, pattern, note, enabled, hit_count, status_code, response_body, content_type, created_at, updated_at \
+            "SELECT id, pattern, note, enabled, hit_count, status_code, response_body, content_type, created_at, updated_at, device_id \
              FROM block_list_entries ORDER BY created_at",
         )
         .fetch_all(&self.pool)
@@ -549,6 +594,7 @@ impl InterceptStoreBackend for PostgresInterceptStore {
                 content_type: row.content_type,
                 created_at: parse_timestamp(row.created_at),
                 updated_at: parse_timestamp(row.updated_at),
+                device_id: row.device_id,
             });
         }
         Ok(entries)

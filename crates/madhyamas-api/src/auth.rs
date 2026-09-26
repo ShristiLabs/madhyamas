@@ -133,6 +133,26 @@ pub struct DeviceScope {
     pub device_id: String,
 }
 
+/// Request-extension snapshot of the authenticated principal for
+/// intercept-rule mutations (issue #109). The enterprise auth middleware
+/// inserts it for **every** authenticated principal (JWT web session and
+/// any API key); rule CRUD handlers consume it (via `OptionalExtension`)
+/// to (a) default/force the device scope of created rules and (b) hide
+/// global and other-device rules from device-bound agent keys. In the
+/// OSS tier the extension is absent: no principal context, no
+/// restriction, no audit attribution — identical to pre-issue behavior.
+#[derive(Debug, Clone)]
+pub struct RuleActor {
+    /// Authenticated user (JWT subject or API-key owner).
+    pub user_id: Option<String>,
+    /// API-key record ID when the principal is a key, for audit.
+    pub key_id: Option<String>,
+    /// Parent device when the principal is a device-derived agent key
+    /// (`mdy_agent_...`, issue #108) — the device whose scoped rules this
+    /// actor may read/mutate. `None` for JWT and plain user keys.
+    pub device_id: Option<String>,
+}
+
 /// Whether any granted scope string satisfies the required
 /// `<resource>:<permission>` scope, with `*` wildcards honored on the
 /// granted side (a bare `*` grants everything). A pure-`std` mirror of

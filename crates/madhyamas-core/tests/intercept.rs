@@ -557,7 +557,7 @@ async fn no_caching_template_strips_conditional_request_headers() {
         http_version: None,
     };
 
-    manager.rewrite_request(&mut request);
+    manager.rewrite_request(&mut request, None);
 
     assert!(
         !request.headers.contains_key("If-Modified-Since"),
@@ -611,7 +611,7 @@ async fn no_caching_template_strips_and_sets_response_headers() {
         http_version: None,
     };
 
-    manager.rewrite_response(&request, &mut response);
+    manager.rewrite_response(&request, &mut response, None);
 
     assert!(
         !response.headers.contains_key("ETag"),
@@ -665,7 +665,7 @@ async fn no_caching_template_can_be_disabled() {
         http_version: None,
     };
 
-    manager.rewrite_request(&mut request);
+    manager.rewrite_request(&mut request, None);
 
     assert_eq!(
         request.headers.get("If-None-Match"),
@@ -712,7 +712,7 @@ async fn block_cookies_template_strips_cookie_request_header() {
         http_version: None,
     };
 
-    manager.rewrite_request(&mut request);
+    manager.rewrite_request(&mut request, None);
 
     assert!(
         !request.headers.contains_key("Cookie"),
@@ -757,7 +757,7 @@ async fn block_cookies_template_strips_set_cookie_response_header() {
         http_version: None,
     };
 
-    manager.rewrite_response(&request, &mut response);
+    manager.rewrite_response(&request, &mut response, None);
 
     assert!(
         !response.headers.contains_key("Set-Cookie"),
@@ -787,7 +787,7 @@ async fn block_cookies_template_can_be_disabled() {
         http_version: None,
     };
 
-    manager.rewrite_request(&mut request);
+    manager.rewrite_request(&mut request, None);
 
     assert_eq!(
         request.headers.get("Cookie"),
@@ -821,7 +821,7 @@ async fn both_templates_can_coexist() {
         http_version: None,
     };
 
-    manager.rewrite_request(&mut request);
+    manager.rewrite_request(&mut request, None);
 
     assert!(!request.headers.contains_key("If-None-Match"));
     assert!(!request.headers.contains_key("Cookie"));
@@ -837,3 +837,303 @@ fn templates_generate_unique_ids() {
         "each template instance gets a unique id"
     );
 }
+
+// ============================================================================
+// Device-scoped rules (issue #109)
+// ============================================================================
+
+fn scoped_request(url: &str) -> RequestData {
+    // Derive the host from the URL so block-list host matching sees the
+    // same authority the URL carries.
+    let host = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or("example.com")
+        .to_string();
+    RequestData {
+        method: HttpMethod::Get,
+        url: url.to_string(),
+        host,
+        path: "/page".to_string(),
+        headers: HashMap::new(),
+        body: None,
+        content_type: None,
+        http_version: None,
+    }
+}
+
+#[tokio::test]
+async fn device_scoped_mock_matches_only_bound_device() {
+    use madhyamas_core::intercept::{MockManager, MockResponse, MockRule};
+
+    let manager = MockManager::new();
+    let mut scoped = MockRule::new(
+        "scoped".to_string(),
+        MatchCondition::UrlPattern {
+            pattern: "example.com/scoped".to_string(),
+        },
+        MockResponse {
+            status_code: 200,
+            ..MockResponse::default()
+        },
+    );
+    scoped.device_id = Some("device-x".to_string());
+    let mut global = MockRule::new(
+        "global".to_string(),
+        MatchCondition::UrlPattern {
+            pattern: "example.com/global".to_string(),
+        },
+        MockResponse {
+            status_code: 200,
+            ..MockResponse::default()
+        },
+    );
+    global.device_id = None;
+    manager.add_rule(scoped).await;
+    manager.add_rule(global).await;
+
+    let scoped_req = scoped_request("https://example.com/scoped");
+    let global_req = scoped_request("https://example.com/global");
+
+    // The bound device sees the scoped rule.
+    let hit = manager
+        .find_matching_mock(&scoped_req, Some("device-x"))
+        .expect("device X must match its scoped mock");
+    assert_eq!(hit.name, "scoped");
+    // Another device, and unattributed traffic, flow through untouched.
+    assert!(manager
+        .find_matching_mock(&scoped_req, Some("device-y"))
+        .is_none());
+    assert!(manager.find_matching_mock(&scoped_req, None).is_none());
+
+    // A global rule keeps applying to everyone (pre-#109 behavior).
+    for device in [Some("device-x"), Some("device-y"), None] {
+        let hit = manager
+            .find_matching_mock(&global_req, device)
+            .unwrap_or_else(|| panic!("global mock must match device {device:?}"));
+        assert_eq!(hit.name, "global");
+    }
+}
+
+#[tokio::test]
+async fn device_scoped_rewrite_applies_only_to_bound_device() {
+    use madhyamas_core::intercept::{RewriteAction, RewriteRule};
+
+    let manager = RewriteManager::new();
+    let mut rule = RewriteRule::new(
+        "scoped header".to_string(),
+        MatchCondition::All,
+        RewriteDirection::Request,
+        vec![RewriteAction::SetHeader {
+            name: "X-Device-Scope".to_string(),
+            value: "hit".to_string(),
+        }],
+    );
+    rule.device_id = Some("device-x".to_string());
+    manager.add_rule(rule).await;
+
+    let mut for_x = scoped_request("https://example.com/anywhere");
+    manager.rewrite_request(&mut for_x, Some("device-x"));
+    assert_eq!(
+        for_x.headers.get("X-Device-Scope").map(String::as_str),
+        Some("hit"),
+        "the bound device's request is rewritten"
+    );
+
+    for device in [Some("device-y"), None] {
+        let mut req = scoped_request("https://example.com/anywhere");
+        manager.rewrite_request(&mut req, device);
+        assert!(
+            !req.headers.contains_key("X-Device-Scope"),
+            "device {device:?} must flow through the scoped rewrite untouched"
+        );
+    }
+}
+
+#[tokio::test]
+async fn device_scoped_breakpoint_pauses_only_bound_device() {
+    use madhyamas_core::intercept::{BreakpointManager, BreakpointRule, InterceptDirection};
+
+    let manager = BreakpointManager::new(8);
+    let mut rule = BreakpointRule::new(
+        "scoped bp".to_string(),
+        MatchCondition::All,
+        InterceptDirection::Both,
+    );
+    rule.device_id = Some("device-x".to_string());
+    manager.add_rule(rule).await;
+
+    let req = scoped_request("https://example.com/paused");
+    let mut response = ResponseData {
+        status_code: 200,
+        status_message: None,
+        headers: HashMap::new(),
+        body: None,
+        content_type: None,
+        duration_ms: 0,
+        http_version: None,
+    };
+
+    // The bound device pauses...
+    let hit = manager
+        .check_request(&req, Some("device-x"))
+        .expect("device X's request hits its scoped breakpoint");
+    assert_eq!(hit.name, "scoped bp");
+    manager
+        .check_response(&req, &response, Some("device-x"))
+        .expect("device X's response hits its scoped breakpoint");
+    // ...while every other device flows through in both directions.
+    for device in [Some("device-y"), None] {
+        assert!(
+            manager.check_request(&req, device).is_none(),
+            "device {device:?} must not be paused by a foreign scoped breakpoint"
+        );
+        assert!(manager.check_response(&req, &response, device).is_none());
+    }
+
+    // Sanity on the response mutation so the compiler sees use.
+    response.duration_ms = 0;
+}
+
+#[tokio::test]
+async fn device_scoped_block_list_blocks_only_bound_device() {
+    let manager = BlockListManager::new();
+    let mut entry = BlockListEntry::new("blocked.example.com".to_string());
+    entry.device_id = Some("device-x".to_string());
+    manager.add_entry(entry).await;
+
+    let req = scoped_request("https://blocked.example.com/thing");
+
+    // The bound device is blocked by the scoped entry...
+    let action = manager.evaluate(&req, Some("device-x")).await;
+    match action {
+        InterceptAction::Respond(resp) => assert_eq!(resp.status_code, 403),
+        InterceptAction::Continue => panic!("device X must be blocked, got Continue"),
+        InterceptAction::Abort => panic!("device X must be blocked, got Abort"),
+    }
+    // ...while other devices and unattributed traffic flow through.
+    for device in [Some("device-y"), None] {
+        let action = manager.evaluate(&req, device).await;
+        assert!(
+            matches!(action, InterceptAction::Continue),
+            "device {device:?} must flow through a foreign scoped block entry"
+        );
+    }
+    // The generic trait surface (no device context) also lets it pass —
+    // the pipeline's dedicated branch is the only device-aware path.
+    let mut trait_req = req.clone();
+    let action = InterceptHandler::on_request(&manager, &mut trait_req).await;
+    assert!(matches!(action, InterceptAction::Continue));
+
+    // A global entry keeps blocking everyone.
+    manager
+        .add_entry(BlockListEntry::new("global.example.com".to_string()))
+        .await;
+    let global_req = scoped_request("https://global.example.com/thing");
+    for device in [Some("device-x"), Some("device-y"), None] {
+        let action = manager.evaluate(&global_req, device).await;
+        assert!(
+            matches!(action, InterceptAction::Respond(_)),
+            "global block entry must block device {device:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn throttle_latency_is_gated_by_device_scope() {
+    use madhyamas_core::intercept::{ThrottleManager, ThrottleProfile};
+    use std::time::Duration;
+
+    let manager = ThrottleManager::new();
+    let mut profile = ThrottleProfile {
+        name: "scoped slow".to_string(),
+        latency_ms: 5_000,
+        jitter_ms: 0,
+        ..ThrottleProfile::none()
+    };
+    profile.device_id = Some("device-x".to_string());
+    manager.set_profile(profile).await;
+    manager.set_enabled(true).await;
+
+    // The bound device sleeps (a 5 s latency cannot finish inside 50 ms).
+    let sleeping = manager.apply_latency(Some("device-x"));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), sleeping)
+            .await
+            .is_err(),
+        "the bound device must experience the configured latency"
+    );
+
+    // Every other device (and unattributed traffic) skips the sleep
+    // entirely — the call returns well inside the window.
+    for device in [Some("device-y"), None] {
+        let call = manager.apply_latency(device);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), call)
+                .await
+                .is_ok(),
+            "device {device:?} must not be throttled by a foreign scoped profile"
+        );
+    }
+}
+
+#[test]
+fn rule_json_without_device_id_deserializes_as_global() {
+    // Pre-#109 payloads (no device_id key) keep deserializing with the
+    // field defaulting to None — backward compatibility for stored rules,
+    // exports, and the full-replace update bodies.
+    let mock: MockRuleExisting = serde_json::from_str(
+        r#"{"id":"m1","name":"n","condition":{"type":"all"},
+            "response_config":{"type":"single","response":{"status_code":200}},
+            "enabled":true,"priority":100,
+            "created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00Z","hit_count":0}"#,
+    )
+    .expect("mock without device_id must deserialize");
+    assert_eq!(mock.device_id, None);
+
+    let rewrite: madhyamas_core::intercept::RewriteRule = serde_json::from_str(
+        r#"{"id":"r1","name":"n","condition":{"type":"all"},"direction":"request",
+            "rewrites":[],"enabled":true,"priority":100,
+            "created_at":"2024-01-01T00:00:00Z","hit_count":0}"#,
+    )
+    .expect("rewrite without device_id must deserialize");
+    assert_eq!(rewrite.device_id, None);
+
+    let bp: madhyamas_core::intercept::BreakpointRule = serde_json::from_str(
+        r#"{"id":"b1","name":"n","condition":{"type":"all"},"direction":"request",
+            "enabled":true,"priority":100}"#,
+    )
+    .expect("breakpoint without device_id must deserialize");
+    assert_eq!(bp.device_id, None);
+
+    let block: BlockListEntry = serde_json::from_str(
+        r#"{"id":"bl1","pattern":"example.com","enabled":true,"hit_count":0,
+            "status_code":403,"response_body":"b","content_type":"text/plain"}"#,
+    )
+    .expect("block entry without device_id must deserialize");
+    assert_eq!(block.device_id, None);
+
+    let throttle: madhyamas_core::intercept::ThrottleProfile = serde_json::from_str(
+        r#"{"name":"n","download_bps":0,"upload_bps":0,"latency_ms":0,
+            "jitter_ms":0,"packet_loss_percent":0}"#,
+    )
+    .expect("throttle profile without device_id must deserialize");
+    assert_eq!(throttle.device_id, None);
+
+    // Explicit values survive a round trip.
+    let scoped: madhyamas_core::intercept::RewriteRule = serde_json::from_str(
+        r#"{"id":"r2","name":"n","condition":{"type":"all"},"direction":"request",
+            "rewrites":[],"enabled":true,"priority":100,
+            "created_at":"2024-01-01T00:00:00Z","hit_count":0,
+            "device_id":"device-x"}"#,
+    )
+    .expect("rewrite with device_id must deserialize");
+    assert_eq!(scoped.device_id.as_deref(), Some("device-x"));
+}
+
+/// Local alias so the serde test above reads naturally; MockRule's
+/// timestamps deserialize from epoch integers in stored-rule JSON.
+type MockRuleExisting = madhyamas_core::intercept::MockRule;

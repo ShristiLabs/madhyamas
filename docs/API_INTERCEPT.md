@@ -104,6 +104,64 @@ block list, focus, and replay. Base path: `/api`. See
 
 See [BLOCK_LIST.md](BLOCK_LIST.md) for the feature guide.
 
+## Device-Scoped Rules (Enterprise)
+
+Every rule type above — mock rules, rewrite rules, breakpoint rules, block
+list entries, and the throttle profile — carries an optional
+`device_id` scope (issue #109):
+
+- `device_id: null` (or absent) — **user-global** rule: applies to every
+  request, attributed or not. This is the only kind of rule the OSS tier
+  ever creates, and pre-#109 rules keep exactly this behavior.
+- `device_id: "<device-id>"` — **device-scoped** rule: matches only
+  requests authenticated with that device's key (`mdy_dev_...`). Every
+  other device — and unauthenticated traffic — flows through untouched.
+  A device-scoped breakpoint pauses only the bound device's request.
+
+Create (and rewrite update) bodies accept `device_id`. The rule list
+responses include it. See
+[CREDENTIAL_ONBOARDING.md](CREDENTIAL_ONBOARDING.md) for the
+credential model.
+
+### Default scoping for agent keys
+
+Device-derived agent keys (`mdy_agent_...`, issue #108) are pinned to
+their parent device on the data axis:
+
+| Principal | Create | List / get | Update / delete / toggle |
+|---|---|---|---|
+| Agent key (device X) | omitted `device_id` defaults to **X**; explicit `null` → `403`; foreign device → `403` | X-scoped rules only | X-scoped rules only; global/other-device → `404` |
+| Owner JWT / user API key | any scope (absent = global) | all rules | all rules |
+
+Batch toggles apply to the agent's own rules only (foreign/global IDs
+report as `not_found`). `GET /mocks/export` exports only the agent's
+rules; `POST /mocks/import` and recorded-mock promotion land every rule
+in the agent's device namespace. Mock hit analytics (`/mocks/analytics`,
+per-rule stats/history) are filtered the same way, and clearing hit
+history across all rules is owner/JWT-only. The capability axis from
+issue #107 (which rule *types* a key may touch) applies unchanged on top.
+
+**Update semantics:** full-replace updates (`PUT /mocks/{id}`,
+`PUT /blocklist/{id}`) cannot *clear* a device scope — an absent or
+`null` `device_id` in the body preserves the existing scope, and agents
+are pinned to their parent device regardless. To globalize a scoped mock
+or block-list entry the owner recreates it; rewrite rules (whose update
+request carries the tri-state `device_id` field) can change scope freely.
+
+Mock collections remain global grouping objects; an agent key cannot
+toggle a collection or delete one with `delete_rules: true` (both would
+flip/delete member rules across scopes) — it deletes rules individually.
+
+### Throttle singleton semantics
+
+The throttle profile is a single active row shared by all scopes.
+Setting a profile **replaces** whatever profile was active — global
+included; the owner can re-set a global profile at any time. An agent
+key always writes its parent-device scope, sees the profile only when it
+is scoped to its device (otherwise a `None` profile / disabled), and
+`POST /throttle/enabled` is `403` for an agent while the active profile
+is global (toggling it would mutate a rule the agent cannot see).
+
 ## Focus
 
 Focus hosts are a visual emphasis feature (not a filter). See [FOCUS.md](FOCUS.md).

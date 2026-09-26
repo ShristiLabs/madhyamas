@@ -78,6 +78,11 @@ pub struct BlockListEntry {
     /// When the entry was last modified.
     #[serde(default = "Utc::now")]
     pub updated_at: DateTime<Utc>,
+    /// Device scope (issue #109): `None` = user-global entry that blocks
+    /// every matching request; `Some(id)` = the entry blocks only requests
+    /// authenticated as that device.
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -111,6 +116,7 @@ impl BlockListEntry {
             content_type: default_content_type(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            device_id: None,
         }
     }
 
@@ -399,13 +405,62 @@ impl BlockListManager {
     // ── Matching ───────────────────────────────────────────────────
 
     /// Find the first enabled entry whose pattern matches the given host.
-    /// Returns a clone of the matching entry, if any.
-    fn find_matching(&self, host: &str) -> Option<BlockListEntry> {
+    ///
+    /// `device_id` is the connection's device attribution (issue #109);
+    /// see [`crate::intercept::device_scope_applies`].
+    fn find_matching(&self, host: &str, device_id: Option<&str>) -> Option<BlockListEntry> {
         self.entries
             .read()
             .iter()
-            .find(|e| e.enabled && matches_pattern(&e.pattern, host))
+            .find(|e| {
+                e.enabled
+                    && super::device_scope_applies(e.device_id.as_deref(), device_id)
+                    && matches_pattern(&e.pattern, host)
+            })
             .cloned()
+    }
+
+    /// Evaluate a request against the block list with the connection's
+    /// device attribution (issue #109). Returns
+    /// [`InterceptAction::Respond`](super::InterceptAction::Respond) with
+    /// the block response when an entry matches, `Continue` otherwise.
+    ///
+    /// This is the dedicated pipeline path; the [`InterceptHandler`]
+    /// implementation delegates here with an unattributed context.
+    pub async fn evaluate(
+        &self,
+        request: &RequestData,
+        device_id: Option<&str>,
+    ) -> InterceptAction {
+        if let Some(entry) = self.find_matching(&request.host, device_id) {
+            tracing::debug!(
+                "Block list matched: pattern={} host={} url={}",
+                entry.pattern,
+                request.host,
+                request.url
+            );
+            // Increment hit count after cloning the entry (the write
+            // lock is acquired separately to avoid holding two locks).
+            self.increment_hit_count(&entry.id).await;
+
+            let mut headers = std::collections::HashMap::new();
+            headers.insert("Content-Type".to_string(), entry.content_type.clone());
+            headers.insert(
+                "X-Blocked-By".to_string(),
+                format!("madhyamas-block-list:{}", entry.pattern),
+            );
+
+            return InterceptAction::Respond(ResponseData {
+                status_code: entry.status_code,
+                status_message: Some(block_status_message(entry.status_code)),
+                headers,
+                body: Some(entry.response_body.into_bytes()),
+                content_type: Some(entry.content_type),
+                duration_ms: 0,
+                http_version: None,
+            });
+        }
+        InterceptAction::Continue
     }
 
     /// Increment the hit count of the entry with the given ID. Called
@@ -461,35 +516,11 @@ impl InterceptHandler for BlockListManager {
     }
 
     async fn on_request(&self, request: &mut RequestData) -> InterceptAction {
-        if let Some(entry) = self.find_matching(&request.host) {
-            tracing::debug!(
-                "Block list matched: pattern={} host={} url={}",
-                entry.pattern,
-                request.host,
-                request.url
-            );
-            // Increment hit count after cloning the entry (the write
-            // lock is acquired separately to avoid holding two locks).
-            self.increment_hit_count(&entry.id).await;
-
-            let mut headers = std::collections::HashMap::new();
-            headers.insert("Content-Type".to_string(), entry.content_type.clone());
-            headers.insert(
-                "X-Blocked-By".to_string(),
-                format!("madhyamas-block-list:{}", entry.pattern),
-            );
-
-            return InterceptAction::Respond(ResponseData {
-                status_code: entry.status_code,
-                status_message: Some(block_status_message(entry.status_code)),
-                headers,
-                body: Some(entry.response_body.into_bytes()),
-                content_type: Some(entry.content_type),
-                duration_ms: 0,
-                http_version: None,
-            });
-        }
-        InterceptAction::Continue
+        // The generic handler surface carries no device attribution, so
+        // device-scoped entries never fire here (global entries do). The
+        // pipeline's dedicated block-list branch calls [`Self::evaluate`]
+        // with the connection's attribution instead (issue #109).
+        self.evaluate(request, None).await
     }
 }
 

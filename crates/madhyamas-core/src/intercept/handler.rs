@@ -102,7 +102,9 @@ impl InterceptHandler for RewriteManager {
     }
 
     async fn on_request(&self, request: &mut RequestData) -> InterceptAction {
-        self.rewrite_request(request);
+        // Generic handler surface carries no device attribution (issue
+        // #109); device-scoped rules never fire through it.
+        self.rewrite_request(request, None);
         InterceptAction::Continue
     }
 
@@ -111,7 +113,7 @@ impl InterceptHandler for RewriteManager {
         request: &RequestData,
         response: &mut ResponseData,
     ) -> InterceptAction {
-        self.rewrite_response(request, response);
+        self.rewrite_response(request, response, None);
         InterceptAction::Continue
     }
 }
@@ -129,7 +131,9 @@ impl InterceptHandler for MockManager {
     }
 
     async fn on_request(&self, request: &mut RequestData) -> InterceptAction {
-        if let Some(mock) = self.find_matching_mock(request) {
+        // Generic handler surface carries no device attribution (issue
+        // #109); device-scoped rules never fire through it.
+        if let Some(mock) = self.find_matching_mock(request, None) {
             tracing::debug!("Mock matched: {} for {}", mock.name, request.url);
             // Build the mock response (honors configured delay).
             let response = build_mock_response(&mock.response()).await;
@@ -152,7 +156,9 @@ impl InterceptHandler for BreakpointManager {
     }
 
     async fn on_request(&self, request: &mut RequestData) -> InterceptAction {
-        if let Some(rule) = self.check_request(request) {
+        // Generic handler surface carries no device attribution (issue
+        // #109); device-scoped rules never fire through it.
+        if let Some(rule) = self.check_request(request, None) {
             tracing::debug!("Breakpoint hit: {} for {}", rule.name, request.url);
             // The pipeline creates the traffic entry before invoking
             // handlers, so we use a synthetic entry id here. The real
@@ -182,7 +188,9 @@ impl InterceptHandler for BreakpointManager {
         request: &RequestData,
         response: &mut ResponseData,
     ) -> InterceptAction {
-        if let Some(rule) = self.check_response(request, response) {
+        // Generic handler surface carries no device attribution (issue
+        // #109); device-scoped rules never fire through it.
+        if let Some(rule) = self.check_response(request, response, None) {
             tracing::debug!(
                 "Breakpoint hit on response: {} for {}",
                 rule.name,
@@ -217,7 +225,9 @@ impl InterceptHandler for ThrottleManager {
     }
 
     async fn on_request(&self, _request: &mut RequestData) -> InterceptAction {
-        self.apply_latency().await;
+        // Generic handler surface carries no device attribution (issue
+        // #109); a device-scoped profile never fires through it.
+        self.apply_latency(None).await;
         InterceptAction::Continue
     }
 }

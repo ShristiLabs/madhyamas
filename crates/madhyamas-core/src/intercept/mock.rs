@@ -73,6 +73,11 @@ pub struct MockRule {
     /// Script to execute for dynamic response generation
     #[serde(default)]
     pub response_script: Option<String>,
+    /// Device scope (issue #109): `None` = user-global rule that applies to
+    /// every request; `Some(id)` = the rule only matches requests
+    /// authenticated as that device.
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 fn default_version() -> u32 {
@@ -289,6 +294,7 @@ impl MockRule {
             version_history: Vec::new(),
             response_schema: None,
             response_script: None,
+            device_id: None,
         }
     }
 
@@ -316,6 +322,7 @@ impl MockRule {
             version_history: Vec::new(),
             response_schema: None,
             response_script: None,
+            device_id: None,
         }
     }
 
@@ -894,14 +901,25 @@ impl MockManager {
 
     // ==================== Matching & Response Selection ====================
 
-    /// Check if a request matches any mock rule and get the response
-    pub fn find_matching_mock(&self, request: &RequestData) -> Option<MockRule> {
+    /// Check if a request matches any mock rule and get the response.
+    ///
+    /// `device_id` is the connection's device attribution (issue #109):
+    /// global rules (`device_id = None`) match every request, while rules
+    /// scoped to a device match only that device's traffic. The scope
+    /// check is a cheap `Option` comparison per rule, evaluated before
+    /// any condition matching.
+    pub fn find_matching_mock(
+        &self,
+        request: &RequestData,
+        device_id: Option<&str>,
+    ) -> Option<MockRule> {
         let mut rules = self.rules.write();
 
         // Filter enabled, non-expired rules that match
         let matching = rules
             .iter_mut()
             .filter(|r| r.enabled && !r.is_expired())
+            .filter(|r| super::device_scope_applies(r.device_id.as_deref(), device_id))
             .filter(|r| {
                 // Check if collection is enabled
                 if let Some(collection_id) = &r.collection_id {
@@ -1123,9 +1141,19 @@ impl MockManager {
         self.recorded_mocks.write().clear();
     }
 
-    /// Promote recorded mocks to active rules
-    pub fn promote_recorded_mocks(&self) -> usize {
-        let recorded = self.recorded_mocks.write().drain(..).collect::<Vec<_>>();
+    /// Promote recorded mocks to active rules.
+    ///
+    /// `device_scope` (issue #109) is the forced device scope applied to
+    /// every promoted rule — agent-key principals promote into their
+    /// parent device's namespace. `None` promotes with each rule's own
+    /// scope unchanged.
+    pub fn promote_recorded_mocks(&self, device_scope: Option<String>) -> usize {
+        let mut recorded = self.recorded_mocks.write().drain(..).collect::<Vec<_>>();
+        for rule in recorded.iter_mut() {
+            if let Some(ref scope) = device_scope {
+                rule.device_id = Some(scope.clone());
+            }
+        }
         let count = recorded.len();
         self.rules.write().extend(recorded);
         count
@@ -1150,8 +1178,16 @@ impl MockManager {
         self.rules.read().clone()
     }
 
-    /// Import from HAR format
-    pub fn import_from_har(&self, har_json: &str) -> Result<usize, String> {
+    /// Import from HAR format.
+    ///
+    /// `device_scope` (issue #109) forces the scope of every imported
+    /// rule (agent-key principals import into their parent device's
+    /// namespace); `None` imports global rules.
+    pub fn import_from_har(
+        &self,
+        har_json: &str,
+        device_scope: Option<String>,
+    ) -> Result<usize, String> {
         let har: serde_json::Value =
             serde_json::from_str(har_json).map_err(|e| format!("Invalid HAR JSON: {}", e))?;
 
@@ -1192,7 +1228,7 @@ impl MockManager {
                     .and_then(|t| t.as_str())
                     .map(|s| s.to_string());
 
-                let mock = MockRule::new(
+                let mut mock = MockRule::new(
                     format!("HAR: {} {}", method, url),
                     MatchCondition::And {
                         conditions: vec![
@@ -1211,6 +1247,7 @@ impl MockManager {
                         ..Default::default()
                     },
                 );
+                mock.device_id = device_scope.clone();
 
                 self.rules.write().push(mock);
                 count += 1;
@@ -1220,8 +1257,15 @@ impl MockManager {
         Ok(count)
     }
 
-    /// Import from OpenAPI/Swagger format
-    pub fn import_from_openapi(&self, openapi_json: &str) -> Result<usize, String> {
+    /// Import from OpenAPI/Swagger format.
+    ///
+    /// `device_scope` (issue #109) forces the scope of every imported
+    /// rule; `None` imports global rules.
+    pub fn import_from_openapi(
+        &self,
+        openapi_json: &str,
+        device_scope: Option<String>,
+    ) -> Result<usize, String> {
         let spec: serde_json::Value = serde_json::from_str(openapi_json)
             .map_err(|e| format!("Invalid OpenAPI JSON: {}", e))?;
 
@@ -1246,7 +1290,7 @@ impl MockManager {
                                 .and_then(|j| j.get("example"))
                                 .map(|e| serde_json::to_string_pretty(e).unwrap_or_default());
 
-                            let mock = MockRule::new(
+                            let mut mock = MockRule::new(
                                 format!(
                                     "OpenAPI: {} {} -> {}",
                                     method.to_uppercase(),
@@ -1275,6 +1319,7 @@ impl MockManager {
                                     ..Default::default()
                                 },
                             );
+                            mock.device_id = device_scope.clone();
 
                             self.rules.write().push(mock);
                             count += 1;
@@ -1287,8 +1332,15 @@ impl MockManager {
         Ok(count)
     }
 
-    /// Import from Postman collection format
-    pub fn import_from_postman(&self, postman_json: &str) -> Result<usize, String> {
+    /// Import from Postman collection format.
+    ///
+    /// `device_scope` (issue #109) forces the scope of every imported
+    /// rule; `None` imports global rules.
+    pub fn import_from_postman(
+        &self,
+        postman_json: &str,
+        device_scope: Option<String>,
+    ) -> Result<usize, String> {
         let collection: serde_json::Value = serde_json::from_str(postman_json)
             .map_err(|e| format!("Invalid Postman JSON: {}", e))?;
 
@@ -1298,18 +1350,22 @@ impl MockManager {
             .ok_or("Invalid Postman structure: missing item array")?;
 
         let mut count = 0;
-        count += self.import_postman_items(items)?;
+        count += self.import_postman_items(items, &device_scope)?;
 
         Ok(count)
     }
 
-    fn import_postman_items(&self, items: &[serde_json::Value]) -> Result<usize, String> {
+    fn import_postman_items(
+        &self,
+        items: &[serde_json::Value],
+        device_scope: &Option<String>,
+    ) -> Result<usize, String> {
         let mut count = 0;
 
         for item in items {
             // Handle nested folders
             if let Some(nested_items) = item.get("item").and_then(|i| i.as_array()) {
-                count += self.import_postman_items(nested_items)?;
+                count += self.import_postman_items(nested_items, device_scope)?;
                 continue;
             }
 
@@ -1355,7 +1411,7 @@ impl MockManager {
                         (200, None)
                     };
 
-                let mock = MockRule::new(
+                let mut mock = MockRule::new(
                     format!("Postman: {}", name),
                     MatchCondition::And {
                         conditions: vec![
@@ -1377,6 +1433,7 @@ impl MockManager {
                         ..Default::default()
                     },
                 );
+                mock.device_id = device_scope.clone();
 
                 self.rules.write().push(mock);
                 count += 1;

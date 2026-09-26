@@ -1,3 +1,4 @@
+import { DeviceScopeBadge } from "./DeviceScopeBadge";
 import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -301,6 +302,7 @@ export function BreakpointsPanel() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="font-medium truncate">{bp.name}</span>
+                  <DeviceScopeBadge deviceId={bp.device_id} />
                   <span className="text-xs px-2 py-0.5 rounded bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300 flex-shrink-0">
                     {bp.direction}
                   </span>

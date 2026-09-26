@@ -431,6 +431,17 @@ pub async fn auth_middleware(
                             device_id: device_id.clone(),
                         });
                 }
+                // Principal snapshot for intercept-rule mutations
+                // (issue #109): every key principal carries user + key id
+                // (+ parent device for agent keys) so rule CRUD handlers
+                // can enforce the device axis and attribute audit events.
+                request
+                    .extensions_mut()
+                    .insert(madhyamas_api::auth::RuleActor {
+                        user_id: Some(api_key_auth.user_id.clone()),
+                        key_id: Some(api_key_auth.key_id.clone()),
+                        device_id: api_key_auth.device_id.clone(),
+                    });
                 // Audit key logins only on the /auth surface: since issue
                 // #107 the middleware covers the whole /api nest, and
                 // polling routes (traffic, mocks, ...) would otherwise
@@ -514,6 +525,15 @@ pub async fn auth_middleware(
                 key_id: None,
                 device_id: None,
             };
+            // Principal snapshot for intercept-rule mutations
+            // (issue #109): JWT principals manage every rule scope.
+            request
+                .extensions_mut()
+                .insert(madhyamas_api::auth::RuleActor {
+                    user_id: Some(auth_user.user_id.clone()),
+                    key_id: None,
+                    device_id: None,
+                });
             request.extensions_mut().insert(auth_user);
             next.run(request).await
         }

@@ -64,6 +64,40 @@ flowchart LR
 | 30 | Breakpoints | `intercept/handler.rs:143` | Checks for a matching rule; if found, pauses and waits for a user decision, then converts it to an action | Checks for a matching rule on the response; pauses and waits if matched |
 | 40 | Throttle | `intercept/handler.rs:208` | Calls `apply_latency().await` to sleep for the configured latency; returns `Continue` | (no-op) |
 
+## Match-Time Device Context (issue #109)
+
+Every rule carries an optional device scope
+(`device_id: Option<String>` on `MockRule`, `RewriteRule`,
+`BreakpointRule`, `BlockListEntry`, and `ThrottleProfile`):
+
+- `None` — user-global rule, applies to **all** traffic (attributed or
+  not). The OSS tier only ever has `None` rules, so this is exactly the
+  pre-#109 behavior.
+- `Some(X)` — device-scoped rule, applies **only** to requests whose
+  connection was authenticated with device X's key (the attribution
+  context resolved at CONNECT since issue #103).
+
+The `Pipeline` holds the connection's `AttributionContext` and passes
+`attribution.device_id` into each manager's match method
+(`BlockListManager::evaluate`, `rewrite_request`/`rewrite_response`,
+`find_matching_mock`, `check_request`/`check_response`,
+`apply_latency`). Each rule is gated by the shared predicate
+`intercept::device_scope_applies(rule_device, request_device)` — a
+cheap `Option` comparison evaluated before any condition matching, so
+the hot path gains no lookups:
+
+| Rule scope | Request device | Applies? |
+|---|---|---|
+| `None` | any (including none) | yes |
+| `Some(X)` | `Some(X)` | yes |
+| `Some(X)` | `Some(Y)` / `None` | no — skipped |
+
+A device-scoped breakpoint therefore pauses only the bound device's
+matching request; every other device flows through unaffected. The
+generic `InterceptHandler` trait surface carries no device attribution
+and conservatively evaluates with `None` (device-scoped rules never fire
+there); the pipeline's dedicated branches are the production path.
+
 ## Full Request/Response Flow
 
 The pipeline in `proxy/pipeline.rs` invokes handlers directly (not via a generic

@@ -157,15 +157,20 @@ governs only the global current session used by unattributed capture).
 ## Intercept Store (`storage/sqlite/intercept.rs`)
 
 Stores the five intercept rule types plus the throttle profile. Each rule table
-includes `enabled`, `priority`, `hit_count`, and timestamps.
+includes `enabled`, `priority`, `hit_count`, timestamps, and — since issue
+#109 — a nullable `device_id` scope column (`NULL` = user-global rule; a
+device ID = the rule matches only that device's attributed traffic). Both
+backends add the column via startup migration (SQLite `PRAGMA table_info` +
+`ALTER TABLE`; PostgreSQL `ADD COLUMN IF NOT EXISTS` under the advisory
+lock), so pre-#109 rows keep their global behavior.
 
 | Table | Key columns | Notes |
 |-------|-------------|-------|
-| `mock_rules` | `id`, `name`, `condition` (JSON), `response_config` (JSON), `enabled`, `priority`, `hit_count`, `collection_id`, `tags` | Indexes on `enabled` and `priority`; schema migration for old 8-column format |
-| `rewrite_rules` | `id`, `name`, `condition` (JSON), `direction` (JSON), `rewrites` (JSON), `enabled`, `priority`, `hit_count` | Indexes on `enabled` and `priority` |
-| `breakpoint_rules` | `id`, `name`, `condition` (JSON), `direction` (JSON), `enabled`, `priority` | Index on `enabled` |
-| `throttle_profile` | `id` (single-row, `CHECK (id = 1)`), `download_bps`, `upload_bps`, `latency_ms`, `jitter_ms`, `packet_loss_percent`, `enabled` | Singleton row |
-| `block_list_entries` | `id`, `pattern`, `note`, `enabled`, `hit_count`, `status_code`, `response_body`, `content_type` | Index on `enabled` |
+| `mock_rules` | `id`, `name`, `condition` (JSON), `response_config` (JSON), `enabled`, `priority`, `hit_count`, `collection_id`, `tags`, `device_id` | Indexes on `enabled` and `priority`; schema migration for old 8-column format |
+| `rewrite_rules` | `id`, `name`, `condition` (JSON), `direction` (JSON), `rewrites` (JSON), `enabled`, `priority`, `hit_count`, `device_id` | Indexes on `enabled` and `priority` |
+| `breakpoint_rules` | `id`, `name`, `condition` (JSON), `direction` (JSON), `enabled`, `priority`, `device_id` | Index on `enabled` |
+| `throttle_profile` | `id` (single-row, `CHECK (id = 1)`), `download_bps`, `upload_bps`, `latency_ms`, `jitter_ms`, `packet_loss_percent`, `enabled`, `device_id` | Singleton row; `device_id` scopes the throttle to one device's traffic |
+| `block_list_entries` | `id`, `pattern`, `note`, `enabled`, `hit_count`, `status_code`, `response_body`, `content_type`, `device_id` | Index on `enabled` |
 
 `export_all()` and `import_all()` serialize all rules to/from a single JSON
 bundle (exposed via `/api/persistence/export` and `/api/persistence/import`).

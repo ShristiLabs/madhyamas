@@ -414,9 +414,12 @@ impl<'a> Pipeline<'a> {
 
         // Check block list (priority 5 — before rewrites, mocks, breakpoints).
         // A blocked request is short-circuited immediately without forwarding
-        // upstream or running any other intercept handlers.
+        // upstream or running any other intercept handlers. Device-scoped
+        // entries block only the matching device's requests (issue #109).
         if let Some(block_list_manager) = self.block_list_manager {
-            let action = block_list_manager.on_request(request_data).await;
+            let action = block_list_manager
+                .evaluate(request_data, self.attribution.device_id.as_deref())
+                .await;
             if let InterceptAction::Respond(response) = action {
                 debug!(
                     "Request blocked by block list: {} for {}",
@@ -461,7 +464,7 @@ impl<'a> Pipeline<'a> {
 
         // Apply rewrite rules to request
         if let Some(rewrite_manager) = self.rewrite_manager {
-            rewrite_manager.rewrite_request(request_data);
+            rewrite_manager.rewrite_request(request_data, self.attribution.device_id.as_deref());
         }
 
         // Run script and plugin request hooks
@@ -527,7 +530,9 @@ impl<'a> Pipeline<'a> {
 
         // Check for mock response
         if let Some(mock_manager) = self.mock_manager {
-            if let Some(mock) = mock_manager.find_matching_mock(request_data) {
+            if let Some(mock) =
+                mock_manager.find_matching_mock(request_data, self.attribution.device_id.as_deref())
+            {
                 debug!("Mock matched: {} for {}", mock.name, request_data.url);
 
                 if let Some(metrics) = self.metrics_collector {
@@ -535,7 +540,9 @@ impl<'a> Pipeline<'a> {
                 }
 
                 if let Some(throttle_manager) = self.throttle_manager {
-                    throttle_manager.apply_latency().await;
+                    throttle_manager
+                        .apply_latency(self.attribution.device_id.as_deref())
+                        .await;
                 }
 
                 let mut response = self.build_mock_response(&mock.response()).await;
@@ -562,9 +569,13 @@ impl<'a> Pipeline<'a> {
             }
         }
 
-        // Check for breakpoint on request
+        // Check for breakpoint on request. A device-scoped rule pauses only
+        // the bound device's matching request; other devices flow through
+        // (issue #109).
         if let Some(breakpoint_manager) = self.breakpoint_manager {
-            if let Some(rule) = breakpoint_manager.check_request(request_data) {
+            if let Some(rule) = breakpoint_manager
+                .check_request(request_data, self.attribution.device_id.as_deref())
+            {
                 debug!("Breakpoint hit: {} for {}", rule.name, request_data.url);
 
                 if let Some(metrics) = self.metrics_collector {
@@ -642,7 +653,9 @@ impl<'a> Pipeline<'a> {
 
         // Apply throttle latency if enabled
         if let Some(throttle_manager) = self.throttle_manager {
-            throttle_manager.apply_latency().await;
+            throttle_manager
+                .apply_latency(self.attribution.device_id.as_deref())
+                .await;
         }
 
         // Forward to upstream server
@@ -655,7 +668,11 @@ impl<'a> Pipeline<'a> {
 
                 // Apply rewrite rules to response
                 if let Some(rewrite_manager) = self.rewrite_manager {
-                    rewrite_manager.rewrite_response(request_data, &mut response);
+                    rewrite_manager.rewrite_response(
+                        request_data,
+                        &mut response,
+                        self.attribution.device_id.as_deref(),
+                    );
                 }
 
                 // Run script and plugin response hooks
@@ -687,7 +704,11 @@ impl<'a> Pipeline<'a> {
 
                 // Check for breakpoint on response
                 if let Some(breakpoint_manager) = self.breakpoint_manager {
-                    if let Some(rule) = breakpoint_manager.check_response(request_data, &response) {
+                    if let Some(rule) = breakpoint_manager.check_response(
+                        request_data,
+                        &response,
+                        self.attribution.device_id.as_deref(),
+                    ) {
                         debug!(
                             "Breakpoint hit on response: {} for {}",
                             rule.name, request_data.url
