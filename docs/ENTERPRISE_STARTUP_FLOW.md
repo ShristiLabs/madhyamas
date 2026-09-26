@@ -472,7 +472,7 @@ Flags are declared `global = true` so they work with any subcommand.
 
 | Flag | Env var | Default | Description |
 |---|---|---|---|
-| `--enable-auth` | `MADHYAMAS_ENABLE_AUTH` | `false` | Enable enterprise auth (JWT + API keys). No effect in OSS build. |
+| `--enable-auth` | `MADHYAMAS_ENABLE_AUTH` | `false` | Enable enterprise auth (JWT + API keys). Guards the **entire `/api` surface** since issue #107 — unauthenticated `/api` requests (e.g. `GET /api/traffic`) return `401`; API keys are authorized per-route by the feature-scope taxonomy ([API_ENTERPRISE.md](API_ENTERPRISE.md#feature-scopes-issue-107)). No effect in OSS build. |
 | `--jwt-secret` | `MADHYAMAS_JWT_SECRET` | *(dev default)* | JWT signing secret. Warning if default used. Never logged. |
 | `--license-file` | `MADHYAMAS_LICENSE_FILE` | *(none)* | Path to Ed25519-signed license file. Omit for unlicensed mode. |
 | `--instance-id` | `MADHYAMAS_INSTANCE_ID` | *(none)* | Expected instance ID for license replay prevention (Phase 9.14). |

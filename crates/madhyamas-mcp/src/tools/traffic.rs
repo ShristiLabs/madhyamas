@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{api_result, get_id, json_text};
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations, JWT_ONLY_PERMISSION};
 
 // ============ Internal helpers (existing free functions, kept as pub(super)) ============
 
@@ -432,6 +432,10 @@ impl McpTool for GetTrafficTool {
             }
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -516,6 +520,10 @@ impl McpTool for GetTrafficEntryTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -553,6 +561,10 @@ impl McpTool for SearchTrafficTool {
             "required": ["query"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -587,6 +599,10 @@ impl McpTool for GetTrafficCountTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -615,6 +631,10 @@ impl McpTool for ClearTrafficTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -657,6 +677,10 @@ impl McpTool for ImportHarTool {
             "required": ["har"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:export"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -708,6 +732,10 @@ impl McpTool for GetTrafficScriptTracesTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,

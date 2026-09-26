@@ -23,16 +23,21 @@ use crate::{
 /// Create the enterprise router (all enterprise endpoints under `/api`).
 ///
 /// `store` is injected into request extensions so enterprise handlers can
-/// persist/restore users, API keys, sessions, and audit events. When `auth`
-/// is `Some`, JWT authentication is enforced on the enterprise routes via
-/// [`middleware::auth_middleware`] (gated by `require_auth`). Public routes
-/// (login, refresh, detailed health, license info) bypass the check inside
-/// the middleware (see `is_public_path`). The verified `license` (if any) is
-/// injected so the [`handlers::get_license_info`] and
-/// [`handlers::get_health_check`] handlers can report license status. The
-/// `audit` logger is injected so login/logout handlers can record audit
-/// events. `redis` is injected so the detailed health check can probe Redis
-/// connectivity (Phase 6d).
+/// persist/restore users, API keys, sessions, and audit events. `auth` is
+/// injected so login/refresh/token-validation handlers can mint and verify
+/// JWTs. The verified `license` (if any) is injected so the
+/// [`handlers::get_license_info`] and [`handlers::get_health_check`]
+/// handlers can report license status. The `audit` logger is injected so
+/// login/logout handlers can record audit events. `redis` is injected so
+/// the detailed health check can probe Redis connectivity (Phase 6d).
+///
+/// Since issue #107 the authentication middleware itself is NOT applied
+/// here: the main binary wraps the whole `/api` nest (OSS routes merged
+/// with this router) in [`middleware::auth_middleware`], so every `/api`
+/// route is guarded uniformly when `--enable-auth` is on. Public routes
+/// (login, refresh, detailed health, license info, device enrollment,
+/// CA certificate, `/ws`) bypass the check inside the middleware (see
+/// `is_public_path`).
 pub fn create_enterprise_router(
     store: Arc<dyn EnterpriseStore>,
     auth: Arc<AuthManager>,
@@ -71,7 +76,7 @@ pub fn create_enterprise_router(
         )),
     );
 
-    let router = Router::new()
+    Router::new()
         // Performance & Monitoring
         .route("/metrics", get(handlers::get_metrics))
         .route("/metrics/cluster", get(handlers::get_cluster_metrics))
@@ -130,28 +135,12 @@ pub fn create_enterprise_router(
         // verified license into request extensions so enterprise handlers
         // can access them without madhyamas-api depending on this crate.
         // These are inner layers — they insert values before the route
-        // handler runs.
-        .layer(Extension(store.clone()))
-        .layer(Extension(auth.clone()))
-        .layer(Extension(audit.clone()))
-        .layer(Extension(license))
-        .layer(Extension(redis));
-
-    // Enforce JWT/API-key authentication on enterprise routes. The middleware
-    // honors `AuthManager::require_auth()`, so it only rejects requests
-    // when strict auth is enabled. Public routes (login, refresh,
-    // detailed health, license info) and static assets bypass the check
-    // inside the middleware (see `is_public_path`).
-    //
-    // The store and audit logger are re-injected as outer extension layers
-    // (applied before the middleware) so the auth middleware can access them
-    // for session idle timeout checks and audit logging. In axum, the last
-    // `.layer()` is outermost and runs first; inner `Extension` layers
-    // insert their values only after outer middleware has already executed,
-    // so the store must be provided outside the middleware as well.
-    router
-        .layer(axum::middleware::from_fn(middleware::auth_middleware))
+        // handler runs. The auth middleware no longer lives here (issue
+        // #107: it wraps the whole /api nest in the main binary), so no
+        // outer re-injection is needed.
+        .layer(Extension(store))
         .layer(Extension(auth))
         .layer(Extension(audit))
-        .layer(Extension(store))
+        .layer(Extension(license))
+        .layer(Extension(redis))
 }

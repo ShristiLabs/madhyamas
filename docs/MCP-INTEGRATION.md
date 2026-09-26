@@ -171,6 +171,22 @@ Restart the application to load the new configuration.
 | `MADHYAMAS_TIMEOUT` | `30` | Request timeout in seconds |
 | `RUST_LOG` | - | Set to `debug` for verbose logging |
 
+## Scope-Filtered Tool List (issue #107)
+
+When the MCP server authenticates with an API key
+(`MADHYAMAS_API_KEY`, or `--api-key`) against an enterprise server, it
+fetches the key's effective feature scopes from `GET /api/auth/me` and
+filters `tools/list` accordingly: an agent only discovers the tools its
+key may actually use (progressive disclosure). Every tool's
+`annotations.required_permission` carries the scope it needs; tools whose
+REST route is on the JWT-only exclusion list (user/admin endpoints,
+scripts, plugins, traffic deletion, session switching) are hidden from
+all API keys. JWT-authenticated and unauthenticated (OSS) clients see the
+full list. The filter affects discovery only — the REST middleware
+remains the enforcing boundary. See
+[API_ENTERPRISE.md](API_ENTERPRISE.md#feature-scopes-issue-107) for the
+taxonomy.
+
 ## Docker with MCP
 
 If running Madhyamas in Docker, the MCP server needs to connect to the Docker container's API:

@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 /// Get the CA certificate information for the proxy.
 pub struct GetCertInfoTool;
@@ -23,6 +23,10 @@ impl McpTool for GetCertInfoTool {
 
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::public())
     }
 
     async fn execute(

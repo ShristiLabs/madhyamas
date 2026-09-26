@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{api_result, api_result_void, get_id, json_text};
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations, JWT_ONLY_PERMISSION};
 
 // ============ Internal helpers (existing free functions, kept as pub(super)) ============
 
@@ -333,6 +333,10 @@ impl McpTool for ListScriptsTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -378,6 +382,10 @@ impl McpTool for CreateScriptTool {
             "required": ["name", "source"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -421,6 +429,10 @@ impl McpTool for GetScriptTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -459,6 +471,10 @@ impl McpTool for UpdateScriptTool {
             "required": ["id", "script"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -497,6 +513,10 @@ impl McpTool for DeleteScriptTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -535,6 +555,10 @@ impl McpTool for ToggleScriptTool {
             "required": ["id", "enabled"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -567,6 +591,10 @@ impl McpTool for GetScriptTemplatesTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -605,6 +633,10 @@ impl McpTool for TestScriptTool {
             "required": ["source", "hook"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -646,6 +678,10 @@ impl McpTool for ValidateScriptTool {
             "required": ["source"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -687,6 +723,10 @@ impl McpTool for GetScriptHistoryTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -724,6 +764,10 @@ impl McpTool for ReorderScriptTool {
             "required": ["id", "priority"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -770,6 +814,10 @@ impl McpTool for ScriptMatchPreviewTool {
             "required": ["url"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -800,6 +848,10 @@ impl McpTool for GetScriptHistoryAllTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -834,6 +886,10 @@ impl McpTool for ClearScriptHistoryTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -864,6 +920,10 @@ impl McpTool for GetScriptConfigTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -900,6 +960,10 @@ impl McpTool for UpdateScriptConfigTool {
             }
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,

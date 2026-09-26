@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::json_text;
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations, JWT_ONLY_PERMISSION};
 
 // ============ Internal helpers (existing free functions, kept as pub(super)) ============
 
@@ -164,6 +164,10 @@ impl McpTool for GetGrpcConnectionsTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -192,6 +196,10 @@ impl McpTool for GetGrpcStreamsTool {
             "type": "object",
             "properties": {}
         })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
     }
 
     async fn execute(
@@ -229,6 +237,10 @@ impl McpTool for GetGrpcFramesTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -261,6 +273,10 @@ impl McpTool for GetGrpcStatsTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -289,6 +305,10 @@ impl McpTool for ClearGrpcTool {
             "type": "object",
             "properties": {}
         })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
     }
 
     async fn execute(

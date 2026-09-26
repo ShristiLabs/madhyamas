@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 /// Get the current mirror status and statistics.
 pub struct GetMirrorStatusTool;
@@ -23,6 +23,10 @@ impl McpTool for GetMirrorStatusTool {
 
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:read"))
     }
 
     async fn execute(
@@ -80,6 +84,10 @@ impl McpTool for ToggleMirrorTool {
             },
             "required": ["enabled"]
         })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:write"))
     }
 
     async fn execute(
@@ -150,6 +158,10 @@ impl McpTool for UpdateMirrorConfigTool {
                 }
             }
         })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:write"))
     }
 
     async fn execute(

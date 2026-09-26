@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::json_text;
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 /// Get the current proxy configuration.
 pub struct GetConfigTool;
@@ -23,6 +23,10 @@ impl McpTool for GetConfigTool {
 
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:read"))
     }
 
     async fn execute(
@@ -91,6 +95,10 @@ impl McpTool for UpdateConfigTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -156,6 +164,10 @@ impl McpTool for GetCaptureStatusTool {
         json!({ "type": "object", "properties": {} })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -201,6 +213,10 @@ impl McpTool for ToggleCaptureTool {
 
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:write"))
     }
 
     async fn execute(

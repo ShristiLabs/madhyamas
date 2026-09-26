@@ -2,7 +2,7 @@
 
 ## Current Phase
 Milestone "Credential-Based Device & Agent Scoping" — issue-by-issue orchestration
-(current: #106 QR enrollment payload + enrollment tokens + live status loop, 4 of 9)
+(current: #107 IN PROGRESS — #108+ NOT started per maintainer instruction)
 
 ## Milestone Progress
 | Issue | Title | Developer | Tester | Reviewer | Regression | Committer | Status |
@@ -10,7 +10,8 @@ Milestone "Credential-Based Device & Agent Scoping" — issue-by-issue orchestra
 | #103 | Attribution foundation: resolve CONNECT principal and persist client_addr | done | done (15 cases) | approved (0 blockers, 4 low) | pass (all checks) | committed (2f88bdc) | done |
 | #104 | Device principals: registration, per-device credentials, devices API and Devices panel | done | done (24 cases) | approved (0 blockers, 0 high, 5 low) | pass (all checks + 17-step smoke) | committed (a9a0e9e) | done |
 | #105 | Per-device traffic visibility: device sessions, device_id filter end-to-end, connected status | done | done (12 cases; caught + fixed legacy-DB migration-order blocker) | approved (0 blockers, 0 high, 1 medium info, 5 low) | pass (all checks + 10/10 two-device DoD smoke on pre-migration DB) | committed (7cfce6b) | done |
-| #106 | QR enrollment: madhyamas://connect payload, enrollment tokens, live status loop | done | done (21 cases) | approved (0 blockers, 0 high, 1 medium, 6 low) | pass (all checks + 20/20 DoD smoke) | — | commit |
+| #106 | QR enrollment: madhyamas://connect payload, enrollment tokens, live status loop | done | done (21 cases) | approved (0 blockers, 0 high, 1 medium, 6 low) | pass (all checks + 20/20 DoD smoke) | committed (b6d8b32) | done |
+| #107 | Feature-scope taxonomy: endpoint/tool mapping and MCP tool filtering | — | — | — | — | — | active |
 
 ## Earlier Phases (13-phase plan — COMPLETE)
 Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration.
@@ -58,6 +59,82 @@ Phase 2 (from earlier log, kept for history): rusqlite -> sqlx storage migration
 | 12b+12c+12d Customer+Stripe+Admin | #66,67,68 | done | skipped | approved | done (JWT auth, customer portal React frontend, Stripe Checkout+webhooks, admin portal, revenue dashboard, 604 tests) | committed (039a8ad) | done |
 
 ## Agent Log
+
+### 2026-09-18 — orchestrator (milestone kickoff, #107)
+- Issue #107 exists (maintainer-created, OPEN) — enterprise-issues step skipped; full chain dispatched for #107 ONLY (#108+ explicitly out of scope per maintainer brief)
+- Verified code facts post-#106 (commit b6d8b32):
+  - CRITICAL: auth_middleware is applied ONLY on the enterprise router (enterprise/src/router.rs:153) — the OSS /api routes (traffic, mocks, rewrites, breakpoints, throttle, replay, blocklist, config, sessions, focus, mirror, logs, autosave, persistence, ws-traffic, grpc, scripts, plugins, secrets, cert, ws) merged under /api in api/src/lib.rs:446-489 have NO auth even in enterprise builds with --enable-auth. required_scope's traffic/mocks/... branches (middleware.rs:174-205) have never actually executed. Issue #107's DoD (traffic:read key reaching /api/traffic, 403 on /api/mocks) REQUIRES extending middleware coverage to the whole /api surface in the enterprise tier
+  - Middleware facts: PUBLIC_PATHS + is_public_path handle full + /api-stripped forms (middleware.rs:71-116); API-key arm checks required_scope then inserts AuthUser (middleware.rs:275-302); JWT arm unchanged; scope_authorized + Scope::matches support `*` wildcards in either half (auth.rs:211-215)
+  - required_scope today derives read/write/delete from method and maps resources traffic(/traffic+/sessions)/mocks/rewrites/breakpoints/throttle/blocklist/focus/scripts/plugins/config(/config+/secrets)/users/audit/rbac; /auth//onboarding/license/health/metrics/performance → None (no scope); /devices → None (unmapped)
+  - WS: /api/ws authenticates INSIDE ws_handler via ?token= or Sec-WebSocket-Protocol (handlers.rs:1218-1280, Phase 9 design — middleware cannot reject before the upgrade extractor); web client sends JWT ?token= (useTrafficWebSocket.ts buildTrafficWsUrl). Middleware must exempt /ws; key-principal WS deferred to #108 (device-filtered stream)
+  - Enterprise-router key-reachable surface today (the ONLY routes scope enforcement actually ran on): /auth/logout|me|validate|api-keys (None-mapped → any valid key), /devices* (None → any key, owner checks in handlers), /users (users:read/write), /rbac (rbac:*), /audit (audit:*), /onboarding (None), /config/export (config:read), /config/import (config:write), /metrics+/performance+/instances (None). OSS routes: unauthenticated for everyone
+  - RBAC BYPASS FACT: require_permission_middleware passes API-key principals through with NO RBAC check (middleware.rs:438-441, "scope already enforced" — but required_scope returned None for /devices etc.), and create_api_key accepts ANY scopes from ANY authenticated user incl. `*` (handlers.rs:705-740). A regular user's `*` key today bypasses admin RBAC on /users and /audit/clear
+  - Existing scope vocabulary (web ApiKeysPanel.tsx:39): traffic:read, traffic:write, mocks:read, mocks:write, config:read, config:write, `*` — plus arbitrary strings via raw API
+  - MCP: madhyamas-mcp does NOT depend on madhyamas-enterprise (clean graph; scope matching must be local). tools/list serves registry unfiltered (server.rs:1013-1022 HTTP transport; :255/:302 stdio). ToolAnnotations already carries required_permission (Madhyamas extension, types.rs:197-209); enterprise tools already annotate (e.g. users:read at tools/enterprise.rs:41); OSS tools have NO annotations yet. Tier detection via GET /api/health/detailed with auth headers (server.rs:56-127); McpAuth ApiKey/Jwt/None injects default_headers
+  - No principal-scope introspection endpoint exists: /api/auth/me returns UserInfo (id/username/email/role) without scopes (handlers.rs get_current_user)
+- Design resolutions (maintainer brief + issue text):
+  - Taxonomy adopted verbatim from CREDENTIAL_ONBOARDING.md table: traffic:read/export, mocks:read/write, rewrites:read/write, breakpoints:read/write, blocklist:read/write, throttle:read/write, replay:execute, config:read/write, sessions:read
+  - (a) per-feature read/write split: YES (brief + issue both propose)
+  - (b) config:write for agents: YES, in (noise control)
+  - (c) replay:execute: YES, opt-in only
+  - (d) exclusions: brief says "owner/JWT-only" but issue/doc say "owner/user-key only" — CONFLICT flagged to maintainer before dispatch (per standing instruction to ask on per-issue design decisions); recommendation: JWT-only for key/device/user-admin/scripts/plugins/traffic-deletion/session-switch (closes the `*`-key RBAC bypass), keep /auth/me|logout|validate key-reachable (self-identity), document as the reconciliation
+  - Middleware coverage plan: move auth enforcement from the enterprise router to the whole /api nest (enterprise build only; OSS build untouched; require_auth=false still passes everything); base-path-aware path normalization; /api/ws exempt (handler-level auth stays); static assets outside /api stay public
+  - MCP plan: extend /api/auth/me to include key scopes; MCP server fetches principal scopes at startup/first tools/list, filters tool list via required_permission + local wildcard matcher; annotate all tools with their scope
+- Status: dispatched (pending maintainer answer on (d))
+
+### 2026-09-18 — enterprise-regression (#107)
+- Frontend (tsc+vite): pass; fmt --check: pass; clippy --all-targets --all-features -D warnings: 0
+- OSS release build (--no-default-features): pass, 27,117,136 bytes (baseline 27.10 MB); symbol scan: 0 madhyamas_enterprise, 0 route_access, 0 jwt:only/JWT-only, 0 effective_scopes
+- Enterprise release build: pass, 35,923,056 bytes (baseline 35.87 MB); enterprise crate standalone: pass
+- cargo test --all-features: 792 passed / 0 failed / 31 ignored — EXACT baseline match (tester's count), zero regressions
+- Docs: check-docs.sh pass, check-docs-coverage.sh pass; cfg-enterprise gates in core/api src: 0
+- Disk: freed debug incremental (19G debug dir, 3.7G free at start) — builds + tests completed on 5.8G
+- LIVE DoD SMOKE (enterprise release binary, repo-root cwd, ephemeral HOME, --enable-auth + bootstrap admin): 17/17 PASS —
+  traffic:read key: GET /api/traffic 200, POST /api/mocks 403, GET /api/auth/me reports scopes [traffic:read, sessions:read];
+  mocks:write key: POST /api/mocks 201 round-trip (three initial 422s were smoke payload shape, not implementation; correct CreateMockRequest verified), GET /api/mocks 403 (read half denied);
+  `*` legacy key: traffic 200, users/devices/api-keys all 403 (RBAC bypass closed);
+  unauth /api/traffic + /api/config 401 (visible behavior change confirmed), bogus key 401;
+  public paths 200: /api/health, /api/license, /api/cert/ca; POST /api/devices/enroll garbage → 400 (shape validation, no 500);
+  WS bad token → 401 pre-upgrade;
+  viewer JWT: GET /api/users 403 (RBAC unchanged), GET /api/traffic 200 (pass-through);
+  MCP traffic:read key tools/list: 17 tools, ZERO mock tools (DoD "cannot even discover mock tools");
+  MCP mocks:write key: 22 tools incl. all 19 mock tools, no traffic tools;
+  MCP `*` key: 99 tools, zero jwt:only-annotated tools visible (script-traces correctly traffic:read);
+  MCP no-auth: 146 tools unfiltered (OSS/None degrade);
+  auth-off parity instance: unauth GET /api/traffic + /api/config 200;
+  server log grep for key/password material: 0
+- OBSERVATION (pre-existing, not a regression): unmatched /api/* paths fall through to the SPA fallback (200 index.html) outside the auth layer — static-only content identical to the public web root; deny-by-default for unmapped-but-REGISTERED routes is enforced and test-pinned (unit + scopes.rs stub-router). Follow-up material: consider a JSON 404 for unmatched /api/* paths under auth
+- Cargo.lock licensing-core path-patch flip: RESTORED via git checkout (working tree = source changes + status log only, no lock changes)
+- Verdict: ALL CHECKS PASSED — safe to commit
+- Status: completed
+
+### 2026-09-18 — enterprise-reviewer (#107)
+- Verdict: approved (0 blockers, 0 high, 1 medium informational, 6 low)
+- Verified: whole-route cross-check of routes.rs + enterprise router against route_access — zero mismatches vs decisions D1-D4; public list exact-match with near-miss tests (/api/wsfoo, /api/ws-traffic, /api/cert, /api/cert/ca/anything stay non-public); JwtOnly enforced BEFORE scope matching (alias expansion/`*` cannot reach excluded surface; effective_scopes adds only sessions:read/traffic:export); require_permission_middleware now rejects key principals (bypass closed, defense in depth); layering = merge → auth layer → /api nest → base-path nest (middleware sees nest-stripped path in root AND base-path deployments, pinned by api router tests with a stub middleware); require_auth=false and OSS (api_auth=None) unchanged; MCP fallback correctly scoped (fetch only under McpAuth::ApiKey, None on any failure, tools/call unfiltered so stale discovery never breaks legit calls; REST enforces live); scope_satisfies is a faithful mirror of Scope::matches (granted-side wildcards, bare `*` = `*:*`, colonless grants match nothing colonful); every tool in both registries annotated (deny-by-default hides unannotated; jwt:only sentinel hides excluded-surface tools; cert tool public()); secret hygiene clean (audit/tracing carry user_id + key_id record IDs only; no key/token material anywhere in the diff); api crate enterprise-free (ApiAuthMiddleware is a pure axum/std type alias); tester's path-strip fix correct (strip "/api" not "/api/" keeps leading slash; both forms classify identically; old required_scope fully removed, no dependents); audit-flood guard limits key Login events to the /auth surface
+- Medium (informational, non-blocking): MCP fetches key scopes ONCE at McpServer::new — scope changes/rotation need an MCP restart to reflect in tools/list discovery (REST enforces live; record in close-out; future refresh-on-tools/list material)
+- Low: std::mem::forget runtime leaks in new MCP tests (deliberate, test-only); starts_with prefix matching means future /trafficx-style routes classify as traffic not deny-by-default (no such route today; new routes need explicit map entries); non-preflight OPTIONS classifies non-read (unreachable — CorsLayer answers preflights outside the nest); create_api_key still lets any JWT mint `*` keys (pre-existing posture; no escalation remains — a `*` key grants strictly less than its user's JWT); auth/me mock test doesn't assert X-API-Key header sent (default_headers inherited from 8a); docs "Unmapped paths are a routing matter (404)" is JWT-principal-only accurate (unauth unmapped gets 401)
+- fmt --check: pass; clippy --all-targets --all-features -D warnings: 0; OSS check compile: pass
+- Status: completed
+
+### 2026-09-18 — orchestrator (#107 design settled, chain resumed)
+- Maintainer settled BOTH open decisions; no open questions remain; dispatching straight through the chain (developer -> tester + reviewer -> regression -> committer) per instruction
+- Decision 1 (exclusions are JWT-only): key/device management, user/admin endpoints, scripts/plugins, traffic deletion, session switching require a JWT web-session principal; API keys (all kinds) get 403 there. API keys keep self-identity endpoints only (/api/auth/me, /api/auth/logout, /api/auth/validate). This CLOSES the pre-existing RBAC bypass (middleware.rs:438-441 key pass-through on permission-gated routes + handlers.rs:705-740 any-user any-scope key creation incl. `*`). Reconciliation to document in close-out: pre-existing user keys with `*` lose ONLY the excluded routes; traffic/mocks/config/etc. reach unaffected
+- Decision 2 (auth middleware covers the whole /api surface under --enable-auth): today enterprise-only (router.rs:153); consequence: unauthenticated GET /api/traffic returns 401 (today 200) with --enable-auth. Web UI / CLI / MCP send credentials (unaffected); OSS builds and auth-off deployments unchanged; /api/ws keeps in-handler ?token= auth (middleware exempts it); #106's public POST /api/devices/enroll must remain public (verify + preserve)
+- Taxonomy calls to record in close-out: read/write split YES, config:write IN, replay:execute opt-in
+- Re-verified at HEAD (b6d8b32): middleware.rs:438-441 pass-through intact; agents/enterprise-status.md is the sole uncommitted change (carried per instruction)
+- Dispatching enterprise-developer for #107
+- Status: dispatched
+- Verified regression pass; fmt no-op; Cargo.lock NOT in status (restored by regression, not staged)
+- Staged 16 files by name (15 modified + tests/enrollment.rs new; agents/enterprise-status.md included — carries #105 committer/close-out leftover bookkeeping + all #106 pipeline entries)
+- Commit: b6d8b32 "feat(enterprise): QR enrollment tokens and connect-device onboarding" — body references docs/CREDENTIAL_ONBOARDING.md phase 2 journey steps 3-4, contains "Implements #106 (4 of 9)"; no AI attribution; author = user
+- 16 files changed, 1783 insertions(+), 34 deletions(-); working tree clean after commit; NOT pushed (maintainer pushes)
+- Status: completed
+
+### 2026-09-18 — orchestrator (#106 close-out)
+- Full chain green: issues (skipped — maintainer-created) -> developer -> tester (+21 cases, 749/0 suite) -> reviewer (approved, 1 medium + 6 low documented) -> regression (all checks + 20/20 live DoD smoke) -> committer (b6d8b32)
+- Issue #106 closed with completion comment (implementation summary, smoke results, decisions: token-mode QR default with key= builder support; POST /api/devices unchanged; separate issue-token + public enroll endpoints; redeem = retire-and-remint for one live credential per device; wizard unmounted note; rotate-vs-token follow-up flagged)
+- Milestone position: 4 of 9 complete (#107+ NOT started per maintainer instruction)
+- Status: done
 
 ### 2026-09-18 — orchestrator (milestone kickoff, #106)
 - Issue #106 exists (maintainer-created, OPEN) — enterprise-issues step skipped; full chain dispatched for #106 ONLY (#107+ explicitly out of scope per maintainer brief)

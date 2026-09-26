@@ -1473,7 +1473,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
     // compiled out in the OSS build (--no-default-features), so no
     // enterprise code is linked.
     #[cfg(feature = "enterprise")]
-    let (api_state, enterprise_router, redis_state_for_shutdown) = {
+    let (api_state, enterprise_router, redis_state_for_shutdown, api_auth) = {
         let jwt_secret = args.jwt_secret.clone().unwrap_or_else(|| {
             tracing::warn!(
                 "No --jwt-secret provided; using default development secret. \
@@ -1961,18 +1961,46 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
             });
         }
         let router = madhyamas_enterprise::create_enterprise_router(
-            store,
+            store.clone(),
             auth.clone(),
             audit.clone(),
             enterprise.license.clone(),
             redis_state.clone(),
         );
-        (api_state, Some(router), redis_state)
+        // Issue #107: wrap the whole /api nest (OSS routes merged with the
+        // enterprise router) in the enterprise auth middleware, so every
+        // API route is guarded when --enable-auth is on. The middleware is
+        // handed to madhyamas-api as a boxed function to keep that crate
+        // independent of the enterprise crate. It captures the auth
+        // manager, store, and audit logger directly, so no outer
+        // extension layers are needed.
+        let api_auth: madhyamas_api::ApiAuthMiddleware = {
+            let auth = auth.clone();
+            let store = store.clone();
+            let audit = audit.clone();
+            Arc::new(move |request, next| {
+                let auth = auth.clone();
+                let store = store.clone();
+                let audit = audit.clone();
+                Box::pin(madhyamas_enterprise::middleware::auth_middleware(
+                    axum::Extension(auth),
+                    axum::Extension(store),
+                    axum::Extension(audit),
+                    request,
+                    next,
+                ))
+            })
+        };
+        (api_state, Some(router), redis_state, Some(api_auth))
     };
     #[cfg(not(feature = "enterprise"))]
     let enterprise_router: Option<axum::Router<std::sync::Arc<madhyamas_api::AppState>>> = None;
     #[cfg(not(feature = "enterprise"))]
     let _redis_state_for_shutdown: Option<()> = None;
+    // OSS build: no enterprise auth middleware — the /api nest stays
+    // unauthenticated, exactly as before issue #107.
+    #[cfg(not(feature = "enterprise"))]
+    let api_auth: Option<madhyamas_api::ApiAuthMiddleware> = None;
 
     let rate_limit_config = if args.rate_limit {
         RateLimitConfig::enabled(args.rate_limit_rps, args.rate_limit_burst)
@@ -1989,6 +2017,7 @@ async fn run_proxy_server(args: Args, log_handle: LogHandle) -> Result<()> {
         rate_limit_config,
         enterprise_router,
         args.base_path.as_deref().unwrap_or("/"),
+        api_auth,
     );
 
     let api_addr = config.api_addr();

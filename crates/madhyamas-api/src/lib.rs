@@ -418,6 +418,25 @@ fn normalize_base_path(base: &str) -> Option<String> {
     Some(without_trailing)
 }
 
+/// Boxed authentication middleware applied to the whole `/api` nest
+/// (issue #107).
+///
+/// The API crate must stay independent of the enterprise crate, so the
+/// middleware itself is defined there and handed over as a boxed function
+/// by the main binary (the OSS build passes `None` and gets the previous
+/// unauthenticated behavior). The function receives the request (path
+/// already stripped of the `/api` — and base-path — prefixes by the nest)
+/// and the remaining middleware chain, and returns the final response.
+pub type ApiAuthMiddleware = Arc<
+    dyn Fn(
+            axum::extract::Request,
+            axum::middleware::Next,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = axum::response::Response> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Create the API router.
 ///
 /// `rate_limit` controls whether the [`tower_governor`] rate-limiting layer
@@ -435,11 +454,20 @@ fn normalize_base_path(base: &str) -> Option<String> {
 /// under `/madhyamas/api/...`, `/madhyamas/health`, `/madhyamas/ws`, and the
 /// web UI at `/madhyamas/`. When `/` or empty, routes are served at root
 /// (default behaviour).
+///
+/// `api_auth` is an optional authentication middleware applied to the whole
+/// `/api` nest (issue #107): the enterprise main binary passes the
+/// enterprise `auth_middleware` (boxed, see [`ApiAuthMiddleware`]) so every
+/// API route — OSS surface and enterprise surface alike — is guarded when
+/// `--enable-auth` is on; unauthenticated `/api` requests then return `401`.
+/// The OSS build and auth-off deployments pass `None` and behave exactly as
+/// before.
 pub fn create_router(
     state: AppState,
     rate_limit: RateLimitConfig,
     enterprise_router: Option<Router<Arc<AppState>>>,
     base_path: &str,
+    api_auth: Option<ApiAuthMiddleware>,
 ) -> Router<()> {
     let state = Arc::new(state);
 
@@ -466,6 +494,17 @@ pub fn create_router(
                 }))
             }),
         );
+    }
+
+    // Enterprise builds wrap the merged /api surface (OSS + enterprise
+    // routes) in the authentication middleware (issue #107). The layer is
+    // applied BEFORE nesting so the middleware observes the /api-stripped
+    // path — the same form the enterprise route-scope map matches on —
+    // regardless of any base path configured below.
+    if let Some(api_auth) = api_auth {
+        api_routes = api_routes.layer(axum::middleware::from_fn(move |request, next| {
+            api_auth(request, next)
+        }));
     }
 
     let inner = Router::new()

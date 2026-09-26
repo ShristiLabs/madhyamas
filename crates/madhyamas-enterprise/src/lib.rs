@@ -35,8 +35,8 @@ pub mod user;
 
 pub use audit::{AuditEvent, AuditEventType, AuditFilter, AuditLogger};
 pub use auth::{
-    ApiKey, ApiKeyAuth, AuthConfig, AuthManager, DeviceKeyAuth, JwtClaims, RefreshTokenClaims,
-    Scope, DEVICE_KEY_PREFIX,
+    effective_scopes, ApiKey, ApiKeyAuth, AuthConfig, AuthManager, DeviceKeyAuth, JwtClaims,
+    RefreshTokenClaims, Scope, DEVICE_KEY_PREFIX,
 };
 pub use credentials::{hash_password, validate_password_complexity, verify_password};
 pub use enterprise_error::EnterpriseError;

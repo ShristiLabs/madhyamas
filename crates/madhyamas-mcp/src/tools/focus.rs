@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 /// List all focus host patterns.
 pub struct ListFocusHostsTool;
@@ -23,6 +23,10 @@ impl McpTool for ListFocusHostsTool {
 
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:read"))
     }
 
     async fn execute(
@@ -81,6 +85,10 @@ impl McpTool for AddFocusHostTool {
             },
             "required": ["pattern"]
         })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:write"))
     }
 
     async fn execute(
@@ -149,6 +157,10 @@ impl McpTool for RemoveFocusHostTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -195,6 +207,10 @@ impl McpTool for ClearFocusHostsTool {
 
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:write"))
     }
 
     async fn execute(

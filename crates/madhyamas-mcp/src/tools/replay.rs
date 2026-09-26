@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{api_result_void, get_id, json_text};
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 // ============ Internal helpers (existing free functions, kept as pub(super)) ============
 
@@ -347,6 +347,10 @@ impl McpTool for ReplayRequestTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("replay:execute"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -434,6 +438,10 @@ impl McpTool for ReplayAdvancedTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("replay:execute"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -499,6 +507,10 @@ impl McpTool for SaveRequestTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("replay:execute"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -533,6 +545,10 @@ impl McpTool for ListSavedRequestsTool {
             "type": "object",
             "properties": {}
         })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("replay:execute"))
     }
 
     async fn execute(
@@ -572,6 +588,10 @@ impl McpTool for ExportCurlTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:export"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -599,6 +619,10 @@ impl McpTool for ClearReplayHistoryTool {
 
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("replay:execute"))
     }
 
     async fn execute(

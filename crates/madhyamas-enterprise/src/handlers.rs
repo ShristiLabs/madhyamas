@@ -479,6 +479,13 @@ pub struct UserInfo {
     pub username: String,
     pub email: String,
     pub role: String,
+    /// Effective feature scopes when the caller authenticated with an API
+    /// key (issue #107): the stored grants expanded to their taxonomy
+    /// equivalents (see [`crate::auth::effective_scopes`]). `None` for
+    /// JWT principals — their authorization is role-based. Consumed by the
+    /// MCP server to filter its tool list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
 }
 
 /// Login handler. Looks up the user by username in the enterprise store,
@@ -545,6 +552,7 @@ pub async fn login(
             username: user.username,
             email: user.email.unwrap_or_default(),
             role,
+            scopes: None,
         },
         expires_at,
     }))
@@ -587,6 +595,10 @@ pub async fn get_current_user(
         username: user.username,
         email: user.email.unwrap_or_default(),
         role: user.role.as_label().to_string(),
+        // Key principals report their effective (taxonomy-expanded)
+        // scopes so API-key clients — notably the MCP server — can adapt
+        // to what the key may do (issue #107 tool filtering).
+        scopes: claims.scopes.clone(),
     }))
 }
 

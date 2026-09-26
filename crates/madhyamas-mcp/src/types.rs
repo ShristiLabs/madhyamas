@@ -209,6 +209,40 @@ pub struct ToolAnnotations {
     pub required_permission: Option<String>,
 }
 
+/// Sentinel `required_permission` marking tools whose backing REST route is
+/// on the issue #107 JWT-only exclusion list (key/device management, user
+/// and admin endpoints, scripts/plugins, traffic deletion, session
+/// switching). No API-key scope can ever satisfy it, so such tools are
+/// hidden from every key principal — only JWT web sessions can use them.
+pub const JWT_ONLY_PERMISSION: &str = "jwt:only";
+
+impl ToolAnnotations {
+    /// Annotations carrying only the feature scope an API key must hold to
+    /// use the tool (issue #107 taxonomy, e.g. `"mocks:write"`).
+    pub fn permission(scope: &str) -> Self {
+        Self {
+            read_only: None,
+            destructive: None,
+            idempotent: None,
+            required_permission: Some(scope.to_string()),
+        }
+    }
+
+    /// Annotations explicitly marking a tool as usable by every principal
+    /// class — its backing REST route is public (health, license, CA
+    /// certificate). Distinct from "no annotations": when the MCP server
+    /// knows an API key's scopes, tools WITHOUT annotations are hidden
+    /// (deny-by-default), while `public()` tools stay visible.
+    pub fn public() -> Self {
+        Self {
+            read_only: Some(true),
+            destructive: None,
+            idempotent: None,
+            required_permission: None,
+        }
+    }
+}
+
 /// Tool definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {

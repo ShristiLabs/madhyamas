@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{api_result, api_result_void, get_id};
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations, JWT_ONLY_PERMISSION};
 
 /// List all WebSocket connections.
 pub struct ListWsConnectionsTool;
@@ -21,6 +21,10 @@ impl McpTool for ListWsConnectionsTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -56,6 +60,10 @@ impl McpTool for GetWsConnectionTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -97,6 +105,10 @@ impl McpTool for GetWsMessagesTool {
             }
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("traffic:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -149,6 +161,10 @@ impl McpTool for ClearWsTrafficTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,

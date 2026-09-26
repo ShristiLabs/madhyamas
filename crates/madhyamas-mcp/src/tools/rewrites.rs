@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{api_result, get_id, json_text};
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 // ============ Internal helpers (existing free functions, kept as pub(super)) ============
 
@@ -196,6 +196,10 @@ impl McpTool for ListRewritesTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("rewrites:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -254,6 +258,10 @@ impl McpTool for CreateRewriteTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("rewrites:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -302,6 +310,10 @@ impl McpTool for DeleteRewriteTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("rewrites:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -343,6 +355,10 @@ impl McpTool for ToggleRewriteTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("rewrites:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -376,6 +392,10 @@ impl McpTool for GetRewriteTemplatesTool {
             "type": "object",
             "properties": {}
         })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("rewrites:read"))
     }
 
     async fn execute(
@@ -441,6 +461,10 @@ impl McpTool for UpdateRewriteTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("rewrites:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -503,6 +527,10 @@ impl McpTool for BatchToggleRewritesTool {
             },
             "required": ["ids", "enabled"]
         })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("rewrites:write"))
     }
 
     async fn execute(

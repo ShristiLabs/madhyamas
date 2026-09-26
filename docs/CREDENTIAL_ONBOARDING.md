@@ -395,8 +395,10 @@ real API surface ([API_INTERCEPT.md](API_INTERCEPT.md),
 
 **Deliberately excluded from agent keys**: key/device management,
 user/admin endpoints, scripts and plugin management (code-execution
-adjacent), traffic deletion, session switching. Those stay with the
-owner's web session / user keys.
+adjacent), traffic deletion, session switching. Those require a JWT
+web-session principal — *all* API keys (user keys included) receive `403`
+there; keys keep only the self-identity endpoints (`/api/auth/me`,
+`/api/auth/logout`, `/api/auth/validate`).
 
 **Deny-by-default**: a key with no matching scope is rejected at the
 endpoint — unscoped access is never implicit.

@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{api_result, api_result_void, get_id, json_text};
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 // ============ Internal helpers (existing free functions, kept as pub(super)) ============
 
@@ -190,6 +190,10 @@ impl McpTool for ListBreakpointsTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("breakpoints:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -238,6 +242,10 @@ impl McpTool for CreateBreakpointTool {
             "required": ["url_pattern"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("breakpoints:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -280,6 +288,10 @@ impl McpTool for DeleteBreakpointTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("breakpoints:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -315,6 +327,10 @@ impl McpTool for GetBreakpointTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("breakpoints:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -346,6 +362,10 @@ impl McpTool for ListPausedTrafficTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("breakpoints:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -382,6 +402,10 @@ impl McpTool for GetPausedItemTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("breakpoints:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -424,6 +448,10 @@ impl McpTool for ResumePausedItemTool {
             "required": ["id", "action"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("breakpoints:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,

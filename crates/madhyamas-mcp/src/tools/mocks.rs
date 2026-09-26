@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{api_result, api_result_void, get_id, json_text};
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 // ============
 // Internal helpers (existing free functions, kept as pub(super))
@@ -826,6 +826,10 @@ impl McpTool for ListMocksTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -884,6 +888,10 @@ impl McpTool for CreateMockTool {
             "required": ["url_pattern"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -942,6 +950,10 @@ impl McpTool for DeleteMockTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -981,6 +993,10 @@ impl McpTool for ToggleMockTool {
             "required": ["id", "enabled"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1049,6 +1065,10 @@ impl McpTool for CreateAdvancedMockTool {
             "required": ["name", "condition", "response_config"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1123,6 +1143,10 @@ impl McpTool for UpdateMockTool {
             "required": ["id", "mock"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1162,6 +1186,10 @@ impl McpTool for GetMockTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1201,6 +1229,10 @@ impl McpTool for DuplicateMockTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1241,6 +1273,10 @@ impl McpTool for RollbackMockTool {
             "required": ["id", "version"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1281,6 +1317,10 @@ impl McpTool for GetMockVersionsTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1310,6 +1350,10 @@ impl McpTool for ListMockCollectionsTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1353,6 +1397,10 @@ impl McpTool for CreateMockCollectionTool {
             "required": ["name"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1401,6 +1449,10 @@ impl McpTool for DeleteMockCollectionTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1444,6 +1496,10 @@ impl McpTool for ToggleMockCollectionTool {
             "required": ["id", "enabled"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1483,6 +1539,10 @@ impl McpTool for GetMockCollectionTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1542,6 +1602,10 @@ impl McpTool for UpdateMockCollectionTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1593,6 +1657,10 @@ impl McpTool for GetMockAnalyticsTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1627,6 +1695,10 @@ impl McpTool for GetMockHitHistoryTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1666,6 +1738,10 @@ impl McpTool for TestMockTool {
             "required": ["id", "request"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1705,6 +1781,10 @@ impl McpTool for PreviewMockMatchTool {
             "required": ["request"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1737,6 +1817,10 @@ impl McpTool for ExportMocksTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1776,6 +1860,10 @@ impl McpTool for ImportMocksTool {
             "required": ["format", "data"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1818,6 +1906,10 @@ impl McpTool for SetMockRecordingTool {
             "required": ["enabled"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1850,6 +1942,10 @@ impl McpTool for GetMockRecordingStatusTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1878,6 +1974,10 @@ impl McpTool for GetRecordedMocksTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1906,6 +2006,10 @@ impl McpTool for PromoteRecordedMocksTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1935,6 +2039,10 @@ impl McpTool for GetMockTemplatesTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1975,6 +2083,10 @@ impl McpTool for BatchToggleMocksTool {
             "required": ["ids", "enabled"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -2005,6 +2117,10 @@ impl McpTool for ClearMockRecordingTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -2035,6 +2151,10 @@ impl McpTool for ClearMockHistoryTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("mocks:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,

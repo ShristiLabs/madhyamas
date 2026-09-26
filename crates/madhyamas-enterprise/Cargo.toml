@@ -40,6 +40,9 @@ futures.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+# ServiceExt::oneshot for driving axum routers in tests/scopes.rs
+# (dev-only, graph-neutral; axum already resolves tower with util).
+tower = { workspace = true, features = ["util"] }
 # OS RNG for Ed25519 keypair generation in license tests.
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 tempfile.workspace = true

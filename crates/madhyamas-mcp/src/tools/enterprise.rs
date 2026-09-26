@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{api_result, get_id, json_text};
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError, ToolAnnotations};
+use crate::types::{ContentBlock, McpError, ToolAnnotations, JWT_ONLY_PERMISSION};
 
 // ============ User Management ============
 
@@ -38,7 +38,7 @@ impl McpTool for ListUsersTool {
             read_only: Some(true),
             destructive: Some(false),
             idempotent: Some(true),
-            required_permission: Some("users:read".to_string()),
+            required_permission: Some(JWT_ONLY_PERMISSION.to_string()),
         })
     }
 
@@ -92,7 +92,7 @@ impl McpTool for CreateUserTool {
             read_only: Some(false),
             destructive: Some(false),
             idempotent: Some(false),
-            required_permission: Some("users:write".to_string()),
+            required_permission: Some(JWT_ONLY_PERMISSION.to_string()),
         })
     }
 
@@ -162,7 +162,7 @@ impl McpTool for DeleteUserTool {
             read_only: Some(false),
             destructive: Some(true),
             idempotent: Some(true),
-            required_permission: Some("users:delete".to_string()),
+            required_permission: Some(JWT_ONLY_PERMISSION.to_string()),
         })
     }
 
@@ -215,7 +215,7 @@ impl McpTool for UpdateUserRoleTool {
             read_only: Some(false),
             destructive: Some(false),
             idempotent: Some(true),
-            required_permission: Some("users:write".to_string()),
+            required_permission: Some(JWT_ONLY_PERMISSION.to_string()),
         })
     }
 
@@ -273,7 +273,7 @@ impl McpTool for GetAuditEventsTool {
             read_only: Some(true),
             destructive: Some(false),
             idempotent: Some(true),
-            required_permission: Some("audit:read".to_string()),
+            required_permission: Some(JWT_ONLY_PERMISSION.to_string()),
         })
     }
 
@@ -332,7 +332,7 @@ impl McpTool for ExportAuditTool {
             read_only: Some(true),
             destructive: Some(false),
             idempotent: Some(true),
-            required_permission: Some("audit:read".to_string()),
+            required_permission: Some(JWT_ONLY_PERMISSION.to_string()),
         })
     }
 
@@ -416,7 +416,7 @@ impl McpTool for GetMetricsTool {
             read_only: Some(true),
             destructive: Some(false),
             idempotent: Some(true),
-            required_permission: Some("metrics:read".to_string()),
+            required_permission: Some("config:read".to_string()),
         })
     }
 

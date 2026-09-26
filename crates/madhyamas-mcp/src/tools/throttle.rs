@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::json_text;
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 // ============ Internal helpers (existing free functions, kept as pub(super)) ============
 
@@ -159,6 +159,10 @@ impl McpTool for GetThrottleTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("throttle:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -218,6 +222,10 @@ impl McpTool for SetThrottleTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("throttle:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -264,6 +272,10 @@ impl McpTool for ToggleThrottleTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("throttle:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -296,6 +308,10 @@ impl McpTool for GetThrottlePresetsTool {
             "type": "object",
             "properties": {}
         })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("throttle:read"))
     }
 
     async fn execute(

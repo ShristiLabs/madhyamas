@@ -36,7 +36,30 @@ import {
 import { useToast } from "@/components/ui/use-toast"
 import { ApiError } from "@/lib/api/client"
 
-const SCOPES = ["traffic:read", "traffic:write", "mocks:read", "mocks:write", "config:read", "config:write", "*"]
+// Feature-scope taxonomy (issue #107, docs/CREDENTIAL_ONBOARDING.md).
+// Keys minted with these gates every /api route they name; routes outside
+// the taxonomy (user/admin endpoints, key/device management, scripts,
+// plugins, traffic deletion, session switching) require a web-session
+// login and always reject API keys.
+const SCOPES = [
+  "traffic:read",
+  "traffic:export",
+  "mocks:read",
+  "mocks:write",
+  "rewrites:read",
+  "rewrites:write",
+  "breakpoints:read",
+  "breakpoints:write",
+  "blocklist:read",
+  "blocklist:write",
+  "throttle:read",
+  "throttle:write",
+  "replay:execute",
+  "config:read",
+  "config:write",
+  "sessions:read",
+  "*",
+]
 const EXPIRY_OPTIONS = [
   { label: "Never", value: 0 },
   { label: "7 days", value: 7 },

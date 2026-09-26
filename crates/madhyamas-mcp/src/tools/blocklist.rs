@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{api_result, api_result_void, get_id};
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 /// List all block list entries.
 pub struct ListBlockListTool;
@@ -23,6 +23,10 @@ impl McpTool for ListBlockListTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("blocklist:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -53,6 +57,10 @@ impl McpTool for GetBlockListStatsTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("blocklist:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -113,6 +121,10 @@ impl McpTool for CreateBlockListEntryTool {
             "required": ["pattern"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("blocklist:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -149,6 +161,10 @@ impl McpTool for GetBlockListEntryTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("blocklist:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -187,6 +203,10 @@ impl McpTool for UpdateBlockListEntryTool {
             "required": ["id", "entry"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("blocklist:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -227,6 +247,10 @@ impl McpTool for DeleteBlockListEntryTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("blocklist:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -264,6 +288,10 @@ impl McpTool for ToggleBlockListEntryTool {
             "required": ["id", "enabled"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("blocklist:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,

@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::api_result;
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 /// Get Auto Save configuration.
 pub struct GetAutoSaveConfigTool;
@@ -22,6 +22,10 @@ impl McpTool for GetAutoSaveConfigTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -64,6 +68,10 @@ impl McpTool for UpdateAutoSaveConfigTool {
             }
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -95,6 +103,10 @@ impl McpTool for TriggerAutoSaveSnapshotTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:write"))
+    }
+
     async fn execute(
         &self,
         client: &Client,

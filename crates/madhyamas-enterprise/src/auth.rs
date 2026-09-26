@@ -215,6 +215,36 @@ impl Scope {
     }
 }
 
+/// Expand legacy scope grants to their issue #107 taxonomy equivalents.
+///
+/// The pre-#107 `required_scope` derivation treated sessions as part of the
+/// `traffic` resource and mapped the HAR round-trip to method-derived
+/// `traffic:write`/`traffic:read`. The taxonomy splits those surfaces, so
+/// keys minted under the old vocabulary keep the reach they legitimately
+/// had:
+///
+/// | Legacy grant        | Additional effective scopes |
+/// |---------------------|-----------------------------|
+/// | `traffic:read`      | `sessions:read` (session listing was resource `traffic` before the split) |
+/// | `traffic:write`     | `traffic:export` (the HAR import/export round-trip was the only traffic write surface) |
+/// | `*`                 | none needed — the wildcard already matches every taxonomy scope |
+///
+/// Losses are sanctioned by the #107 exclusion decision: legacy grants do
+/// NOT gain access to the JWT-only surface (key/device management, user
+/// and admin endpoints, scripts/plugins, traffic deletion, session
+/// switching) — a `*` key loses exactly those routes.
+pub fn effective_scopes(granted: &[String]) -> Vec<String> {
+    let mut effective = granted.to_vec();
+    for scope in granted {
+        match scope.as_str() {
+            "traffic:read" => effective.push("sessions:read".to_string()),
+            "traffic:write" => effective.push("traffic:export".to_string()),
+            _ => {}
+        }
+    }
+    effective
+}
+
 /// Hash a plaintext API key with SHA-256 and return the hex digest.
 ///
 /// API keys are high-entropy random tokens, so SHA-256 is sufficient (unlike

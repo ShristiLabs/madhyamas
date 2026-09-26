@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations};
 
 /// Get the current log rotation status (config, current file, archived files).
 pub struct GetLogStatusTool;
@@ -22,6 +22,10 @@ impl McpTool for GetLogStatusTool {
 
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:read"))
     }
 
     async fn execute(
@@ -71,6 +75,10 @@ impl McpTool for RotateLogsTool {
 
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:write"))
     }
 
     async fn execute(
@@ -165,6 +173,10 @@ impl McpTool for UpdateLogConfigTool {
                 }
             }
         })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("config:write"))
     }
 
     async fn execute(

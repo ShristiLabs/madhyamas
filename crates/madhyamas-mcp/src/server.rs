@@ -26,6 +26,16 @@ pub struct McpServer {
     tier: String,
     /// Configured transport mode.
     transport: McpTransport,
+    /// Effective feature scopes of the configured API key (issue #107).
+    ///
+    /// `Some(scopes)` when the server authenticates with an API key AND the
+    /// API server reported the key's (taxonomy-expanded) scopes via
+    /// `GET /api/auth/me`; the tools/list responses are then filtered so an
+    /// agent only discovers tools its key may use. `None` for JWT/no-auth
+    /// modes — and when the scopes lookup failed — in which case the full
+    /// tool list is served. The filter is progressive disclosure only; the
+    /// authoritative enforcement happens in the REST middleware.
+    key_scopes: Option<Vec<String>>,
 }
 
 impl McpServer {
@@ -70,6 +80,19 @@ impl McpServer {
             dyn_registry.merge(enterprise_registry());
         }
 
+        // Issue #107: when authenticating with an API key, fetch the key's
+        // effective feature scopes so tools/list can be filtered (an agent
+        // cannot even discover the tools its key lacks scope for). Failures
+        // fall back to an unfiltered list — the filter is progressive
+        // disclosure; the REST middleware remains the enforcing boundary.
+        let key_scopes = match &config.auth {
+            McpAuth::ApiKey(_) => Self::fetch_key_scopes(&http_client, &config.api_url),
+            _ => None,
+        };
+        if key_scopes.is_some() {
+            info!("API key scope filtering active for tools/list");
+        }
+
         Ok(Self {
             dyn_registry,
             tokio_runtime,
@@ -77,6 +100,7 @@ impl McpServer {
             api_url: config.api_url,
             tier,
             transport: config.transport,
+            key_scopes,
         })
     }
 
@@ -129,6 +153,62 @@ impl McpServer {
     /// Returns the detected API server tier.
     pub fn tier(&self) -> &str {
         &self.tier
+    }
+
+    /// Fetch the effective feature scopes of the configured API key.
+    ///
+    /// Calls `GET /api/auth/me` (the client's default headers carry the
+    /// `X-API-Key` credential) and reads the `scopes` array the enterprise
+    /// API attaches for key principals (already expanded to the issue #107
+    /// taxonomy by the server). Returns `None` on any failure — network
+    /// error, non-200 status, missing field, parse error — so OSS servers
+    /// (no scopes on `/auth/me`) and transient failures degrade to an
+    /// unfiltered tool list rather than an empty one.
+    fn fetch_key_scopes(client: &Client, api_url: &str) -> Option<Vec<String>> {
+        let url = format!("{}/api/auth/me", api_url);
+        let client = client.clone();
+        let result = std::thread::spawn(move || {
+            let runtime = match Runtime::new() {
+                Ok(r) => r,
+                Err(e) => {
+                    debug!("Key scope lookup: failed to create runtime: {}", e);
+                    return None;
+                }
+            };
+            runtime.block_on(async {
+                let resp = match client.get(&url).send().await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        debug!("Key scope lookup request failed: {}", e);
+                        return None;
+                    }
+                };
+                if !resp.status().is_success() {
+                    debug!("Key scope lookup non-200 status: {}", resp.status());
+                    return None;
+                }
+                let body: Value = match resp.json().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        debug!("Key scope lookup parse error: {}", e);
+                        return None;
+                    }
+                };
+                body.get("scopes").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter()
+                        .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<String>>()
+                })
+            })
+        })
+        .join()
+        .unwrap_or(None);
+        if result.is_none() {
+            // Either a hard failure or "no scopes reported" (OSS /auth/me
+            // has no scopes field) — both mean "don't filter".
+            debug!("No key scopes reported by the API server; tools/list is unfiltered");
+        }
+        result
     }
 
     /// Run the MCP server using stdio transport
@@ -196,6 +276,7 @@ impl McpServer {
             registry: std::sync::Arc::new(registry),
             http_client: self.http_client.clone(),
             api_url: self.api_url.clone(),
+            key_scopes: self.key_scopes.clone(),
         };
         let app = axum::Router::new()
             .route("/", axum::routing::post(handle_http_request))
@@ -300,7 +381,8 @@ impl McpServer {
 
     /// Handle tools/list request
     fn handle_list_tools(&self, request: JsonRpcRequest) -> JsonRpcResponse {
-        let tools = self.dyn_registry.list_tools();
+        let tools =
+            filter_tools_by_scopes(self.dyn_registry.list_tools(), self.key_scopes.as_deref());
         let result = ListToolsResult { tools };
 
         JsonRpcResponse {
@@ -912,6 +994,61 @@ impl McpServer {
 
 /// Owned state for the HTTP transport's axum router.
 ///
+/// Whether a granted scope string satisfies a required scope string.
+///
+/// Local mirror of the enterprise `Scope::matches` semantics (this crate
+/// must not depend on the enterprise crate): a `*` in either half of the
+/// granted scope matches any value in the corresponding required half, and
+/// a bare `"*"` counts as `"*:*"`.
+fn scope_satisfies(required: &str, granted: &str) -> bool {
+    let parse = |s: &str| -> (String, String) {
+        let s = s.trim();
+        if s == "*" {
+            return ("*".to_string(), "*".to_string());
+        }
+        match s.split_once(':') {
+            Some((r, p)) => (r.to_string(), p.to_string()),
+            None => (s.to_string(), String::new()),
+        }
+    };
+    let (rr, rp) = parse(required);
+    let (gr, gp) = parse(granted);
+    (gr == "*" || gr == rr) && (gp == "*" || gp == rp)
+}
+
+/// Filter a tools/list result by the API key's effective scopes
+/// (issue #107 progressive disclosure).
+///
+/// `key_scopes` is `None` for JWT/no-auth modes (and when the scopes
+/// lookup failed): the list is returned unchanged. When it is `Some`:
+/// - tools WITHOUT annotations are hidden — deny-by-default, the same
+///   posture the REST route map takes for unmapped routes;
+/// - tools annotated `public()` (no `required_permission`) stay visible;
+/// - tools annotated with [`JWT_ONLY_PERMISSION`] are hidden — no key
+///   scope can ever satisfy them;
+/// - every other tool stays visible iff one of the granted scopes
+///   satisfies its `required_permission` (wildcards honored).
+///
+/// This filters discovery only; `tools/call` still executes (and the REST
+/// middleware still enforces) so stale filters never break a legitimately
+/// scoped call.
+fn filter_tools_by_scopes(tools: Vec<Tool>, key_scopes: Option<&[String]>) -> Vec<Tool> {
+    let Some(scopes) = key_scopes else {
+        return tools;
+    };
+    tools
+        .into_iter()
+        .filter(|tool| match tool.annotations.as_ref() {
+            None => false,
+            Some(ann) => match ann.required_permission.as_deref() {
+                None => true,
+                Some(JWT_ONLY_PERMISSION) => false,
+                Some(required) => scopes.iter().any(|g| scope_satisfies(required, g)),
+            },
+        })
+        .collect()
+}
+
 /// Unlike the stdio transport (which borrows from `McpServer`), the HTTP
 /// transport needs an owned, `Clone`-able state because axum requires
 /// `S: Clone + Send + Sync + 'static`. The tool registry is wrapped in
@@ -921,6 +1058,9 @@ struct HttpMcpState {
     registry: std::sync::Arc<DynToolRegistry>,
     http_client: Client,
     api_url: String,
+    /// Effective scopes of the API key (issue #107 tool filtering);
+    /// `None` leaves tools/list unfiltered.
+    key_scopes: Option<Vec<String>>,
 }
 
 /// Axum handler for MCP HTTP transport: accepts a JSON-RPC request body
@@ -1011,7 +1151,8 @@ async fn handle_http_request_async(
             }
         }
         "tools/list" => {
-            let tools = state.registry.list_tools();
+            let tools =
+                filter_tools_by_scopes(state.registry.list_tools(), state.key_scopes.as_deref());
             let result = ListToolsResult { tools };
             JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
@@ -1343,6 +1484,224 @@ mod tests {
                 "unexpected Authorization header: {}",
                 request
             );
+        }
+    }
+
+    /// Spawn a mock HTTP server returning an arbitrary JSON body on every
+    /// request. Used to exercise the key-scope lookup against
+    /// `/api/auth/me` responses of different shapes.
+    async fn spawn_json_server(body: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{}", addr);
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = vec![0u8; 8192];
+                    let _ = socket.read(&mut buf).await;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.flush().await;
+                });
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn scope_satisfies_exact_and_wildcard_matching() {
+        assert!(scope_satisfies("traffic:read", "traffic:read"));
+        assert!(scope_satisfies("traffic:read", "*"));
+        assert!(scope_satisfies("traffic:read", "traffic:*"));
+        assert!(scope_satisfies("traffic:read", "*:read"));
+        assert!(scope_satisfies("mocks:write", "mocks:write"));
+        assert!(!scope_satisfies("traffic:read", "traffic:write"));
+        assert!(!scope_satisfies("mocks:write", "mocks:read"));
+        assert!(!scope_satisfies("traffic:read", "sessions:read"));
+    }
+
+    #[test]
+    fn scope_satisfies_bare_star_and_uncolonized_grants() {
+        // A grant without a colon only matches a required scope with the
+        // same single word (empty permission half on both sides).
+        assert!(scope_satisfies("replay:execute", "replay:execute"));
+        assert!(!scope_satisfies("traffic:read", "traffic"));
+        // Whitespace is trimmed on both sides.
+        assert!(scope_satisfies("traffic:read", " traffic:read "));
+    }
+
+    fn tool_with(permission: Option<&str>) -> crate::types::Tool {
+        crate::types::Tool {
+            name: "probe".to_string(),
+            description: String::new(),
+            input_schema: serde_json::json!({}),
+            annotations: Some(crate::types::ToolAnnotations {
+                read_only: None,
+                destructive: None,
+                idempotent: None,
+                required_permission: permission.map(|p| p.to_string()),
+            }),
+        }
+    }
+
+    #[test]
+    fn filter_tools_none_scopes_returns_everything() {
+        let tools = vec![
+            tool_with(Some("traffic:read")),
+            tool_with(None),
+            tool_with(Some(crate::types::JWT_ONLY_PERMISSION)),
+        ];
+        assert_eq!(filter_tools_by_scopes(tools.clone(), None).len(), 3);
+        // Empty scope list: nothing satisfies an empty grant set.
+        let granted: Vec<String> = vec![];
+        assert_eq!(
+            filter_tools_by_scopes(tools.clone(), Some(&granted)).len(),
+            1, // only the unpermissioned (public) tool survives
+        );
+    }
+
+    #[test]
+    fn filter_tools_hides_unannotated_and_jwt_only_tools() {
+        let named = |name: &str, permission: Option<&str>| crate::types::Tool {
+            name: name.to_string(),
+            description: String::new(),
+            input_schema: serde_json::json!({}),
+            annotations: Some(crate::types::ToolAnnotations {
+                read_only: None,
+                destructive: None,
+                idempotent: None,
+                required_permission: permission.map(|p| p.to_string()),
+            }),
+        };
+        let unannotated = crate::types::Tool {
+            name: "bare".to_string(),
+            description: String::new(),
+            input_schema: serde_json::json!({}),
+            annotations: None,
+        };
+        let tools = vec![
+            named("scoped", Some("traffic:read")),
+            unannotated,
+            named("admin_only", Some(crate::types::JWT_ONLY_PERMISSION)),
+            named("public", None),
+        ];
+        let granted = vec!["traffic:read".to_string()];
+        let visible: Vec<String> = filter_tools_by_scopes(tools, Some(&granted))
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        // Deny-by-default: unannotated and jwt:only tools are hidden even
+        // for wildcard-satisfying grants; public() tools stay visible.
+        assert_eq!(visible, vec!["scoped".to_string(), "public".to_string()]);
+    }
+
+    #[test]
+    fn filter_tools_wildcard_grant_shows_scoped_tools() {
+        let tools = vec![
+            tool_with(Some("traffic:read")),
+            tool_with(Some("mocks:write")),
+            tool_with(Some("replay:execute")),
+        ];
+        let granted = vec!["*".to_string()];
+        assert_eq!(filter_tools_by_scopes(tools, Some(&granted)).len(), 3);
+    }
+
+    #[test]
+    fn filter_tools_partial_grant_hides_unsatisfied_tools() {
+        let tools = vec![
+            tool_with(Some("traffic:read")),
+            tool_with(Some("mocks:write")),
+        ];
+        let granted = vec!["mocks:write".to_string()];
+        let visible: Vec<String> = filter_tools_by_scopes(tools, Some(&granted))
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(visible, vec!["probe".to_string()]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn key_scope_fetch_populates_from_auth_me() {
+        let url = spawn_json_server(
+            r#"{"id":"u1","username":"agent","email":"","role":"user","scopes":["traffic:read","sessions:read"]}"#,
+        )
+        .await;
+        let config = McpConfig {
+            api_url: url,
+            timeout_secs: 5,
+            auth: McpAuth::ApiKey("madhyamas_test".to_string()),
+            transport: McpTransport::Stdio,
+        };
+        let server = McpServer::new(config).unwrap();
+        assert_eq!(
+            server.key_scopes,
+            Some(vec![
+                "traffic:read".to_string(),
+                "sessions:read".to_string()
+            ])
+        );
+        std::mem::forget(server);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn key_scope_fetch_degrades_when_scopes_field_missing() {
+        // OSS /auth/me (or a JWT principal) reports no scopes field —
+        // the tool list must degrade to unfiltered, not empty.
+        let url = spawn_json_server(r#"{"id":"u1","username":"agent","role":"user"}"#).await;
+        let config = McpConfig {
+            api_url: url,
+            timeout_secs: 5,
+            auth: McpAuth::ApiKey("madhyamas_test".to_string()),
+            transport: McpTransport::Stdio,
+        };
+        let server = McpServer::new(config).unwrap();
+        assert_eq!(server.key_scopes, None);
+        std::mem::forget(server);
+    }
+
+    #[tokio::test]
+    async fn key_scope_fetch_degrades_on_unreachable_server() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let config = McpConfig {
+            api_url: format!("http://127.0.0.1:{port}"),
+            timeout_secs: 2,
+            auth: McpAuth::ApiKey("madhyamas_test".to_string()),
+            transport: McpTransport::Stdio,
+        };
+        let server = McpServer::new(config).unwrap();
+        assert_eq!(server.key_scopes, None);
+        std::mem::forget(server);
+    }
+
+    #[tokio::test]
+    async fn jwt_and_no_auth_modes_skip_scope_fetch() {
+        // No API key configured: key_scopes stays None regardless of the
+        // server behind the URL (this one would answer with scopes).
+        let url = spawn_json_server(
+            r#"{"id":"u1","username":"agent","role":"user","scopes":["traffic:read"]}"#,
+        )
+        .await;
+        for auth in [McpAuth::Jwt("token".to_string()), McpAuth::None] {
+            let config = McpConfig {
+                api_url: url.clone(),
+                timeout_secs: 5,
+                auth,
+                transport: McpTransport::Stdio,
+            };
+            let server = McpServer::new(config).unwrap();
+            assert_eq!(server.key_scopes, None);
+            std::mem::forget(server);
         }
     }
 }

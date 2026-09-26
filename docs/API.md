@@ -72,6 +72,12 @@ graph LR
 - Enterprise endpoints are mounted only when built with the `enterprise` Cargo
   feature and enabled at startup; they are JWT-protected when an auth service is
   configured (see [ENTERPRISE.md](ENTERPRISE.md)).
+- In enterprise builds with `--enable-auth`, authentication covers the whole
+  `/api` surface (these domain routes included): unauthenticated requests
+  return `401`, and API keys are authorized per-route by the feature-scope
+  taxonomy in [API_ENTERPRISE.md](API_ENTERPRISE.md#feature-scopes-issue-107)
+  (issue #107). OSS builds and auth-off deployments are unauthenticated as
+  before.
 
 ## Common Query Parameters
 

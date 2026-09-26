@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{get_id, json_text};
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations, JWT_ONLY_PERMISSION};
 
 // ============ Internal helpers (existing free functions, kept as pub(super)) ============
 
@@ -239,6 +239,10 @@ impl McpTool for ListSessionsTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("sessions:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -304,6 +308,10 @@ impl McpTool for CreateSessionTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -350,6 +358,10 @@ impl McpTool for SwitchSessionTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -393,6 +405,10 @@ impl McpTool for ExportSessionTool {
         })
     }
 
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission("sessions:read"))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -433,6 +449,10 @@ impl McpTool for ImportSessionTool {
             },
             "required": ["session_data"]
         })
+    }
+
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
     }
 
     async fn execute(

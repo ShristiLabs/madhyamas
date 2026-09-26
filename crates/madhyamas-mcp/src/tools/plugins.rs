@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{api_result, get_id, json_text};
 use super::tool_trait::McpTool;
-use crate::types::{ContentBlock, McpError};
+use crate::types::{ContentBlock, McpError, ToolAnnotations, JWT_ONLY_PERMISSION};
 
 // ============ Internal helpers (existing free functions, kept as pub(super)) ============
 
@@ -401,6 +401,10 @@ impl McpTool for ListPluginsTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -434,6 +438,10 @@ impl McpTool for GetPluginTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -468,6 +476,10 @@ impl McpTool for EnablePluginTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -502,6 +514,10 @@ impl McpTool for DisablePluginTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -536,6 +552,10 @@ impl McpTool for GetPluginStatsTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -564,6 +584,10 @@ impl McpTool for ReloadPluginsTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -606,6 +630,10 @@ impl McpTool for InstallPluginTool {
             "required": ["target"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -648,6 +676,10 @@ impl McpTool for UninstallPluginTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -682,6 +714,10 @@ impl McpTool for SearchRegistryTool {
             "required": ["query"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -713,6 +749,10 @@ impl McpTool for ListRegistryTool {
             "properties": {}
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -746,6 +786,10 @@ impl McpTool for GetPluginSchemaTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -780,6 +824,10 @@ impl McpTool for GetPluginSettingsTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -818,6 +866,10 @@ impl McpTool for UpdatePluginSettingsTool {
             "required": ["id", "settings"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -860,6 +912,10 @@ impl McpTool for GetPluginLogsTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -897,6 +953,10 @@ impl McpTool for GetPluginPanelsTool {
             "required": ["id"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -927,6 +987,10 @@ impl McpTool for GetPluginTemplatesTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -956,6 +1020,10 @@ impl McpTool for GetRegistryConfigTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -990,6 +1058,10 @@ impl McpTool for UpdateRegistryConfigTool {
             "required": ["repo"]
         })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,
@@ -1020,6 +1092,10 @@ impl McpTool for RefreshRegistryTool {
     fn input_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
+    fn annotations(&self) -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::permission(JWT_ONLY_PERMISSION))
+    }
+
     async fn execute(
         &self,
         client: &Client,

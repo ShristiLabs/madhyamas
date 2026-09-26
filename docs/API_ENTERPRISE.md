@@ -1,9 +1,16 @@
 # API — Enterprise
 
 Enterprise endpoints are feature-gated behind the `enterprise` Cargo feature
-and must be enabled at startup. When an auth service is configured, these
-endpoints are JWT-protected via `auth_middleware` (see [ENTERPRISE.md](ENTERPRISE.md)).
-Public routes (`/auth/login`, `/health/detailed`) bypass auth. Base path: `/api`.
+and must be enabled at startup. When an auth service is configured, the
+authentication middleware guards the **entire `/api` surface** — the OSS
+routes (traffic, mocks, rewrites, …) merged with the enterprise router —
+not just the enterprise endpoints (issue #107). Unauthenticated `/api`
+requests return `401` (e.g. `GET /api/traffic` without credentials).
+Public routes (`/auth/login`, `/auth/refresh`, `/health`,
+`/health/detailed`, `/license`, `/cert/ca`, `/devices/enroll`) bypass
+auth; `/api/ws` authenticates in-handler via `?token=` /
+`Sec-WebSocket-Protocol`. The OSS build and deployments running without
+`--enable-auth` are unaffected. Base path: `/api`.
 
 ## Authentication
 
@@ -22,6 +29,73 @@ JWTs use HMAC-SHA256 with claims: `sub` (user ID), `iss` ("madhyamas"),
 `madhyamas_{hex}` and are sent via the `X-API-Key` header (configurable);
 per-device credentials use the distinct `mdy_dev_{hex}` prefix and are
 connect-only (see [Devices](#devices)).
+
+When `/auth/me` is called with an API key, the response additionally
+carries the key's effective `scopes` array (taxonomy-expanded, see
+[Feature scopes](#feature-scopes-issue-107)); JWT callers have no `scopes`
+field. The MCP server consumes this to filter its tool list.
+
+## Feature scopes (issue #107)
+
+API keys are authorized by *feature scopes* — `{feature}:{action}` strings
+mapped to every `/api` route. JWT principals are authorized by their RBAC
+role instead; the scope map does not apply to them.
+
+### Taxonomy
+
+| Scope | Gates |
+|---|---|
+| `traffic:read` | `GET /api/traffic*`, traffic count/entry detail, WebSocket-traffic inspection (`/api/ws-traffic/*`), gRPC inspection (`/api/grpc/*`), script traces of a traffic entry |
+| `traffic:export` | HAR export (`/api/export/har`), curl export (`/api/export/curl/{id}`), HAR import (`/api/traffic/import/har`) — the bulk round-trip pair |
+| `mocks:read` / `mocks:write` | Mock CRUD, collections, templates, analytics, hit history, recording status (read) vs. every mutation incl. toggle/import/test/preview (write) |
+| `rewrites:read` / `rewrites:write` | Rewrite rules CRUD (rule deletion counts as write) |
+| `breakpoints:read` / `breakpoints:write` | Breakpoint CRUD, paused-traffic reads (read) vs. set/resume (write) |
+| `blocklist:read` / `blocklist:write` | Block rules CRUD, stats |
+| `throttle:read` / `throttle:write` | Throttle profile get/presets vs. set/toggle |
+| `replay:execute` | The whole replay feature — saved-request management, execute/batch, history. Opt-in only: replay sends requests upstream |
+| `config:read` / `config:write` | `GET/PATCH /api/config`, autosave, capture status/toggle, focus hosts, mirror, log rotation, persistence round-trip, metrics/performance/instances monitoring, enterprise config export/import |
+| `sessions:read` | Session list/get/export |
+
+`*` (or `*:*`) matches every scope above. Scope matching supports a
+wildcard in either half (`traffic:*`, `*:read`).
+
+### JWT-only exclusions
+
+The following surfaces **always reject API keys** (`403`) regardless of
+scopes — they require a JWT web-session principal:
+
+- key and device management (`/api/auth/api-keys*`, `/api/devices*`)
+- user/admin endpoints (`/api/users*`, `/api/rbac*`, `/api/audit*`, `/api/onboarding*`)
+- scripts and plugins (code-execution adjacent)
+- secrets (`/api/secrets*`)
+- traffic deletion (`/api/traffic/clear`, `/api/ws-traffic/clear`, `/api/grpc/clear`)
+- session switching/creation/import/deletion (global state)
+
+API keys keep exactly three self-identity endpoints: `/api/auth/me`,
+`/api/auth/logout`, `/api/auth/validate`. This closes the pre-#107 gap
+where a key principal passed `require_permission_middleware` unchecked
+and could reach user/audit routes.
+
+### Deny-by-default
+
+Any route not present in the map rejects key principals (`403`); JWT
+principals pass as before (RBAC layers decide). Unmapped paths are a
+routing matter (`404`).
+
+### Legacy scope reconciliation
+
+Pre-#107 keys keep the reach they legitimately had:
+
+| Legacy grant | Effective scopes |
+|---|---|
+| `traffic:read` | `traffic:read` + `sessions:read` (sessions were resource `traffic` before the split) |
+| `traffic:write` | `traffic:write` + `traffic:export` (the HAR round-trip was the only traffic write surface) |
+| `*` | unchanged — the wildcard matches every taxonomy scope |
+
+Sanctioned loss: keys (including `*` keys) lose **only** the JWT-only
+exclusion surface above; their traffic/mocks/config/etc. reach is
+unaffected. The web UI key dialog offers the taxonomy strings for new
+keys.
 
 ## Users
 

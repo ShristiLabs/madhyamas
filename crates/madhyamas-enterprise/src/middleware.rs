@@ -79,6 +79,18 @@ const PUBLIC_PATHS: &[&str] = &[
     // enrollment token itself is the credential — the device scanning
     // the QR has no web session to authenticate with.
     "/api/devices/enroll",
+    // CA certificate distribution (issue #107): the CA certificate is
+    // public by definition — it is the artifact clients (browsers,
+    // companion apps following the `madhyamas://connect` QR payload's
+    // `ca=` URL) must fetch BEFORE they can trust the proxy. Only the
+    // CA *key* is a secret and it never leaves the server.
+    "/api/cert/ca",
+    // WebSocket traffic stream (issue #107): `/api/ws` authenticates
+    // in-handler via `?token=` / `Sec-WebSocket-Protocol` because the
+    // upgrade extractor must consume the connection before middleware
+    // could reject it (Phase 9 design). Skipping here preserves that
+    // flow while the rest of `/api` gains middleware coverage.
+    "/api/ws",
 ];
 
 /// Returns true if the request path is exempt from authentication.
@@ -112,6 +124,8 @@ fn is_public_path(uri: &Uri) -> bool {
             | "/auth/refresh"
             | "/license"
             | "/devices/enroll"
+            | "/cert/ca"
+            | "/ws"
     )
 }
 
@@ -145,64 +159,164 @@ struct ApiKeyQuery {
     api_key: Option<String>,
 }
 
-/// Determine the required scope for a given HTTP method + path.
+/// How a route classifies principals, per the issue #107 feature-scope
+/// taxonomy (`docs/CREDENTIAL_ONBOARDING.md` — *Feature scopes*).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouteAccess {
+    /// Any authenticated principal may proceed (JWT or API key); no
+    /// feature scope is required. Reserved for the self-identity surface
+    /// (`/api/auth/me`, `/api/auth/logout`, `/api/auth/validate`).
+    Authenticated,
+    /// API keys must hold this scope; JWT principals pass through (their
+    /// authorization is decided by RBAC layers / handlers as before).
+    Scope(Scope),
+    /// JWT web-session principals only. API keys are rejected with `403`
+    /// regardless of their scopes — key/device management, user/admin
+    /// endpoints, scripts/plugins, traffic deletion, and session switching
+    /// stay with the owner's web session (issue #107 decision: exclusions
+    /// are JWT-only). This is also the deny-by-default outcome for any
+    /// route not present in the map.
+    JwtOnly,
+}
+
+/// Classify a request against the issue #107 route-to-scope map.
 ///
-/// Returns `None` for routes that don't map to a scope (e.g. auth routes,
-/// onboarding). The scope format is `<resource>:<permission>` where
-/// `permission` is derived from the HTTP method: GET → `read`,
-/// POST/PUT/PATCH → `write`, DELETE → `delete`.
-pub fn required_scope(method: &axum::http::Method, path: &str) -> Option<Scope> {
-    // Strip /api prefix if present (handles both nested and non-nested paths).
-    let path = path.strip_prefix("/api/").unwrap_or(path);
-    // Auth/onboarding/license routes are not scope-gated.
-    if path.starts_with("/auth/")
-        || path.starts_with("/onboarding")
-        || path == "/license"
-        || path == "/health"
-        || path == "/health/detailed"
-        || path == "/metrics"
-        || path == "/performance"
-    {
-        return None;
+/// The map covers every `/api` route in both the OSS surface
+/// (`madhyamas-api/src/routes.rs`) and the enterprise router
+/// (`middleware`-independent routes included). Anything not matched falls
+/// through to [`RouteAccess::JwtOnly`] — deny-by-default for key
+/// principals, unchanged pass-through for JWT (whose authorization is
+/// enforced by RBAC layers downstream).
+///
+/// Method handling: reads (`GET`/`HEAD`) map to the feature's `:read`
+/// scope; every mutation (`POST`/`PUT`/`PATCH`/`DELETE`) maps to `:write`
+/// — rule CRUD *deletion* is part of the write line (only deletion of
+/// captured traffic/data is excluded, which is handled by explicit
+/// JwtOnly entries below). Asymmetric scopes (`traffic:export` on the HAR
+/// round-trip, `replay:execute` on everything replay, `sessions:read` on
+/// reads only) are explicit.
+pub fn route_access(method: &axum::http::Method, path: &str) -> RouteAccess {
+    use axum::http::Method;
+    use RouteAccess::{Authenticated, JwtOnly};
+
+    // Strip the /api prefix if present (handles both nested and non-nested
+    // paths; base-path deployments strip their prefix at the outer nest).
+    // Stripping "/api" — not "/api/" — keeps the leading slash so the
+    // "/"-anchored matches below see the same shape for both forms:
+    // stripping "/api/" from "/api/traffic" would yield "traffic" and
+    // fall through to deny-by-default.
+    let path = path.strip_prefix("/api").unwrap_or(path);
+    let is_read = matches!(*method, Method::GET | Method::HEAD);
+
+    // Self-identity surface: keys keep exactly these (no escalation
+    // possible from them).
+    if matches!(path, "/auth/me" | "/auth/logout" | "/auth/validate") {
+        return Authenticated;
     }
-    let permission = match *method {
-        axum::http::Method::GET => "read",
-        axum::http::Method::POST | axum::http::Method::PUT | axum::http::Method::PATCH => "write",
-        axum::http::Method::DELETE => "delete",
-        _ => "read",
-    };
-    let resource = if path.starts_with("/traffic") || path.starts_with("/sessions") {
-        "traffic"
+
+    // JWT-only surface (issue #107 decision 1). `/devices/enroll` and the
+    // auth/login|refresh|license/health|cert/ca/ws paths are public and
+    // are skipped by `is_public_path` before this function runs.
+    if path.starts_with("/auth/api-keys") // key management
+        || path.starts_with("/devices")   // device management
+        || path.starts_with("/users")     // user/admin endpoints
+        || path.starts_with("/rbac")      // user/admin endpoints
+        || path.starts_with("/audit")     // user/admin endpoints
+        || path.starts_with("/onboarding")
+        || path.starts_with("/scripts")   // code-execution adjacent
+        || path.starts_with("/plugins")   // code-execution adjacent
+        || path.starts_with("/secrets")
+        || path == "/traffic/clear"       // traffic deletion
+        || path == "/ws-traffic/clear"    // traffic deletion
+        || path == "/grpc/clear"          // traffic deletion
+        || (path.starts_with("/sessions") && !is_read)
+    // switching/creation/import/deletion
+    {
+        return JwtOnly;
+    }
+
+    // Feature-scope surface (taxonomy order follows
+    // docs/CREDENTIAL_ONBOARDING.md). The only non-read mutation on the
+    // traffic surface left here is POST /traffic/import/har — the HAR
+    // round-trip pairs with export under `traffic:export`.
+    let required = if path.starts_with("/traffic")
+        || path.starts_with("/ws-traffic")
+        || path.starts_with("/grpc")
+    {
+        if is_read {
+            "traffic:read"
+        } else {
+            "traffic:export"
+        }
+    } else if path.starts_with("/sessions") {
+        // Reads only (list/get/export); mutations returned JwtOnly above.
+        "sessions:read"
+    } else if path.starts_with("/export/har") || path.starts_with("/export/curl") {
+        "traffic:export"
+    } else if path.starts_with("/replay") {
+        // The whole replay feature — including saved-request management
+        // and history — hangs off the single opt-in `replay:execute`
+        // scope: replay sends requests upstream (side effects leave the
+        // proxy), so the taxonomy deliberately grants nothing weaker.
+        "replay:execute"
     } else if path.starts_with("/mocks") {
-        "mocks"
+        if is_read {
+            "mocks:read"
+        } else {
+            "mocks:write"
+        }
     } else if path.starts_with("/rewrites") {
-        "rewrites"
+        if is_read {
+            "rewrites:read"
+        } else {
+            "rewrites:write"
+        }
     } else if path.starts_with("/breakpoints") {
-        "breakpoints"
-    } else if path.starts_with("/throttle") {
-        "throttle"
+        if is_read {
+            "breakpoints:read"
+        } else {
+            "breakpoints:write"
+        }
     } else if path.starts_with("/blocklist") {
-        "blocklist"
-    } else if path.starts_with("/focus") {
-        "focus"
-    } else if path.starts_with("/scripts") {
-        "scripts"
-    } else if path.starts_with("/plugins") {
-        "plugins"
-    } else if path.starts_with("/config") || path.starts_with("/secrets") {
-        // Secrets management is admin-only: only the admin role holds
-        // config:write/config:delete in the default RBAC matrix (#87).
-        "config"
-    } else if path.starts_with("/users") {
-        "users"
-    } else if path.starts_with("/audit") {
-        "audit"
-    } else if path.starts_with("/rbac") {
-        "rbac"
+        if is_read {
+            "blocklist:read"
+        } else {
+            "blocklist:write"
+        }
+    } else if path.starts_with("/throttle") {
+        if is_read {
+            "throttle:read"
+        } else {
+            "throttle:write"
+        }
+    } else if path.starts_with("/config")
+        || path.starts_with("/autosave")
+        || path.starts_with("/capture")
+        || path.starts_with("/focus")
+        || path.starts_with("/mirror")
+        || path.starts_with("/logs")
+        || path.starts_with("/persistence")
+        || path.starts_with("/metrics")
+        || path.starts_with("/performance")
+        || path.starts_with("/instances")
+    {
+        // The config family also carries capture stats/toggle, focus
+        // hosts, mirror, log rotation, persistence round-trip and the
+        // monitoring surface (metrics/performance/instances) — all
+        // "reason about / tune the setup" state. `/config/export` and
+        // `/config/import` (enterprise router) land here too, preserving
+        // the pre-#107 config:read / config:write mapping they enforced.
+        if is_read {
+            "config:read"
+        } else {
+            "config:write"
+        }
     } else {
-        return None;
+        // Deny-by-default for key principals; JWT pass-through keeps
+        // today's behavior (RBAC layers decide downstream).
+        return JwtOnly;
     };
-    Some(Scope::parse(&format!("{resource}:{permission}")))
+    RouteAccess::Scope(Scope::parse(required))
 }
 
 /// Check whether any of the granted scopes satisfies the required scope.
@@ -222,7 +336,8 @@ fn scope_authorized(required: &Scope, granted: &[String]) -> bool {
 ///
 /// On success, an [`AuthUser`] is inserted into request extensions. For API
 /// key auth, the granted scopes are checked against the route's required
-/// scope (see [`required_scope`]); a mismatch yields `403 Forbidden`.
+/// scope (see [`route_access`]); a mismatch — or a route on the JWT-only
+/// exclusion list — yields `403 Forbidden`.
 ///
 /// Public paths (see [`PUBLIC_PATHS`]) bypass this check entirely.
 ///
@@ -275,25 +390,57 @@ pub async fn auth_middleware(
     if let Some(key) = api_key_header.or(api_key_query) {
         match state.validate_api_key(&key).await {
             Ok(api_key_auth) => {
-                // Scope enforcement for API key auth.
-                if let Some(ref required) = required_scope(&method, &path) {
-                    if !scope_authorized(required, &api_key_auth.scopes) {
-                        return forbidden("Insufficient API key scope");
+                // Feature-scope enforcement for API key auth (issue #107).
+                // Legacy grants are expanded to their taxonomy equivalents
+                // first (see `effective_scopes`).
+                let effective = crate::auth::effective_scopes(&api_key_auth.scopes);
+                match route_access(&method, &path) {
+                    RouteAccess::Scope(ref required) => {
+                        if !scope_authorized(required, &effective) {
+                            return forbidden("Insufficient API key scope");
+                        }
+                    }
+                    RouteAccess::Authenticated => {}
+                    RouteAccess::JwtOnly => {
+                        return forbidden(
+                            "API keys are not permitted on this endpoint; \
+                             a web-session (JWT) login is required",
+                        );
                     }
                 }
                 let auth_user = AuthUser {
                     claims: None,
-                    scopes: Some(api_key_auth.scopes.clone()),
+                    scopes: Some(effective),
                     user_id: api_key_auth.user_id.clone(),
                     role: "user".to_string(),
                     key_id: Some(api_key_auth.key_id.clone()),
                     session_id: None,
                 };
-                audit.log(
-                    crate::AuditEvent::new(crate::AuditEventType::Login, "API key authenticated")
+                // Audit key logins only on the /auth surface: since issue
+                // #107 the middleware covers the whole /api nest, and
+                // polling routes (traffic, mocks, ...) would otherwise
+                // flood the audit log with per-request Login events.
+                // Strip "/api" (not "/api/") so both the nest-stripped
+                // ("/auth/me") and full ("/api/auth/me") forms match.
+                if path
+                    .strip_prefix("/api")
+                    .unwrap_or(&path)
+                    .starts_with("/auth/")
+                {
+                    audit.log(
+                        crate::AuditEvent::new(
+                            crate::AuditEventType::Login,
+                            "API key authenticated",
+                        )
                         .with_user(api_key_auth.user_id.clone())
                         .with_api_key(api_key_auth.key_id.clone()),
-                );
+                    );
+                } else {
+                    tracing::debug!(
+                        key_id = %api_key_auth.key_id,
+                        "API key authenticated"
+                    );
+                }
                 request.extensions_mut().insert(auth_user);
                 return next.run(request).await;
             }
@@ -420,10 +567,12 @@ pub struct PermissionState {
 /// rejected with `401`.
 ///
 /// For JWT-authenticated users, the role from the JWT claims is checked
-/// against the RBAC matrix. For API-key-authenticated users, scope
-/// enforcement has already been applied in [`auth_middleware`], so this
-/// middleware allows the request through (the scopes were already validated
-/// against the route's required scope).
+/// against the RBAC matrix. API-key-authenticated requests are rejected:
+/// every route guarded by this middleware is on the JWT-only exclusion
+/// list (user/admin endpoints, audit clear), and the route-scope map in
+/// [`auth_middleware`] already denies keys there — this check ensures the
+/// middleware can never wave a key principal through on its own
+/// (issue #107 closes that pre-existing bypass).
 ///
 /// Apply with `axum::middleware::from_fn_with_state(state, require_permission_middleware)`.
 pub async fn require_permission_middleware(
@@ -435,9 +584,10 @@ pub async fn require_permission_middleware(
         return unauthorized("Authentication required");
     };
 
-    // API key auth: scope already enforced in auth_middleware.
+    // API key auth: permission-gated routes require a JWT web-session
+    // principal (issue #107).
     if auth_user.scopes.is_some() {
-        return next.run(request).await;
+        return forbidden("API key authentication is not permitted on this endpoint");
     }
 
     let role = role_from_auth_user(auth_user);
@@ -474,5 +624,252 @@ pub fn require_permission(resource_type: ResourceType, permission: Permission) -
         rbac: Arc::new(RbacManager::new()),
         resource_type,
         permission,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{Method, Uri};
+
+    fn scope(resource: &str, permission: &str) -> RouteAccess {
+        RouteAccess::Scope(Scope {
+            resource: resource.to_string(),
+            permission: permission.to_string(),
+        })
+    }
+
+    fn access(method: &str, path: &str) -> RouteAccess {
+        route_access(&Method::from_bytes(method.as_bytes()).unwrap(), path)
+    }
+
+    #[test]
+    fn route_access_traffic_family_reads_and_har_roundtrip() {
+        // Reads (with and without the /api prefix) map to traffic:read.
+        assert_eq!(access("GET", "/api/traffic"), scope("traffic", "read"));
+        assert_eq!(access("GET", "/traffic"), scope("traffic", "read"));
+        assert_eq!(access("HEAD", "/api/traffic"), scope("traffic", "read"));
+        assert_eq!(access("GET", "/api/ws-traffic"), scope("traffic", "read"));
+        assert_eq!(access("GET", "/api/grpc"), scope("traffic", "read"));
+        // The only non-read traffic mutation left is the HAR round-trip,
+        // which pairs with export under traffic:export.
+        assert_eq!(
+            access("POST", "/api/traffic/import/har"),
+            scope("traffic", "export")
+        );
+        // Traffic deletion is JWT-only.
+        assert_eq!(access("DELETE", "/api/traffic/clear"), RouteAccess::JwtOnly);
+        assert_eq!(
+            access("DELETE", "/api/ws-traffic/clear"),
+            RouteAccess::JwtOnly
+        );
+        assert_eq!(access("DELETE", "/api/grpc/clear"), RouteAccess::JwtOnly);
+    }
+
+    #[test]
+    fn route_access_sessions_read_only_for_keys() {
+        assert_eq!(access("GET", "/api/sessions"), scope("sessions", "read"));
+        assert_eq!(
+            access("GET", "/api/sessions/some-id/export"),
+            scope("sessions", "read")
+        );
+        // Switching/creating/importing/deleting sessions is JWT-only.
+        assert_eq!(access("POST", "/api/sessions"), RouteAccess::JwtOnly);
+        assert_eq!(
+            access("DELETE", "/api/sessions/some-id"),
+            RouteAccess::JwtOnly
+        );
+    }
+
+    #[test]
+    fn route_access_exports_and_replay() {
+        assert_eq!(access("GET", "/api/export/har"), scope("traffic", "export"));
+        assert_eq!(
+            access("GET", "/api/export/curl"),
+            scope("traffic", "export")
+        );
+        // The whole replay feature hangs off the opt-in replay:execute.
+        assert_eq!(access("GET", "/api/replay"), scope("replay", "execute"));
+        assert_eq!(
+            access("POST", "/api/replay/requests"),
+            scope("replay", "execute")
+        );
+        assert_eq!(
+            access("DELETE", "/api/replay/history"),
+            scope("replay", "execute")
+        );
+    }
+
+    #[test]
+    fn route_access_rule_families_split_read_write() {
+        for resource in ["mocks", "rewrites", "breakpoints", "blocklist", "throttle"] {
+            assert_eq!(
+                access("GET", &format!("/api/{resource}")),
+                scope(resource, "read"),
+                "GET /{resource}"
+            );
+            assert_eq!(
+                access("POST", &format!("/api/{resource}")),
+                scope(resource, "write"),
+                "POST /{resource}"
+            );
+            assert_eq!(
+                access("PUT", &format!("/api/{resource}/rule-1")),
+                scope(resource, "write"),
+                "PUT /{resource}/rule-1"
+            );
+            assert_eq!(
+                access("DELETE", &format!("/api/{resource}/rule-1")),
+                scope(resource, "write"),
+                "DELETE /{resource}/rule-1 (rule deletion is write)"
+            );
+        }
+    }
+
+    #[test]
+    fn route_access_config_family_covers_monitoring_and_tuning() {
+        for path in [
+            "/api/config",
+            "/api/autosave",
+            "/api/capture",
+            "/api/focus",
+            "/api/mirror",
+            "/api/logs",
+            "/api/persistence",
+            "/api/metrics",
+            "/api/performance",
+            "/api/instances",
+        ] {
+            assert_eq!(
+                access("GET", path),
+                scope("config", "read"),
+                "GET {path} should be config:read"
+            );
+        }
+        for (method, path) in [
+            ("PATCH", "/api/config"),
+            ("PUT", "/api/config"),
+            ("POST", "/api/capture/toggle"),
+            ("POST", "/api/logs/rotation"),
+            ("POST", "/api/persistence/export"),
+        ] {
+            assert_eq!(
+                access(method, path),
+                scope("config", "write"),
+                "{method} {path} should be config:write"
+            );
+        }
+    }
+
+    #[test]
+    fn route_access_jwt_only_exclusions_reject_keys_on_reads_too() {
+        for (method, path) in [
+            ("GET", "/api/auth/api-keys"),
+            ("POST", "/api/auth/api-keys"),
+            ("DELETE", "/api/auth/api-keys/key-1"),
+            ("GET", "/api/devices"),
+            ("POST", "/api/devices"),
+            ("POST", "/api/devices/dev-1/rotate"),
+            ("GET", "/api/users"),
+            ("POST", "/api/users"),
+            ("DELETE", "/api/users/user-1"),
+            ("GET", "/api/rbac/roles"),
+            ("GET", "/api/audit"),
+            ("DELETE", "/api/audit/clear"),
+            ("GET", "/api/onboarding"),
+            ("POST", "/api/onboarding"),
+            ("GET", "/api/scripts"),
+            ("POST", "/api/scripts"),
+            ("GET", "/api/plugins"),
+            ("POST", "/api/plugins"),
+            ("GET", "/api/secrets"),
+            ("PUT", "/api/secrets/my-secret"),
+        ] {
+            assert_eq!(
+                access(method, path),
+                RouteAccess::JwtOnly,
+                "{method} {path} must be JWT-only"
+            );
+        }
+    }
+
+    #[test]
+    fn route_access_self_identity_surface_accepts_keys() {
+        for path in ["/auth/me", "/auth/logout", "/auth/validate"] {
+            assert_eq!(
+                access("GET", &format!("/api{path}")),
+                RouteAccess::Authenticated,
+                "GET {path}"
+            );
+            assert_eq!(
+                access("POST", &format!("/api{path}")),
+                RouteAccess::Authenticated,
+                "POST {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn route_access_unmapped_routes_deny_keys_by_default() {
+        assert_eq!(access("GET", "/api/mystery"), RouteAccess::JwtOnly);
+        assert_eq!(access("POST", "/api/mystery/deeper"), RouteAccess::JwtOnly);
+        assert_eq!(access("GET", "/api"), RouteAccess::JwtOnly);
+    }
+
+    #[test]
+    fn is_public_path_covers_ca_distribution_and_ws() {
+        for path in [
+            "/api/auth/login",
+            "/auth/login",
+            "/api/auth/refresh",
+            "/api/health",
+            "/api/health/detailed",
+            "/health/detailed",
+            "/api/license",
+            "/api/devices/enroll",
+            "/devices/enroll",
+            // #107 additions: CA certificate distribution (QR flow) and
+            // the in-handler-authenticated WebSocket stream.
+            "/api/cert/ca",
+            "/cert/ca",
+            "/api/ws",
+            "/ws",
+        ] {
+            assert!(
+                is_public_path(&path.parse::<Uri>().unwrap()),
+                "{path} should be public"
+            );
+        }
+        // Near-misses and protected routes stay non-public.
+        for path in [
+            "/api/traffic",
+            "/api/auth/me",
+            "/api/cert",
+            "/api/cert/ca/anything",
+            "/api/devices",
+            "/api/ws-traffic",
+            "/api/wsfoo",
+        ] {
+            assert!(
+                !is_public_path(&path.parse::<Uri>().unwrap()),
+                "{path} should NOT be public"
+            );
+        }
+    }
+
+    #[test]
+    fn scope_authorized_exact_and_wildcard_matching() {
+        let required = Scope::parse("traffic:read");
+        assert!(scope_authorized(&required, &["traffic:read".to_string()]));
+        assert!(scope_authorized(&required, &["*".to_string()]));
+        assert!(scope_authorized(&required, &["traffic:*".to_string()]));
+        assert!(scope_authorized(&required, &["*:read".to_string()]));
+        assert!(scope_authorized(
+            &required,
+            &["mocks:write".to_string(), "traffic:read".to_string()]
+        ));
+        assert!(!scope_authorized(&required, &["traffic:write".to_string()]));
+        assert!(!scope_authorized(&required, &["mocks:read".to_string()]));
+        assert!(!scope_authorized(&required, &[]));
     }
 }

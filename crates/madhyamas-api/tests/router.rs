@@ -441,3 +441,102 @@ mod device_traffic_api {
         e
     }
 }
+
+mod api_auth_middleware {
+    //! Issue #107: the optional boxed auth middleware applied to the whole
+    //! `/api` nest. These tests use a STUB boxed middleware (never the
+    //! enterprise one) so madhyamas-api stays enterprise-free; they verify
+    //! invocation, path normalization (nest-stripped form, base-path safe),
+    //! and the OSS default of no middleware.
+
+    use std::sync::{Arc, Mutex};
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use madhyamas_api::{create_router, ApiAuthMiddleware, AppState, RateLimitConfig};
+    use madhyamas_core::TrafficStore;
+    use tower::ServiceExt;
+
+    async fn make_app(base_path: &str, api_auth: Option<ApiAuthMiddleware>) -> axum::Router {
+        let store = TrafficStore::new(":memory:").await.expect("store");
+        create_router(
+            AppState::new(store),
+            RateLimitConfig::default(),
+            None,
+            base_path,
+            api_auth,
+        )
+    }
+
+    /// Stub boxed middleware recording the request path it observes, then
+    /// passing through — same shape as the enterprise handoff in main.rs.
+    fn recording_middleware(seen: Arc<Mutex<Vec<String>>>) -> ApiAuthMiddleware {
+        Arc::new(move |request, next| {
+            let seen = seen.clone();
+            Box::pin(async move {
+                {
+                    let mut guard = seen.lock().unwrap();
+                    guard.push(request.uri().path().to_string());
+                }
+                next.run(request).await
+            })
+        })
+    }
+
+    async fn status(app: &axum::Router, uri: &str) -> StatusCode {
+        let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        app.clone()
+            .oneshot(request)
+            .await
+            .expect("request served")
+            .status()
+    }
+
+    #[tokio::test]
+    async fn api_auth_runs_on_api_routes_with_nest_stripped_path() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let app = make_app("/", Some(recording_middleware(seen.clone()))).await;
+        assert_eq!(status(&app, "/api/traffic").await, StatusCode::OK);
+        // The middleware lives inside the /api nest: it must observe the
+        // /api-stripped path (the form the enterprise route-scope map
+        // matches on), not the full request path.
+        assert_eq!(*seen.lock().unwrap(), vec!["/traffic".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn api_auth_skips_top_level_health() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let app = make_router_with_auth(seen.clone()).await;
+        assert_eq!(status(&app, "/health").await, StatusCode::OK);
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    async fn make_router_with_auth(seen: Arc<Mutex<Vec<String>>>) -> axum::Router {
+        make_app("/", Some(recording_middleware(seen))).await
+    }
+
+    #[tokio::test]
+    async fn api_auth_with_base_path_strips_base_and_api_prefixes() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let app = make_app("/madhyamas", Some(recording_middleware(seen.clone()))).await;
+        assert_eq!(
+            status(&app, "/madhyamas/api/traffic").await,
+            StatusCode::OK,
+            "base-path deployment must keep serving /api routes"
+        );
+        // Both the base path AND the /api nest prefix are stripped before
+        // the middleware observes the path — the enterprise route-scope
+        // map sees the same shape on base-path and root deployments.
+        assert_eq!(*seen.lock().unwrap(), vec!["/traffic".to_string()]);
+        // Top-level health under the base path also bypasses the nest.
+        assert_eq!(status(&app, "/madhyamas/health").await, StatusCode::OK);
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn api_auth_none_keeps_oss_behavior_unauthenticated() {
+        // OSS build shape: no middleware handed over, /api serves openly.
+        let app = make_app("/", None).await;
+        assert_eq!(status(&app, "/api/traffic").await, StatusCode::OK);
+    }
+}
