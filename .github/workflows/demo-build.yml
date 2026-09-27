@@ -1,16 +1,17 @@
 # Demo artifact build — on-demand, no release.
 #
-# Builds the enterprise-tier unified binary for Linux ARM64
-# (aarch64-unknown-linux-gnu) with the embedded web UI and uploads it as a
-# workflow artifact (default 7-day retention). Used to provision demo
-# hosts (e.g. an OrangePi) without cutting a versioned release — the same
-# recipe as release.yml's build-binaries job, single tier/target.
+# Builds the enterprise-tier unified binary with the embedded web UI for
+# Linux ARM64 and x86-64 and uploads each as a workflow artifact (default
+# 7-day retention). Used to provision demo hosts (OrangePi, Hetzner CX,
+# ...) without cutting a versioned release — the same recipe as
+# release.yml's build-binaries job, enterprise tier only.
 #
-# Run: Actions -> "Demo Build (enterprise aarch64)" -> Run workflow,
+# Run: Actions -> "Demo Build (enterprise)" -> Run workflow,
 #   or: gh workflow run demo-build.yml
-# Fetch: gh run download <run-id> -n madhyamas-enterprise-demo-aarch64-unknown-linux-gnu
+# Fetch: gh run download <run-id> \
+#   -n madhyamas-enterprise-demo-<target>
 
-name: Demo Build (enterprise aarch64)
+name: Demo Build (enterprise)
 
 on:
   workflow_dispatch:
@@ -20,8 +21,14 @@ env:
 
 jobs:
   demo-build:
-    name: Enterprise aarch64 demo artifact
+    name: Enterprise demo artifact (${{ matrix.target }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-unknown-linux-gnu
+          - x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
 
@@ -44,13 +51,14 @@ jobs:
           npm ci
           npm run build
 
-      # --- Cross-compile enterprise binary for aarch64 (same as release.yml) ---
+      # --- Rust toolchain (aarch64 cross-compiles; x86_64 is native) ---
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-gnu
+          targets: ${{ matrix.target }}
 
       - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
@@ -59,16 +67,16 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          key: aarch64-enterprise-demo
+          key: ${{ matrix.target }}-enterprise-demo
 
       - name: Build binary (enterprise tier)
-        run: cargo build --release --target aarch64-unknown-linux-gnu -p madhyamas --features embedded-assets --locked
+        run: cargo build --release --target ${{ matrix.target }} -p madhyamas --features embedded-assets --locked
 
       - name: Package
         run: |
-          ARTIFACT_NAME="madhyamas-enterprise-demo-aarch64-unknown-linux-gnu"
+          ARTIFACT_NAME="madhyamas-enterprise-demo-${{ matrix.target }}"
           mkdir -p dist/$ARTIFACT_NAME
-          cp target/aarch64-unknown-linux-gnu/release/madhyamas dist/$ARTIFACT_NAME/
+          cp target/${{ matrix.target }}/release/madhyamas dist/$ARTIFACT_NAME/
           cd dist
           tar -czvf $ARTIFACT_NAME.tar.gz $ARTIFACT_NAME
           sha256sum $ARTIFACT_NAME.tar.gz > $ARTIFACT_NAME.tar.gz.sha256
@@ -76,6 +84,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: madhyamas-enterprise-demo-aarch64-unknown-linux-gnu
-          path: dist/madhyamas-enterprise-demo-aarch64-unknown-linux-gnu.tar.gz*
+          name: madhyamas-enterprise-demo-${{ matrix.target }}
+          path: dist/madhyamas-enterprise-demo-${{ matrix.target }}.tar.gz*
           retention-days: 7

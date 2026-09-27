@@ -1,0 +1,27 @@
+# Caddy — TLS termination for the demo web UI/API on a public VPS.
+#
+# - Obtains its own Let's Encrypt certificate for madhyamas-demo.<domain>
+#   (ports 80/443) and reverse-proxies to the madhyamas API listener.
+# - Serves the shared ACME webroot (./acme-web) so certbot can issue the
+#   SEPARATE certificate for the proxy listener hostname over HTTP-01
+#   (see certbot-proxy.sh) — port 80 stays owned by Caddy alone.
+
+madhyamas-demo.shristilabs.com {
+	handle /.well-known/acme-challenge/* {
+		root * /var/www/acme
+		file_server
+	}
+	handle {
+		reverse_proxy localhost:3001
+	}
+}
+
+# Plain-HTTP responder for the proxy hostname: only ACME challenges;
+# everything else is 404. (The proxy itself speaks TLS on :8888.)
+http://madhyamas-proxy.shristilabs.com {
+	handle /.well-known/acme-challenge/* {
+		root * /var/www/acme
+		file_server
+	}
+	respond 404
+}

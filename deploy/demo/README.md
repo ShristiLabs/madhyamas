@@ -185,6 +185,49 @@ cert — e.g. a weekly `docker compose restart madhyamas` cron/timer.
   entirely and use a tunnel **TCP app** instead:
   `cloudflared access tcp --hostname <tcp-app-hostname> --url localhost:8888`.
 
+## Public VPS deployment (Hetzner CX / any host with a public IP)
+
+Same stack plus the `docker-compose.caddy.yml` overlay: Caddy gives the
+web UI HTTPS on 443, and the proxy listener gets its own Let's Encrypt
+cert so `https://<proxy-host>:8888` is usable from any browser/phone —
+no Cloudflare tunnel, no `cloudflared` client, no router.
+
+One-time host setup (Ubuntu 24.04, x86_64 or ARM):
+
+```bash
+# Hetzner console: CX23 (x86_64) or CAX11 (ARM), Ubuntu 24.04, your SSH
+# key. Firewall inbound: TCP 22 (admin), 80, 443, 8888.
+# Cloudflare DNS (grey cloud / DNS-only) for BOTH hostnames -> VPS IP:
+#   madhyamas-demo.shristilabs.com  +  madhyamas-proxy.shristilabs.com
+
+ssh root@<vps-ip>
+curl -fsSL https://get.docker.com | sh
+git clone https://github.com/ShristiLabs/madhyamas.git ~/madhyamas
+cd ~/madhyamas/deploy/demo
+cp .env.example .env && chmod 600 .env
+# fill in: MADHYAMAS_JWT_SECRET / ADMIN creds, then for the VPS overlay:
+#   MADHYAMAS_PUBLIC_IP=madhyamas-proxy.shristilabs.com
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml
+#   CERTBOT_EMAIL=you@example.com
+# place the workflow-built binary (arch must match the VPS):
+#   gh run download <run-id> -n madhyamas-enterprise-demo-<target> ...
+#   cp <extracted>/madhyamas .
+docker compose up -d caddy           # Caddy first: serves ACME webroot
+./certbot-proxy.sh                   # proxy cert via HTTP-01 + restart
+docker compose up -d                 # madhyamas with the TLS listener
+crontab -e                           # weekly renewal: 0 3 * * 1 <path>/certbot-proxy.sh
+```
+
+Verification from outside:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://madhyamas-demo.shristilabs.com/api/traffic   # 401
+curl -x https://madhyamas-proxy.shristilabs.com:8888 -s -o /dev/null \
+     -w '%{http_code}\n' --max-time 10 https://example.com                                    # 000 + 407 in -v
+curl -x https://<user>:<mdy_dev_key>@madhyamas-proxy.shristilabs.com:8888 -k -s -o /dev/null \
+     -w '%{http_code}\n' https://example.com                                                  # 200
+```
+
 ## Maintenance
 
 ```bash

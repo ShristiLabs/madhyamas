@@ -1,0 +1,30 @@
+# VPS (e.g. Hetzner CX) overlay for the demo stack.
+#
+# Merged on top of docker-compose.yml via COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml
+#
+# Adds:
+#   - Caddy (ports 80/443, auto-HTTPS) in front of the web UI/API
+#   - The public TLS proxy listener flags (cert from certbot-proxy.sh;
+#     startup aborts while certs/proxy-tls is empty — run certbot first)
+
+services:
+  madhyamas:
+    environment:
+      MADHYAMAS_PROXY_TLS_CERT_FILE: /data/certs/proxy-tls/fullchain.pem
+      MADHYAMAS_PROXY_TLS_KEY_FILE: /data/certs/proxy-tls/privkey.pem
+
+  caddy:
+    image: caddy:2
+    container_name: caddy-demo
+    network_mode: host
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./acme-web:/var/www/acme
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
