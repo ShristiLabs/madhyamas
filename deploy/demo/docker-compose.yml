@@ -1,0 +1,86 @@
+# Madhyamas Enterprise demo stack — public demo server
+#
+# Runs on the demo host (e.g. an OrangePi) inside a clone of this repo at
+# <clone>/deploy/demo. The web UI/API are published through the host's
+# existing cloudflared service (token-managed tunnel — add the public
+# hostname in the CF Zero Trust dashboard; see README.md). Cloudflare's
+# edge cannot carry an HTTP forward proxy, so the proxy port is exposed
+# directly with its own TLS cert + mandatory credentials (README.md).
+#
+# Host networking keeps real client source IPs (device scoping, audit).
+#
+# Setup: see README.md in this directory. Copy .env.example to .env first.
+
+name: madhyamas-demo
+
+services:
+  madhyamas:
+    # Thin runtime image wrapping the workflow-built demo binary.
+    # 1) gh workflow run demo-build.yml  (Actions: "Demo Build (enterprise aarch64)")
+    # 2) gh run download <run-id> -n madhyamas-enterprise-demo-aarch64-unknown-linux-gnu
+    # 3) extract `madhyamas` next to Dockerfile.demo, then:
+    #    docker compose build madhyamas
+    # (Alternative full in-repo build: swap the build block to
+    #  context ../.. / dockerfile Dockerfile and re-add the
+    #  licensing_token build secret — see README.md.)
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    image: madhyamas:latest
+    container_name: madhyamas-demo
+    network_mode: host
+    volumes:
+      - madhyamas_data:/data
+      # TLS cert for the public proxy listener (Let's Encrypt via certbot on
+      # the host — README.md phase 4). Mount is optional until then.
+      - ./certs/proxy-tls:/data/certs/proxy-tls:ro
+    environment:
+      # Listeners
+      MADHYAMAS_HOST: 0.0.0.0
+      MADHYAMAS_API_PORT: "3001"
+      MADHYAMAS_PROXY_PORT: "8888"
+      # Persistence (enterprise.db is created next to traffic.db)
+      MADHYAMAS_DB_PATH: /data/traffic.db
+      MADHYAMAS_CERT_PATH: /data/certs
+      # Stable MITM CA across restarts (so demo devices trust it once)
+      MADHYAMAS_CA_CERT_FILE: /data/certs/ca-cert.pem
+      MADHYAMAS_CA_KEY_FILE: /data/certs/ca-key.pem
+      # Auth — REQUIRED for public exposure.
+      # ENABLE_AUTH guards the whole /api surface (default is off!);
+      # admin user is bootstrapped on first run only.
+      MADHYAMAS_ENABLE_AUTH: "true"
+      MADHYAMAS_JWT_SECRET: ${MADHYAMAS_JWT_SECRET:?set in .env}
+      MADHYAMAS_ADMIN_USERNAME: ${MADHYAMAS_ADMIN_USERNAME:-admin}
+      MADHYAMAS_ADMIN_PASSWORD: ${MADHYAMAS_ADMIN_PASSWORD:?set in .env}
+      # Proxy credential enforcement — REQUIRED for public exposure.
+      # Without REQUIRE_PROXY_AUTH the proxy is an open relay.
+      MADHYAMAS_PROXY_AUTH: "true"
+      MADHYAMAS_REQUIRE_PROXY_AUTH: "true"
+      # Host baked into the `madhyamas://connect` QR shown by the web UI
+      # (DevicesPanel: public_ip || host || window.location.hostname).
+      # Point it at the PUBLIC proxy hostname once DNS is set up.
+      MADHYAMAS_PUBLIC_IP: ${MADHYAMAS_PUBLIC_IP:?set in .env (e.g. proxy.example.com or LAN IP)}
+      MADHYAMAS_LOG_LEVEL: info
+      # --- Public TLS proxy listener (issue #110) -------------------------
+      # Uncomment AFTER issuing the Let's Encrypt cert (README.md phase 4).
+      # Both flags must be set together; unreadable files abort startup.
+      # MADHYAMAS_PROXY_TLS_CERT_FILE: /data/certs/proxy-tls/fullchain.pem
+      # MADHYAMAS_PROXY_TLS_KEY_FILE: /data/certs/proxy-tls/privkey.pem
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:3001/api/health",
+        ]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  madhyamas_data:

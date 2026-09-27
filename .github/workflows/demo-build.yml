@@ -1,0 +1,81 @@
+# Demo artifact build — on-demand, no release.
+#
+# Builds the enterprise-tier unified binary for Linux ARM64
+# (aarch64-unknown-linux-gnu) with the embedded web UI and uploads it as a
+# workflow artifact (default 7-day retention). Used to provision demo
+# hosts (e.g. an OrangePi) without cutting a versioned release — the same
+# recipe as release.yml's build-binaries job, single tier/target.
+#
+# Run: Actions -> "Demo Build (enterprise aarch64)" -> Run workflow,
+#   or: gh workflow run demo-build.yml
+# Fetch: gh run download <run-id> -n madhyamas-enterprise-demo-aarch64-unknown-linux-gnu
+
+name: Demo Build (enterprise aarch64)
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  demo-build:
+    name: Enterprise aarch64 demo artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure private licensing repo access
+        uses: ./.github/actions/configure-licensing-repo
+        with:
+          token: ${{ secrets.LICENSING_TOKEN }}
+
+      # --- Frontend (web/dist is embedded into the binary by rust-embed) ---
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      # --- Cross-compile enterprise binary for aarch64 (same as release.yml) ---
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64-enterprise-demo
+
+      - name: Build binary (enterprise tier)
+        run: cargo build --release --target aarch64-unknown-linux-gnu -p madhyamas --features embedded-assets --locked
+
+      - name: Package
+        run: |
+          ARTIFACT_NAME="madhyamas-enterprise-demo-aarch64-unknown-linux-gnu"
+          mkdir -p dist/$ARTIFACT_NAME
+          cp target/aarch64-unknown-linux-gnu/release/madhyamas dist/$ARTIFACT_NAME/
+          cd dist
+          tar -czvf $ARTIFACT_NAME.tar.gz $ARTIFACT_NAME
+          sha256sum $ARTIFACT_NAME.tar.gz > $ARTIFACT_NAME.tar.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: madhyamas-enterprise-demo-aarch64-unknown-linux-gnu
+          path: dist/madhyamas-enterprise-demo-aarch64-unknown-linux-gnu.tar.gz*
+          retention-days: 7

@@ -1,0 +1,35 @@
+# Thin runtime image for the demo binary built by .github/workflows/
+# demo-build.yml (workflow artifact "madhyamas-enterprise-demo-aarch64-
+# unknown-linux-gnu"). Place the extracted `madhyamas` binary next to this
+# file, then: docker compose build madhyamas
+#
+# ubuntu:24.04 matches the glibc of the ubuntu-latest runner that built
+# the binary, so no compatibility surprises.
+
+FROM ubuntu:24.04
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates openssl wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && addgroup --system madhyamas \
+    && adduser --system --ingroup madhyamas madhyamas \
+    && mkdir -p /data/certs /data/sessions \
+    && chown -R madhyamas:madhyamas /data
+
+WORKDIR /app
+
+COPY madhyamas /usr/local/bin/madhyamas
+
+USER madhyamas
+
+EXPOSE 3001 8888
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
+
+ENV MADHYAMAS_PROXY_PORT=8888 \
+    MADHYAMAS_API_PORT=3001 \
+    MADHYAMAS_LOG_LEVEL=info
+
+ENTRYPOINT ["madhyamas"]
+CMD []
