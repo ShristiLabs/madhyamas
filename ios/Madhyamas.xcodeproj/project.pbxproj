@@ -1,0 +1,519 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		04DA90DFAA949267AC40232E /* VpnManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E210369C4737B8B4A99258F /* VpnManager.swift */; };
+		06487B3AEE57C16530FE3057 /* MadhyamasProxyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 931D7BA72A74059CC3C27D69 /* MadhyamasProxyProvider.swift */; };
+		094662258ADD392F954BEB3E /* FlowPipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55BA9A85669C50575572E52A /* FlowPipe.swift */; };
+		0CBFE2B87BD2B6D1535A9F9C /* MainScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A68A1AD566BB5AF0AE67AAB /* MainScreen.swift */; };
+		1F61EA8F2F22D7BD211DE943 /* MadhyamasCore in Frameworks */ = {isa = PBXBuildFile; productRef = 8E4677361829ADA2CB7B7325 /* MadhyamasCore */; };
+		2AA42E6A9A36976E4215C55C /* MadhyamasApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4BF85B7B88BED990B16A58D /* MadhyamasApp.swift */; };
+		39F4D480A5D0B7DA207C2230 /* MadhyamasCore in Frameworks */ = {isa = PBXBuildFile; productRef = BFA53E0D8DB4E8EA9B6A328C /* MadhyamasCore */; };
+		4EF8B51C49AF383036953086 /* MainViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2CFF15FF1D6D84081DC3E87 /* MainViewModel.swift */; };
+		9976ABF3296B8BCBD65721FB /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34FC6828A49025F0A873CEB3 /* SettingsScreen.swift */; };
+		A15B5841CAE35595FFC44373 /* MadhyamasTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0867B29C62DDD23F46F93647 /* MadhyamasTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		E5CB391449E7AE5B88548B8F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2C7B309A83B460DE0C1711CF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 129EFF1005D466A79034147E;
+			remoteInfo = MadhyamasTunnel;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		ADA875EDBFD3832880EDB1AE /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A15B5841CAE35595FFC44373 /* MadhyamasTunnel.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0867B29C62DDD23F46F93647 /* MadhyamasTunnel.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = MadhyamasTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		2A68A1AD566BB5AF0AE67AAB /* MainScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainScreen.swift; sourceTree = "<group>"; };
+		2CB82BC07757982444E5C1D2 /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Core; sourceTree = SOURCE_ROOT; };
+		34FC6828A49025F0A873CEB3 /* SettingsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScreen.swift; sourceTree = "<group>"; };
+		4E210369C4737B8B4A99258F /* VpnManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VpnManager.swift; sourceTree = "<group>"; };
+		4E61675E36EFA284E7423387 /* MadhyamasiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MadhyamasiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		55BA9A85669C50575572E52A /* FlowPipe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowPipe.swift; sourceTree = "<group>"; };
+		931D7BA72A74059CC3C27D69 /* MadhyamasProxyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MadhyamasProxyProvider.swift; sourceTree = "<group>"; };
+		A8F7268D8A21A73B87618BB6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		B47B1309553D47559A45D4AE /* MadhyamasiOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MadhyamasiOS.entitlements; sourceTree = "<group>"; };
+		B4BF85B7B88BED990B16A58D /* MadhyamasApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MadhyamasApp.swift; sourceTree = "<group>"; };
+		E1529CCA96428BDC2E089CF5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F2CFF15FF1D6D84081DC3E87 /* MainViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewModel.swift; sourceTree = "<group>"; };
+		FF3E4F9C885088179B8A524E /* Tunnel.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Tunnel.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		5C77C1211E4D0628DC875659 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1F61EA8F2F22D7BD211DE943 /* MadhyamasCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E11AF43161FBC6CAA15B5436 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				39F4D480A5D0B7DA207C2230 /* MadhyamasCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		09DE77E32B068678FBA3A07A = {
+			isa = PBXGroup;
+			children = (
+				A89392829F5ACB63B8F86CAE /* MadhyamasiOS */,
+				FC21EDF206AB9EFE47ED6C8A /* Packages */,
+				13BD35CD90D76A11049196EA /* Tunnel */,
+				3FC21B910D3F427BBBAB0073 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1196D7D5A99E4A00EDA9D77A /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B4BF85B7B88BED990B16A58D /* MadhyamasApp.swift */,
+				F2CFF15FF1D6D84081DC3E87 /* MainViewModel.swift */,
+				4E210369C4737B8B4A99258F /* VpnManager.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		13BD35CD90D76A11049196EA /* Tunnel */ = {
+			isa = PBXGroup;
+			children = (
+				A8F7268D8A21A73B87618BB6 /* Info.plist */,
+				FF3E4F9C885088179B8A524E /* Tunnel.entitlements */,
+				D488498E4D664899B8D3545B /* Provider */,
+			);
+			path = Tunnel;
+			sourceTree = "<group>";
+		};
+		3FC21B910D3F427BBBAB0073 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				4E61675E36EFA284E7423387 /* MadhyamasiOS.app */,
+				0867B29C62DDD23F46F93647 /* MadhyamasTunnel.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		6ACBA41C86A220588833E2E4 /* Screens */ = {
+			isa = PBXGroup;
+			children = (
+				2A68A1AD566BB5AF0AE67AAB /* MainScreen.swift */,
+				34FC6828A49025F0A873CEB3 /* SettingsScreen.swift */,
+			);
+			path = Screens;
+			sourceTree = "<group>";
+		};
+		A89392829F5ACB63B8F86CAE /* MadhyamasiOS */ = {
+			isa = PBXGroup;
+			children = (
+				E1529CCA96428BDC2E089CF5 /* Info.plist */,
+				B47B1309553D47559A45D4AE /* MadhyamasiOS.entitlements */,
+				1196D7D5A99E4A00EDA9D77A /* App */,
+				6ACBA41C86A220588833E2E4 /* Screens */,
+			);
+			path = MadhyamasiOS;
+			sourceTree = "<group>";
+		};
+		D488498E4D664899B8D3545B /* Provider */ = {
+			isa = PBXGroup;
+			children = (
+				55BA9A85669C50575572E52A /* FlowPipe.swift */,
+				931D7BA72A74059CC3C27D69 /* MadhyamasProxyProvider.swift */,
+			);
+			path = Provider;
+			sourceTree = "<group>";
+		};
+		FC21EDF206AB9EFE47ED6C8A /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				2CB82BC07757982444E5C1D2 /* Core */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		129EFF1005D466A79034147E /* MadhyamasTunnel */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0FE67DB10BB084EA678F80A9 /* Build configuration list for PBXNativeTarget "MadhyamasTunnel" */;
+			buildPhases = (
+				214C8B0B2B931EA99E3E69E8 /* Sources */,
+				5C77C1211E4D0628DC875659 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MadhyamasTunnel;
+			packageProductDependencies = (
+				8E4677361829ADA2CB7B7325 /* MadhyamasCore */,
+			);
+			productName = MadhyamasTunnel;
+			productReference = 0867B29C62DDD23F46F93647 /* MadhyamasTunnel.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		A0D032EE5643D9F2F6A0EE75 /* MadhyamasiOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BDE5A88D3F3B5273255274D0 /* Build configuration list for PBXNativeTarget "MadhyamasiOS" */;
+			buildPhases = (
+				2093B2AA71B0BE6B26FDAD38 /* Sources */,
+				E11AF43161FBC6CAA15B5436 /* Frameworks */,
+				ADA875EDBFD3832880EDB1AE /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				14AE3CE0C6BDA93335F7A62F /* PBXTargetDependency */,
+			);
+			name = MadhyamasiOS;
+			packageProductDependencies = (
+				BFA53E0D8DB4E8EA9B6A328C /* MadhyamasCore */,
+			);
+			productName = MadhyamasiOS;
+			productReference = 4E61675E36EFA284E7423387 /* MadhyamasiOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		2C7B309A83B460DE0C1711CF /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					129EFF1005D466A79034147E = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
+					A0D032EE5643D9F2F6A0EE75 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = 729F423EFB45B82865EDB9F1 /* Build configuration list for PBXProject "Madhyamas" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 09DE77E32B068678FBA3A07A;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				89E7B7B66991EEED6EF21310 /* XCLocalSwiftPackageReference "Core" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 3FC21B910D3F427BBBAB0073 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A0D032EE5643D9F2F6A0EE75 /* MadhyamasiOS */,
+				129EFF1005D466A79034147E /* MadhyamasTunnel */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		2093B2AA71B0BE6B26FDAD38 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2AA42E6A9A36976E4215C55C /* MadhyamasApp.swift in Sources */,
+				0CBFE2B87BD2B6D1535A9F9C /* MainScreen.swift in Sources */,
+				4EF8B51C49AF383036953086 /* MainViewModel.swift in Sources */,
+				9976ABF3296B8BCBD65721FB /* SettingsScreen.swift in Sources */,
+				04DA90DFAA949267AC40232E /* VpnManager.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		214C8B0B2B931EA99E3E69E8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				094662258ADD392F954BEB3E /* FlowPipe.swift in Sources */,
+				06487B3AEE57C16530FE3057 /* MadhyamasProxyProvider.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		14AE3CE0C6BDA93335F7A62F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 129EFF1005D466A79034147E /* MadhyamasTunnel */;
+			targetProxy = E5CB391449E7AE5B88548B8F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0ACB39D7AED8CB12B68E7023 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Tunnel/Tunnel.entitlements;
+				INFOPLIST_FILE = Tunnel/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.madhyamas.ios.tunnel;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		2DAE1DA611D712BADC8F74F5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = MadhyamasiOS/MadhyamasiOS.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = MadhyamasiOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.madhyamas.ios;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		389766BE79DC0B4D257FAAD4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = MadhyamasiOS/MadhyamasiOS.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = MadhyamasiOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.madhyamas.ios;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5E129D3DE770CC3AFABCD4F5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		A28587ABBD0409140543B8DE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Tunnel/Tunnel.entitlements;
+				INFOPLIST_FILE = Tunnel/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.madhyamas.ios.tunnel;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		FBA5D16AE33D3FD83AC336FA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0FE67DB10BB084EA678F80A9 /* Build configuration list for PBXNativeTarget "MadhyamasTunnel" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0ACB39D7AED8CB12B68E7023 /* Debug */,
+				A28587ABBD0409140543B8DE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		729F423EFB45B82865EDB9F1 /* Build configuration list for PBXProject "Madhyamas" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5E129D3DE770CC3AFABCD4F5 /* Debug */,
+				FBA5D16AE33D3FD83AC336FA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BDE5A88D3F3B5273255274D0 /* Build configuration list for PBXNativeTarget "MadhyamasiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				389766BE79DC0B4D257FAAD4 /* Debug */,
+				2DAE1DA611D712BADC8F74F5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		89E7B7B66991EEED6EF21310 /* XCLocalSwiftPackageReference "Core" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Core;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		8E4677361829ADA2CB7B7325 /* MadhyamasCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MadhyamasCore;
+		};
+		BFA53E0D8DB4E8EA9B6A328C /* MadhyamasCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MadhyamasCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 2C7B309A83B460DE0C1711CF /* Project object */;
+}

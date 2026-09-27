@@ -1,0 +1,44 @@
+name: iOS CI
+
+on:
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-ci.yml"
+
+jobs:
+  build-and-test:
+    name: Build & test (unsigned)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # Fast lane: pure-logic tests run as a plain SPM package on the host —
+      # no simulator boot, no signing, no Apple Developer account.
+      - name: Run MadhyamasCore tests
+        working-directory: ios/Core
+        run: swift test
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      # App + Network Extension targets compile unsigned for the simulator;
+      # device runs/provisioning are gated on a paid developer team.
+      - name: Build app + tunnel extension (unsigned)
+        working-directory: ios
+        run: |
+          xcodebuild -project Madhyamas.xcodeproj -scheme MadhyamasiOS \
+            -destination 'generic/platform=iOS Simulator' build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | xcbeautify \
+            || xcodebuild -project Madhyamas.xcodeproj -scheme MadhyamasiOS \
+            -destination 'generic/platform=iOS Simulator' build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
