@@ -150,6 +150,14 @@ with credentials (browser/App settings), or scan the QR from the web UI
 (Devices panel), which encodes
 `host=madhyamas-proxy.shristilabs.com&port=8888&tls=1`.
 
+**Proxy credentials** — what works today:
+- `Proxy-Authorization: Bearer <JWT>` (login token) — curl/CLI users
+- Device keys (`mdy_dev_…`) via Bearer **or** Basic (either the username
+  or password half) — browsers (proxy user/password fields), Android app
+- Plain `username:password` Basic is **not accepted** on the proxy yet —
+  `AuthManager::authenticate_password` is an unimplemented stub, so that
+  arm always 407s. Create a device in the web UI and use its key instead.
+
 Renewal is automatic (`certbot` systemd timer); the deploy-hook refreshes
 the mounted copies, but the container must be restarted to reload the
 cert — e.g. a weekly `docker compose restart madhyamas` cron/timer.

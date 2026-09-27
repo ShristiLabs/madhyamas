@@ -11,8 +11,8 @@ FROM ubuntu:24.04
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openssl wget \
     && rm -rf /var/lib/apt/lists/* \
-    && addgroup --system madhyamas \
-    && adduser --system --ingroup madhyamas madhyamas \
+    && groupadd --system madhyamas \
+    && useradd --system --gid madhyamas --create-home --shell /usr/sbin/nologin madhyamas \
     && mkdir -p /data/certs /data/sessions \
     && chown -R madhyamas:madhyamas /data
 
