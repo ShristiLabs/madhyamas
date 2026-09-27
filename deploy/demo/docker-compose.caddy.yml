@@ -5,16 +5,20 @@
 #
 # Adds:
 #   - Caddy (ports 80/443, auto-HTTPS) in front of the web UI/API
-#
-# The proxy listener on :8888 runs PLAINTEXT so that stock iOS/Android
-# manual-proxy clients can use it (they cannot speak TLS-to-proxy). Trade-
-# off: Proxy-Authorization (the mdy_dev_ key) crosses the network in
-# cleartext — demo posture; rotate/revoke device keys from the UI on any
-# suspicion. To re-enable TLS: set MADHYAMAS_PROXY_TLS_CERT_FILE/KEY_FILE
-# here again (Let's Encrypt via certbot-proxy.sh; startup aborts while
-# certs/proxy-tls is empty — run certbot first).
+#   - The public TLS proxy listener on :8888 (Let's Encrypt cert via
+#     certbot-proxy.sh over HTTP-01 through Caddy's acme-web webroot;
+#     startup aborts while certs/proxy-tls is empty — run certbot first).
+#     Clients use the proxy URL https://host:8888 — proxy credentials are
+#     encrypted in transit. (Stock iOS/Android manual-proxy settings
+#     cannot speak TLS-to-proxy; the companion app / curl / browsers
+#     configured via extensions can.)
 
 services:
+  madhyamas:
+    environment:
+      MADHYAMAS_PROXY_TLS_CERT_FILE: /data/certs/proxy-tls/fullchain.pem
+      MADHYAMAS_PROXY_TLS_KEY_FILE: /data/certs/proxy-tls/privkey.pem
+
   caddy:
     image: caddy:2
     container_name: caddy-demo
