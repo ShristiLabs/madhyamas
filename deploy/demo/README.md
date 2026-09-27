@@ -188,9 +188,12 @@ cert — e.g. a weekly `docker compose restart madhyamas` cron/timer.
 ## Public VPS deployment (Hetzner CX / any host with a public IP)
 
 Same stack plus the `docker-compose.caddy.yml` overlay: Caddy gives the
-web UI HTTPS on 443, and the proxy listener gets its own Let's Encrypt
-cert so `https://<proxy-host>:8888` is usable from any browser/phone —
-no Cloudflare tunnel, no `cloudflared` client, no router.
+web UI HTTPS on 443. The proxy listener on :8888 runs **plaintext** so
+stock iOS/Android manual-proxy clients can use it (they cannot speak
+TLS-to-proxy). Trade-off: the `mdy_dev_` key in `Proxy-Authorization`
+crosses the network cleartext — demo posture; rotate/revoke device keys
+from the UI on any suspicion, and see `docker-compose.caddy.yml` to
+re-enable the TLS listener (Let's Encrypt via `certbot-proxy.sh`).
 
 One-time host setup (Ubuntu 24.04, x86_64 or ARM):
 
