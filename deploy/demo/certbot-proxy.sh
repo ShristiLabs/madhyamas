@@ -7,6 +7,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Load CERTBOT_EMAIL / MADHYAMAS_PROXY_DOMAIN from .env if present
+# (compose reads it natively; this script has to source it itself).
+if [ -f .env ]; then
+  set -o allexport
+  # shellcheck disable=SC1091
+  source <(grep -E '^(CERTBOT_EMAIL|MADHYAMAS_PROXY_DOMAIN)=' .env)
+  set +o allexport
+fi
+
 DOMAIN="${MADHYAMAS_PROXY_DOMAIN:-madhyamas-proxy.shristilabs.com}"
 EMAIL="${CERTBOT_EMAIL:?set CERTBOT_EMAIL in .env or the environment}"
 LE_DIR="$PWD/letsencrypt"
